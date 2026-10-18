@@ -11,6 +11,19 @@ cargo run --example arena_map
 each end, lanes and jungle entrances that pull players into fights, and PvE camps that drop
 heals and shields?
 
+## Verdict
+
+**Picked 2026-10-18: 5v5 on the lanes + jungle map.** The human: "lets go with 5v5 and the league
+of legends map". This replaces two earlier decisions:
+
+- **Team size 3v3** (#10's "3v3 for now", ADR-0005's consequences) becomes **5v5**. Teams
+  still start with one player and the rest join from the pad (ADR-0005 otherwise stands).
+- **The open 36 × 22 m arena** becomes **the 90 × 50 m map**: bases, three lanes, four walled
+  jungle quadrants and a river, with PvE heal, shield and river-objective camps.
+
+Not decided yet: exact map size, wall layout, camp numbers and drops. The crate grammar (#17)
+continues on this map.
+
 **Team size is 5v5 by default**, as in League of Legends (10 players). "team size" in the panel still
 goes from 1 to 8. Teams still start with one player and the rest join from the pad (ADR-0005).
 
