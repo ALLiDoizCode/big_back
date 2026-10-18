@@ -117,9 +117,9 @@ fn defaults() -> Vec<Param> {
         num("snap radius", 0.3, 0.0, 0.4, 0.05, "m"),
         choice("arc preview", 0, &["arc + rest ghost", "arc only", "off"]),
         choice("weapon", 0, &["hitscan", "projectile"]),
-        num("fire rate", 5.0, 1.0, 15.0, 1.0, "/s"),
+        num("fire rate", 3.0, 1.0, 15.0, 1.0, "/s"),
         num("projectile speed", 30.0, 8.0, 80.0, 2.0, "m/s"),
-        num("shots to kill", 8.0, 1.0, 20.0, 1.0, ""),
+        num("shots to kill", 4.0, 1.0, 20.0, 1.0, ""),
         choice("shot range", 0, &["to reticle", "full 30 m"]),
         num("kick-open time", 1.0, 0.0, 3.0, 0.25, "s"),
         num("fake grab latency", 0.0, 0.0, 150.0, 10.0, "ms"),
@@ -137,127 +137,143 @@ struct Tune {
     active: usize,
     selected: usize,
     panel: bool,
-    /// The loaded comparison preset, if any (index into `PRESETS`).
-    comparison: Option<usize>,
+    /// The guided comparison in progress, if any.
+    guide: Option<Guide>,
+    /// Which entries of `COMPARISONS` have a verdict.
+    settled: Vec<bool>,
     /// One line per comparison settled with K, printed with P.
     verdicts: Vec<String>,
 }
 
 // ---------------------------------------------------------------------------------------
-// Comparison presets: the sheet's "what to try" rows, one key each
+// Guided comparisons: the sheet's open "what to try" rows. N starts the next one, 1/2/3 pick
+// the variant you're playing, Enter keeps it (it becomes the baseline) and moves on.
 // ---------------------------------------------------------------------------------------
 
-struct Preset {
-    key: &'static str,
+struct Comparison {
     row: &'static str,
     title: &'static str,
     question: &'static str,
     bot: usize,
+    /// Applied to every variant.
     both: &'static [(P, f32)],
-    a: &'static [(P, f32)],
-    b: &'static [(P, f32)],
+    variants: &'static [(&'static str, &'static [(P, f32)])],
 }
 
-const PRESETS: &[Preset] = &[
-    Preset {
-        key: "1", row: "3", title: "carrying disarms: full lock vs sidearm",
-        question: "Can a carrier defend themself? Carry a crate under fire. For the third option, set B to 'melee only' in the panel.",
-        bot: 3, both: &[], a: &[(P::CarryDisarm, 0.0)], b: &[(P::CarryDisarm, 1.0)],
+// Decided by play and no longer listed: landing (curling), jump throw power (apex),
+// carrying disarms (full lock), hit drops crate (yes), fire rate / shots to kill (3/s, 4).
+const COMPARISONS: &[Comparison] = &[
+    Comparison {
+        row: "7", title: "weapon",
+        question: "Lag compensation covers ray casts only. Are visible, dodgeable shots good enough to give up hitscan?",
+        bot: 1, both: &[(P::ProjSpeed, 18.0)],
+        variants: &[("hitscan", &[(P::Weapon, 0.0)]), ("projectile 18 m/s", &[(P::Weapon, 1.0)])],
     },
-    Preset {
-        key: "2", row: "7", title: "weapon: hitscan vs projectile (18 m/s)",
-        question: "Lag compensation covers ray casts only. Are visible, dodgeable shots good enough to give up hitscan? Watch TTK and accuracy.",
-        bot: 1, both: &[(P::ProjSpeed, 18.0)], a: &[(P::Weapon, 0.0)], b: &[(P::Weapon, 1.0)],
-    },
-    Preset {
-        key: "3", row: "4", title: "hit drops crate: yes vs no",
-        question: "Is one hit enough to knock a crate loose? Chaotic or readable? Also shoot the hauler (switch the bot) to steal back.",
-        bot: 3, both: &[], a: &[(P::HitDropsCrate, 0.0)], b: &[(P::HitDropsCrate, 1.0)],
-    },
-    Preset {
-        key: "4", row: "8", title: "fire rate / shots to kill: 5/s, 8 vs 3/s, 4",
-        question: "Spray vs deliberate. Is a TTK of roughly 1.5-3 s right?",
-        bot: 1, both: &[], a: &[(P::FireRate, 5.0), (P::ShotsToKill, 8.0)], b: &[(P::FireRate, 3.0), (P::ShotsToKill, 4.0)],
-    },
-    Preset {
-        key: "5", row: "2", title: "carry speed: 0.6x vs 0.85x",
+    Comparison {
+        row: "2", title: "carry speed",
         question: "How much of a sitting duck is a carrier? Can you catch the hauler, and can it catch you?",
-        bot: 2, both: &[], a: &[(P::CarrySpeed, 0.6)], b: &[(P::CarrySpeed, 0.85)],
-    },
-    Preset {
-        key: "6", row: "1", title: "move speed: 6 vs 8 m/s",
-        question: "Base pace. Does crossing the arena (~24 m pad to pad) feel snappy or frantic?",
-        bot: 1, both: &[], a: &[(P::MoveSpeed, 6.0)], b: &[(P::MoveSpeed, 8.0)],
-    },
-    Preset {
-        key: "7", row: "10/11", title: "grab latency 100 ms: no mask vs reach",
-        question: "Online grabs cost about one round trip. Do you notice it? Which mask hides it? Set B to 'lunge' to try the third.",
-        bot: 2, both: &[(P::GrabLatency, 100.0)], a: &[(P::GrabMask, 0.0)], b: &[(P::GrabMask, 1.0)],
-    },
-    Preset {
-        key: "8", row: "12", title: "grab reach at 120 ms: 1.2 vs 2.0 m",
-        question: "Does a longer reach also hide latency, and does it make stealing too easy?",
-        bot: 2, both: &[(P::GrabLatency, 120.0)], a: &[(P::GrabReach, 1.2)], b: &[(P::GrabReach, 2.0)],
-    },
-    Preset {
-        key: "9", row: "9", title: "kick-open time: 0.5 vs 1.5 s",
-        question: "How long are you exposed opening loot (orange crates)? Long = a risky, contestable moment.",
-        bot: 3, both: &[], a: &[(P::KickTime, 0.5)], b: &[(P::KickTime, 1.5)],
-    },
-    Preset {
-        key: "0", row: "5", title: "throw style: ground throw vs jump-throw",
-        question: "Jump-throw: on the ground you only toss a crate a short way. With the apex boost, is forcing a jump skill or friction?",
-        bot: 1, both: &[], a: &[(P::ThrowStyle, 0.0)], b: &[(P::ThrowStyle, 1.0)],
-    },
-    Preset {
-        key: "Shift+1", row: "6f", title: "slide: short + tight snap vs long + loose snap",
-        question: "How much slide is fun? A: keep 0.4, friction 10, snap 0.15. B: keep 0.8, friction 4, snap 0.35.",
         bot: 2, both: &[],
-        a: &[(P::SlideKeep, 0.4), (P::SlideFriction, 10.0), (P::SnapRadius, 0.15)],
-        b: &[(P::SlideKeep, 0.8), (P::SlideFriction, 4.0), (P::SnapRadius, 0.35)],
+        variants: &[("slow 0.6x", &[(P::CarrySpeed, 0.6)]), ("light 0.85x", &[(P::CarrySpeed, 0.85)])],
     },
-    Preset {
-        key: "Shift+2", row: "6", title: "throw angle / distance: 25 deg, 7 m vs 45 deg, 12 m",
+    Comparison {
+        row: "1", title: "move speed",
+        question: "Base pace. Does crossing the arena (~24 m pad to pad) feel snappy or frantic?",
+        bot: 1, both: &[],
+        variants: &[("6 m/s", &[(P::MoveSpeed, 6.0)]), ("8 m/s", &[(P::MoveSpeed, 8.0)])],
+    },
+    Comparison {
+        row: "10/11", title: "grab latency mask (100 ms grab delay)",
+        question: "Online grabs cost about one round trip. Do you notice it? Which hides it best?",
+        bot: 2, both: &[(P::GrabLatency, 100.0)],
+        variants: &[("no mask", &[(P::GrabMask, 0.0)]), ("reach", &[(P::GrabMask, 1.0)]), ("lunge", &[(P::GrabMask, 2.0)])],
+    },
+    Comparison {
+        row: "12", title: "grab reach (120 ms grab delay)",
+        question: "Does a longer reach also hide latency, and does it make stealing too easy?",
+        bot: 2, both: &[(P::GrabLatency, 120.0)],
+        variants: &[("short 1.2 m", &[(P::GrabReach, 1.2)]), ("long 2.0 m", &[(P::GrabReach, 2.0)])],
+    },
+    Comparison {
+        row: "9", title: "kick-open time",
+        question: "How long are you exposed opening loot (orange crates) under fire?",
+        bot: 3, both: &[],
+        variants: &[("quick 0.5 s", &[(P::KickTime, 0.5)]), ("slow 1.5 s", &[(P::KickTime, 1.5)])],
+    },
+    Comparison {
+        row: "5", title: "throw style",
+        question: "Jump-throw: on the ground you only toss a crate a short way. With the apex boost, is forcing a jump skill or friction?",
+        bot: 1, both: &[],
+        variants: &[("throw anytime", &[(P::ThrowStyle, 0.0)]), ("must jump to throw", &[(P::ThrowStyle, 1.0)])],
+    },
+    Comparison {
+        row: "6f", title: "slide",
+        question: "How much slide is fun, and how forgiving should the snap be?",
+        bot: 2, both: &[],
+        variants: &[
+            ("short, tight snap", &[(P::SlideKeep, 0.4), (P::SlideFriction, 10.0), (P::SnapRadius, 0.15)]),
+            ("as played", &[(P::SlideKeep, 0.6), (P::SlideFriction, 6.0), (P::SnapRadius, 0.3)]),
+            ("long, loose snap", &[(P::SlideKeep, 0.8), (P::SlideFriction, 4.0), (P::SnapRadius, 0.35)]),
+        ],
+    },
+    Comparison {
+        row: "6", title: "throw angle / distance",
         question: "Line drive vs lob. Can you curl a crate onto your pad from mid-field? Should a throw reach across the map?",
-        bot: 1, both: &[], a: &[(P::ThrowAngle, 25.0), (P::ThrowDist, 7.0)], b: &[(P::ThrowAngle, 45.0), (P::ThrowDist, 12.0)],
+        bot: 1, both: &[],
+        variants: &[
+            ("line drive 25 deg, 7 m", &[(P::ThrowAngle, 25.0), (P::ThrowDist, 7.0)]),
+            ("as played 35 deg, 9 m", &[(P::ThrowAngle, 35.0), (P::ThrowDist, 9.0)]),
+            ("lob 45 deg, 12 m", &[(P::ThrowAngle, 45.0), (P::ThrowDist, 12.0)]),
+        ],
     },
-    Preset {
-        key: "Shift+3", row: "6c", title: "throw-building under pressure: 35 vs 60 deg",
-        question: "Build a 2x2 by throwing from 6+ m while the hauler steals. Does a high lob make it too easy?",
-        bot: 2, both: &[], a: &[(P::ThrowAngle, 35.0)], b: &[(P::ThrowAngle, 60.0)],
+    Comparison {
+        row: "6c", title: "throw-building under pressure",
+        question: "Build a 2x2 on your pad by throwing from 6+ m while the hauler steals. Does a high lob make it too easy?",
+        bot: 2, both: &[],
+        variants: &[("35 deg", &[(P::ThrowAngle, 35.0)]), ("60 deg", &[(P::ThrowAngle, 60.0)])],
     },
 ];
 
-/// Loads comparison `idx` into A and B. Both start from the active slot (your baseline so
-/// far), then get the comparison's values and its bot.
-fn load_preset(tune: &mut Tune, sim: &mut Sim, idx: usize) {
-    let Some(pr) = PRESETS.get(idx) else { return };
-    let base = tune.slots[tune.active].clone();
-    let mut a = base.clone();
-    let mut b = base;
-    for slot in [&mut a, &mut b] {
-        set(slot, P::BotMode, pr.bot as f32);
-        for (p, x) in pr.both {
-            set(slot, *p, *x);
-        }
-    }
-    for (p, x) in pr.a {
-        set(&mut a, *p, *x);
-    }
-    for (p, x) in pr.b {
-        set(&mut b, *p, *x);
-    }
-    tune.slots = [a, b];
-    tune.active = 0;
-    tune.comparison = Some(idx);
-    sim.reset();
-    sim.say(format!("comparison {}: {} (Tab swaps A/B, K keeps the active slot)", pr.key, pr.title));
+struct Guide {
+    idx: usize,
+    variant: usize,
+    /// The baseline the variants are applied on top of.
+    base: Vec<Param>,
 }
 
-/// `CORE_FEEL_PRESET=<index>` loads a comparison at startup (smoke tests).
-fn preset_from_env(mut tune: ResMut<Tune>, mut sim: ResMut<Sim>) {
-    if let Some(i) = std::env::var("CORE_FEEL_PRESET").ok().and_then(|v| v.parse().ok()) {
-        load_preset(&mut tune, &mut sim, i);
+/// Puts variant `v` of the current comparison into both slots.
+fn apply_variant(tune: &mut Tune, v: usize) {
+    let Some(g) = &mut tune.guide else { return };
+    let cmp = &COMPARISONS[g.idx];
+    let v = v.min(cmp.variants.len() - 1);
+    g.variant = v;
+    let mut slot = g.base.clone();
+    set(&mut slot, P::BotMode, cmp.bot as f32);
+    for (p, x) in cmp.both.iter().chain(cmp.variants[v].1) {
+        set(&mut slot, *p, *x);
+    }
+    tune.slots = [slot.clone(), slot];
+    tune.active = 0;
+}
+
+/// Starts the next comparison without a verdict after `from` (wrapping), if any is left.
+fn start_next(tune: &mut Tune, sim: &mut Sim, from: Option<usize>) {
+    let n = COMPARISONS.len();
+    let first = from.map_or(0, |i| i + 1);
+    let Some(idx) = (0..n).map(|k| (first + k) % n).find(|&i| !tune.settled[i]) else {
+        tune.guide = None;
+        sim.say("all comparisons done: press P and paste the output");
+        return;
+    };
+    let base = tune.slots[tune.active].clone();
+    tune.guide = Some(Guide { idx, variant: 0, base });
+    apply_variant(tune, 0);
+    sim.reset();
+}
+
+/// `CORE_FEEL_COMPARISON=<index>` starts the guide at that comparison (smoke tests).
+fn guide_from_env(mut tune: ResMut<Tune>, mut sim: ResMut<Sim>) {
+    if let Some(i) = std::env::var("CORE_FEEL_COMPARISON").ok().and_then(|v| v.parse::<usize>().ok()) {
+        start_next(&mut tune, &mut sim, i.checked_sub(1));
     }
 }
 
@@ -1013,40 +1029,32 @@ fn tune_input(
         sim.reset();
         sim.say("arena reset");
     }
-    // Comparison presets: both slots start from the active slot (your baseline so far),
-    // then get the comparison's values and its bot.
-    let shift = keys.pressed(KeyCode::ShiftLeft) || keys.pressed(KeyCode::ShiftRight);
-    let digits = [
-        KeyCode::Digit1, KeyCode::Digit2, KeyCode::Digit3, KeyCode::Digit4, KeyCode::Digit5,
-        KeyCode::Digit6, KeyCode::Digit7, KeyCode::Digit8, KeyCode::Digit9, KeyCode::Digit0,
-    ];
-    for (n, key) in digits.iter().enumerate() {
-        if !keys.just_pressed(*key) {
-            continue;
-        }
-        load_preset(&mut tune, &mut sim, if shift { 10 + n } else { n });
+    // Guided comparisons.
+    if keys.just_pressed(KeyCode::KeyN) {
+        // Skip: back to the baseline first, so the skipped variant doesn't leak into it.
+        let from = tune.guide.take().map(|g| {
+            tune.slots = [g.base.clone(), g.base];
+            g.idx
+        });
+        start_next(&mut tune, &mut sim, from);
     }
-    // K: the active slot wins. It becomes the baseline in both slots, and the verdict is logged.
-    if keys.just_pressed(KeyCode::KeyK) {
-        let (act, other) = (tune.active, 1 - tune.active);
-        let slot = if act == 0 { "A" } else { "B" };
-        let kept: Vec<String> = tune.slots[act]
-            .iter()
-            .zip(&tune.slots[other])
-            .filter(|(x, y)| !same(&x.value, &y.value))
-            .map(|(x, _)| format!("{} = {}", x.name, fmt_value(&x.value)))
-            .collect();
-        let what = match tune.comparison.and_then(|i| PRESETS.get(i)) {
-            Some(pr) => format!("row {} ({})", pr.row, pr.title),
-            None => "manual comparison".to_string(),
-        };
-        let kept = if kept.is_empty() { "slots were identical".to_string() } else { kept.join(", ") };
-        let line = format!("{what}: kept {slot}: {kept}");
+    if tune.guide.is_some() {
+        for (v, key) in [KeyCode::Digit1, KeyCode::Digit2, KeyCode::Digit3].iter().enumerate() {
+            if keys.just_pressed(*key) {
+                apply_variant(&mut tune, v);
+            }
+        }
+    }
+    if keys.just_pressed(KeyCode::Enter)
+        && let Some(g) = tune.guide.take()
+    {
+        let cmp = &COMPARISONS[g.idx];
+        let line = format!("row {} {}: {}", cmp.row, cmp.title, cmp.variants[g.variant].0);
         println!("verdict: {line}");
         tune.verdicts.push(line);
-        tune.slots[other] = tune.slots[act].clone();
-        tune.comparison = None;
-        sim.say(format!("kept slot {slot} as the baseline"));
+        tune.settled[g.idx] = true;
+        // The variant you kept (including any panel tweaks) is the new baseline.
+        start_next(&mut tune, &mut sim, Some(g.idx));
     }
     if keys.just_pressed(KeyCode::KeyP) {
         let slot = if tune.active == 0 { "A" } else { "B" };
@@ -1593,6 +1601,9 @@ struct Hud;
 #[derive(Component)]
 struct Panel;
 
+#[derive(Component)]
+struct GuideText;
+
 fn setup(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
@@ -1648,6 +1659,20 @@ fn setup(
         // Bottom-left, so the tuning panel (top-right) never covers it in a narrow window.
         Node { position_type: PositionType::Absolute, bottom: px(10.0), left: px(10.0), ..default() },
         BackgroundColor(Color::BLACK.with_alpha(0.5)),
+    ));
+    commands.spawn((
+        GuideText,
+        Text::new(""),
+        TextFont::from_font_size(22.0),
+        Node {
+            position_type: PositionType::Absolute,
+            top: px(10.0),
+            left: px(10.0),
+            padding: UiRect::all(px(10.0)),
+            max_width: percent(55.0),
+            ..default()
+        },
+        BackgroundColor(Color::BLACK.with_alpha(0.7)),
     ));
     commands.spawn((
         Panel,
@@ -1874,17 +1899,9 @@ fn hud(sim: Res<Sim>, tune: Res<Tune>, controls: Res<Controls>, mut hud: Single<
     };
     let slot = if tune.active == 0 { "A" } else { "B" };
     let mut s = String::new();
-    match tune.comparison.and_then(|i| PRESETS.get(i)) {
-        Some(pr) => {
-            let a: Vec<String> = pr.a.iter().map(|(p, _)| fmt_value(&tune.slots[0][*p as usize].value)).collect();
-            let b: Vec<String> = pr.b.iter().map(|(p, _)| fmt_value(&tune.slots[1][*p as usize].value)).collect();
-            s += &format!("COMPARISON {} (sheet row {}): {}\n", pr.key, pr.row, pr.title);
-            s += &format!("  {}\n", pr.question);
-            s += &format!("  A = {}   B = {}   -> Tab swaps, K keeps the slot you're on\n", a.join(", "), b.join(", "));
-        }
-        None => s += &format!("Comparisons: 1-9, 0, Shift+1-3 load one into A/B   ({} settled)\n", tune.verdicts.len()),
+    if tune.guide.is_none() {
+        s += &format!("SLOT {slot}  (Tab / Select swaps)\n");
     }
-    s += &format!("SLOT {slot}  (Tab / Select swaps)\n");
     s += &format!(
         "you: {}{}{}\n",
         if a.carrying.is_some() { "CARRYING" } else { "empty-handed" },
@@ -1937,12 +1954,38 @@ fn hud(sim: Res<Sim>, tune: Res<Tune>, controls: Res<Controls>, mut hud: Single<
     hud.0 = s;
 }
 
+fn guide_text(tune: Res<Tune>, mut text: Single<&mut Text, (With<GuideText>, Without<Hud>, Without<Panel>)>) {
+    let done = tune.settled.iter().filter(|s| **s).count();
+    let total = COMPARISONS.len();
+    text.0 = match &tune.guide {
+        Some(g) => {
+            let cmp = &COMPARISONS[g.idx];
+            let mut s = format!("COMPARISON {} of {total}: {}\n{}\n\n", g.idx + 1, cmp.title, cmp.question);
+            for (i, (label, _)) in cmp.variants.iter().enumerate() {
+                if i == g.variant {
+                    s += &format!("  >> [{}] {} <<  PLAYING\n", i + 1, label.to_uppercase());
+                } else {
+                    s += &format!("     [{}] {}\n", i + 1, label);
+                }
+            }
+            s += "\nPress 1/2/3 to switch.  ENTER = keep the one you're playing, next.  N = skip.";
+            s
+        }
+        None if done == total => "All comparisons done. Press P and paste the output.".into(),
+        None => format!("Press N to start the next comparison ({done} of {total} done)."),
+    };
+}
+
 fn panel(tune: Res<Tune>, mut panel: Single<(&mut Text, &mut Visibility), (With<Panel>, Without<Hud>)>) {
     let (text, vis) = &mut *panel;
     **vis = if tune.panel { Visibility::Visible } else { Visibility::Hidden };
     let slot = if tune.active == 0 { "A" } else { "B" };
     let other = 1 - tune.active;
-    let mut s = format!("TUNING slot {slot}   (* = differs from other slot)\n\n");
+    let mut s = if tune.guide.is_some() {
+        "TUNING (the variant you're playing)\n\n".to_string()
+    } else {
+        format!("TUNING slot {slot}   (* = differs from other slot)\n\n")
+    };
     for (i, p) in tune.slots[tune.active].iter().enumerate() {
         let cursor = if i == tune.selected { ">" } else { " " };
         let diff = if same(&p.value, &tune.slots[other][i].value) { " " } else { "*" };
@@ -2002,16 +2045,18 @@ fn main() {
             active: 0,
             selected: 0,
             panel: true,
-            comparison: None,
+            guide: None,
+            settled: vec![false; COMPARISONS.len()],
             verdicts: Vec::new(),
         })
         .insert_resource(Sim::new())
         .init_resource::<Controls>()
         .init_resource::<Smoke>()
-        .add_systems(Startup, (setup, preset_from_env))
+        .add_systems(Startup, (setup, guide_from_env).chain())
         .add_systems(
             Update,
-            (read_controls, tune_input, step, sync_views, follow_camera, draw_gizmos, hud, panel, smoke_exit).chain(),
+            (read_controls, tune_input, step, sync_views, follow_camera, draw_gizmos, hud, guide_text, panel, smoke_exit)
+                .chain(),
         )
         .run();
 }

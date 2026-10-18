@@ -57,34 +57,21 @@ each contested parameter below and picked a baseline.
 - The HUD shows your state (carrying, airborne, grab in flight), pad counts, bot HP, the last
   time-to-kill, accuracy, times hit, and grabs vs. denied grabs.
 
-## Running the comparisons (one key each)
+## Running the comparisons (guided)
 
-Press a key to load a comparison into slots A and B. Both start from your current baseline
-(curling and the apex jump stay on), then get the two variants and the right bot. The HUD
-shows the question and what A and B are. Play, use **Tab** to swap between A and B, and when
-you've decided, **stay on the slot you want and press K**. That slot becomes the baseline in
-both slots, so the next comparison builds on it, and a verdict line is printed to the
-terminal. **P** prints the baseline plus every verdict so far. Paste that output into the
-issue at the end.
+1. Press **N**. The first open comparison loads, with its bot, on top of your baseline. A
+   big box top-left shows the question and the variants.
+2. Press **1 / 2 / 3** to switch between variants while you play. The one marked
+   `>> PLAYING <<` is live.
+3. Press **Enter** to keep the one you're playing. It becomes your baseline, a verdict line
+   prints to the terminal, and the next comparison loads. **N** skips without a verdict.
+4. When all are done, press **P** and paste the output (baseline + verdicts) into the issue.
 
-| Key | Row | Comparison | Bot |
-|---|---|---|---|
-| 1 | 3 | carrying disarms: full lock vs sidearm (set B to melee only for the third) | duelist |
-| 2 | 7 | weapon: hitscan vs projectile at 18 m/s | strafer |
-| 3 | 4 | hit drops crate: yes vs no | duelist |
-| 4 | 8 | fire rate / shots to kill: 5/s, 8 vs 3/s, 4 | strafer |
-| 5 | 2 | carry speed: 0.6× vs 0.85× | hauler |
-| 6 | 1 | move speed: 6 vs 8 m/s | strafer |
-| 7 | 10/11 | grab latency 100 ms: no mask vs reach (set B to lunge for the third) | hauler |
-| 8 | 12 | grab reach at 120 ms: 1.2 vs 2.0 m | hauler |
-| 9 | 9 | kick-open time: 0.5 vs 1.5 s | duelist |
-| 0 | 5 | throw style: ground throw vs jump-throw | strafer |
-| Shift+1 | 6f | slide: short + tight snap vs long + loose snap | hauler |
-| Shift+2 | 6 | throw angle / distance: 25°, 7 m vs 45°, 12 m | strafer |
-| Shift+3 | 6c | throw-building under pressure: 35° vs 60° | hauler |
-
-Grab latency comparisons (7, 8) leave latency on in the slot you keep. That's deliberate,
-since online play has it, but you can set it back to 0 in the panel.
+Open comparisons, in order: weapon (7), carry speed (2), move speed (1), grab latency mask
+(10/11, three-way), grab reach (12), kick-open time (9), throw style (5), slide (6f,
+three-way), throw angle/distance (6, three-way), throw-building under pressure (6c).
+Grab latency comparisons leave latency on in what you keep. That's deliberate, since online
+play has it.
 
 ## What to try
 
@@ -130,7 +117,11 @@ since online play has it, but you can set it back to 0 in the panel.
 - Both build on what came before: aiming while carrying = the ghost, throws solved to the
   touchdown, honest collision-aware preview, gamepad stick tilt = distance.
 - Verdict: "this is fun".
+- **Row 4 hit drops crate: yes.** Getting shot knocks the crate loose.
+- **Row 3 carrying disarms: full lock.** You can't fire while holding a crate. The human
+  liked both: carrying is a commitment, and getting hit ends it.
+- **Row 8 fire rate / shots to kill: 3/s, 4 shots** (about 1.0 s TTK if every shot hits),
+  over 5/s and 8. The faster TTK felt better.
 
-**Still open:** every other comparison (1–5, 6, 6b, 6c, 6f, 7–13), including carry
-disarm, hit drops crate, hitscan vs. projectile, the fire rate/TTK target, kick-open time,
-grab latency masks and reach. The slide numbers (6f) are where they were played, not tuned.
+**Still open:** rows 1, 2, 5, 6, 6c, 6f, 7, 9, 10/11, 12 (the guided list above). Rows 6b
+(aimed throws) and 13 (placing under pressure) are covered by what was played and kept.
