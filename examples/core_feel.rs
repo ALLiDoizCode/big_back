@@ -19,7 +19,6 @@
 use std::f32::consts::FRAC_PI_2;
 use std::time::Duration;
 
-use bevy::input::mouse::MouseMotion;
 use bevy::prelude::*;
 use bevy::render::view::screenshot::{save_to_disk, Screenshot};
 
@@ -456,6 +455,9 @@ struct Controls {
     kick_held: bool,
     kick: bool,
     use_mouse: bool,
+    /// Where the mouse aims, for the reticle.
+    aim_point: Option<Vec3>,
+    source: &'static str,
 }
 
 #[derive(Component)]
@@ -464,7 +466,8 @@ struct MainCamera;
 fn read_controls(
     keys: Res<ButtonInput<KeyCode>>,
     mouse: Res<ButtonInput<MouseButton>>,
-    mut motion: MessageReader<MouseMotion>,
+    // CursorMoved, not MouseMotion: raw device motion often never arrives on Wayland.
+    mut moved: MessageReader<CursorMoved>,
     gamepads: Query<&Gamepad>,
     window: Single<&Window>,
     camera: Single<(&Camera, &GlobalTransform), With<MainCamera>>,
@@ -482,7 +485,7 @@ fn read_controls(
     c.fire = mouse.pressed(MouseButton::Left);
     c.kick_held = keys.pressed(KeyCode::KeyF);
     c.kick = keys.just_pressed(KeyCode::KeyF);
-    if motion.read().count() > 0 || mouse.just_pressed(MouseButton::Left) {
+    if moved.read().count() > 0 || mouse.just_pressed(MouseButton::Left) {
         c.use_mouse = true;
     }
     let mut stick_aim = None;
@@ -507,6 +510,8 @@ fn read_controls(
     }
     c.mv = mv.clamp_length_max(1.0);
     c.aim = stick_aim;
+    c.aim_point = None;
+    c.source = if stick_aim.is_some() { "right stick" } else { "move direction (no aim input yet)" };
     if c.use_mouse && stick_aim.is_none() {
         let (cam, cam_tf) = *camera;
         if let Some(cursor) = window.cursor_position()
@@ -515,6 +520,8 @@ fn read_controls(
         {
             let p = ray.get_point(d);
             let to = (p - sim.actors[PLAYER].pos).with_y(0.0);
+            c.aim_point = Some(p.with_y(CHEST));
+            c.source = "mouse";
             if to.length() > 0.2 {
                 c.aim = Some(to.normalize());
             }
@@ -1186,7 +1193,9 @@ fn setup(
         Hud,
         Text::new(""),
         TextFont::from_font_size(15.0),
-        Node { position_type: PositionType::Absolute, top: px(10.0), left: px(10.0), ..default() },
+        // Bottom-left, so the tuning panel (top-right) never covers it in a narrow window.
+        Node { position_type: PositionType::Absolute, bottom: px(10.0), left: px(10.0), ..default() },
+        BackgroundColor(Color::BLACK.with_alpha(0.5)),
     ));
     commands.spawn((
         Panel,
@@ -1293,8 +1302,13 @@ fn ground_circle(p: Vec3) -> Isometry3d {
 fn draw_gizmos(mut g: Gizmos, sim: Res<Sim>, tune: Res<Tune>, controls: Res<Controls>) {
     let a = &sim.actors[PLAYER];
     let chest = a.pos + Vec3::Y * CHEST;
-    // Aim line.
-    g.line(chest, chest + a.facing * 3.0, Color::srgba(1.0, 1.0, 1.0, 0.4));
+    // Aim line, plus a reticle where the mouse points (at chest height, where shots fly).
+    g.line(chest, chest + a.facing * 8.0, Color::srgba(1.0, 1.0, 1.0, 0.5));
+    if let Some(p) = controls.aim_point {
+        g.circle(ground_circle(p), 0.35, Color::srgb(1.0, 0.3, 0.3));
+        g.circle(ground_circle(p.with_y(0.03)), 0.35, Color::srgba(1.0, 0.3, 0.3, 0.4));
+        g.line(p.with_y(0.03), p, Color::srgba(1.0, 0.3, 0.3, 0.4));
+    }
     // Grab reach ring.
     if a.carrying.is_none() {
         g.circle(ground_circle(a.pos + Vec3::Y * 0.03), tune.f(P::GrabReach) + HALF, Color::srgba(1.0, 1.0, 1.0, 0.15));
@@ -1373,10 +1387,9 @@ fn draw_gizmos(mut g: Gizmos, sim: Res<Sim>, tune: Res<Tune>, controls: Res<Cont
             Color::WHITE,
         );
     }
-    let _ = &controls;
 }
 
-fn hud(sim: Res<Sim>, tune: Res<Tune>, mut hud: Single<&mut Text, (With<Hud>, Without<Panel>)>) {
+fn hud(sim: Res<Sim>, tune: Res<Tune>, controls: Res<Controls>, mut hud: Single<&mut Text, (With<Hud>, Without<Panel>)>) {
     let a = &sim.actors[PLAYER];
     let b = &sim.actors[BOT];
     let pad_count = |pad: Vec2| {
@@ -1396,6 +1409,7 @@ fn hud(sim: Res<Sim>, tune: Res<Tune>, mut hud: Single<&mut Text, (With<Hud>, Wi
             None => String::new(),
         }
     );
+    s += &format!("aim: {}\n", controls.source);
     let tallest = |pad: Vec2| {
         sim.crates
             .iter()
