@@ -33,7 +33,8 @@ const HEAD: f32 = 2.2;
 const CHEST: f32 = 1.2;
 const ACTOR_R: f32 = 0.45;
 const YOU: usize = 0;
-const PAD_HALF: f32 = 2.0;
+/// The pad is 2 x 2 crate cells (Team Buddies), at most 2 crates high.
+const PAD_HALF: f32 = CRATE;
 const CAM_OFFSET: Vec3 = Vec3::new(0.0, 21.0, 14.0);
 /// The whole-arena camera at 3v3 size; it moves out with the arena.
 const ARENA_CAM: Vec3 = Vec3::new(0.0, 46.0, 28.0);
@@ -62,10 +63,89 @@ fn arena_scale() -> f32 {
     arena().x / BASE_ARENA.x
 }
 
-/// Team pads, on the crate grid, 3.6 m in from each end.
+/// Team pad centres, about 3.6 m in from each end. A pad's centre sits between crate
+/// grid cells, so its 4 cells are on the grid.
 fn pads() -> [Vec2; 2] {
-    let x = ((arena().x - 3.6) / CRATE).round() * CRATE;
-    [Vec2::new(-x, 0.0), Vec2::new(x, 0.0)]
+    let x = ((arena().x - 3.6) / CRATE).round() * CRATE + HALF;
+    [Vec2::new(-x, HALF), Vec2::new(x, HALF)]
+}
+
+/// The centres of a pad's 4 cells, indexed x + 2z.
+fn pad_cells(team: usize) -> [Vec2; 4] {
+    let p = pads()[team];
+    [Vec2::new(-HALF, -HALF), Vec2::new(HALF, -HALF), Vec2::new(-HALF, HALF), Vec2::new(HALF, HALF)].map(|o| p + o)
+}
+
+/// What the crates on a pad make when kicked open: Team Buddies' recipe shapes.
+#[derive(Clone, Copy, PartialEq)]
+enum Shape {
+    Empty,
+    One,
+    TwoFlat,
+    TwoStacked,
+    FourFlat,
+    FourStacked,
+    Cube,
+    /// Lined up, but no recipe has this shape yet: add crates.
+    Odd,
+    /// A crate on the pad isn't sitting in a cell (or is still moving).
+    Unaligned,
+}
+
+impl Shape {
+    fn label(self) -> &'static str {
+        match self {
+            Shape::Empty => "empty",
+            Shape::One => "1 crate",
+            Shape::TwoFlat => "2 side by side",
+            Shape::TwoStacked => "2 stacked",
+            Shape::FourFlat => "4 flat",
+            Shape::FourStacked => "2 wide x 2 high",
+            Shape::Cube => "all 8",
+            Shape::Odd => "no recipe yet",
+            Shape::Unaligned => "not lined up",
+        }
+    }
+    /// What kicking it open gives here. PLACEHOLDER results: the real build grammar is #17.
+    fn result(self) -> &'static str {
+        match self {
+            Shape::Empty => "nothing",
+            Shape::One | Shape::TwoFlat => "full health (TB: a weapon)",
+            Shape::TwoStacked => "1 new player",
+            Shape::FourStacked => "2 new players",
+            Shape::FourFlat => "a turret (TB: heavy weapon)",
+            Shape::Cube => "a turret (TB: vehicle)",
+            Shape::Odd => "add crates to make a shape",
+            Shape::Unaligned => "kick it to break the crates",
+        }
+    }
+    fn players(self) -> usize {
+        match self {
+            Shape::TwoStacked => 1,
+            Shape::FourStacked => 2,
+            _ => 0,
+        }
+    }
+}
+
+fn adjacent(a: usize, b: usize) -> bool {
+    ((a % 2) == (b % 2)) != ((a / 2) == (b / 2))
+}
+
+/// The recipe a set of cell heights makes.
+fn shape_of(h: [u8; 4]) -> Shape {
+    let total: u8 = h.iter().sum();
+    let cells = |n: u8| (0..4).filter(|&i| h[i] == n).collect::<Vec<_>>();
+    match total {
+        0 => Shape::Empty,
+        1 => Shape::One,
+        2 if cells(2).len() == 1 => Shape::TwoStacked,
+        2 if cells(1).len() == 2 && adjacent(cells(1)[0], cells(1)[1]) => Shape::TwoFlat,
+        4 if cells(1).len() == 4 => Shape::FourFlat,
+        4 if cells(2).len() == 2 && adjacent(cells(2)[0], cells(2)[1]) => Shape::FourStacked,
+        8 => Shape::Cube,
+        _ => Shape::Odd,
+    }
 }
 const TURRET_H: f32 = 1.1;
 const PLACE_REACH: f32 = 1.6;
@@ -116,7 +196,6 @@ enum P {
     MatchLength,
     TimeScale,
     Camera,
-    Craft,
 }
 
 #[derive(Clone)]
@@ -145,15 +224,13 @@ fn defaults() -> Vec<Param> {
         num("team size", 3.0, 1.0, 8.0, 1.0, "v"),
         // 3v3 in 36 x 22 m is 132 m2 per player.
         num("space per player", 130.0, 60.0, 250.0, 10.0, "m2"),
-        // Off: only you build blue's stacks, so you can see each join is yours.
-        choice("blue bots stack", 1, &["off (only you)", "on"]),
+        // Off: only you build and open blue's pad, so you can see each join is yours.
+        choice("blue bots build", 1, &["off (only you)", "on"]),
         num("online delay", 0.0, 0.0, 250.0, 25.0, "ms"),
         choice("your seat", 0, &["you play", "bot (watch)"]),
         num("match length", 120.0, 30.0, 300.0, 30.0, "s"),
         num("time scale", 1.0, 1.0, 4.0, 1.0, "x"),
         choice("camera", 0, &["follow you", "whole arena"]),
-        // PLACEHOLDER only, so stacking does something. The real grammar is issue #17.
-        choice("placeholder craft", 0, &["2x2 = turret", "off"]),
     ]
 }
 
@@ -200,7 +277,7 @@ fn fmt_value(v: &Value) -> String {
 fn roster_desc(tune: &Tune) -> String {
     let n = tune.c(P::TeamSize);
     let a = arena() * 2.0;
-    format!("up to {n}v{n} players (start 1v1, +1 per 2-high stack), no AI units, arena {:.0} x {:.0} m", a.x, a.y)
+    format!("up to {n}v{n} players (start 1v1, more from pad recipes), no AI units, arena {:.0} x {:.0} m", a.x, a.y)
 }
 
 /// The team sizes keys 1-4 switch between.
@@ -336,8 +413,15 @@ struct Sim {
     team_size: usize,
     /// The space per player the arena was sized with.
     space: f32,
-    /// Blue's bots build 2-high stacks too.
+    /// Blue's bots build pad shapes and kick them open too.
     ally_stacks: bool,
+    /// You're in your seat (not watching a bot play it).
+    you_play: bool,
+    /// Kick-open progress on each pad, and who kicked it this tick.
+    pad_kick: [f32; 2],
+    kicking: [Option<usize>; 2],
+    /// How long each pad has held crates that make no recipe.
+    odd_t: [f32; 2],
     /// Crates spent on placeholder turrets: they still count for the score.
     banked: [usize; 2],
     match_left: f32,
@@ -368,6 +452,10 @@ impl Sim {
             team_size: 0,
             space: 0.0,
             ally_stacks: false,
+            you_play: true,
+            pad_kick: [0.0; 2],
+            kicking: [None; 2],
+            odd_t: [0.0; 2],
             banked: [0; 2],
             match_left: 0.0,
             over: 0.0,
@@ -398,6 +486,8 @@ impl Sim {
         self.space = tune.f(P::Space);
         set_arena(self.team_size, self.space);
         self.banked = [0; 2];
+        self.pad_kick = [0.0; 2];
+        self.odd_t = [0.0; 2];
         for team in 0..2 {
             for slot in 0..self.team_size {
                 self.actors.push(Actor::new(team, slot));
@@ -408,7 +498,7 @@ impl Sim {
             let a = &mut self.actors[i];
             a.pos = p;
             a.facing = Vec3::X * toward_centre(a.team);
-            // Each team starts with one player; the rest join from 2-high stacks.
+            // Each team starts with one player; the rest join from pad recipes.
             if a.slot > 0 {
                 a.dead = f32::INFINITY;
             }
@@ -511,25 +601,130 @@ impl Sim {
         Vec3::new(xz.x, top + HALF, xz.y)
     }
 
-    /// Where bot `i` sets its crate down on its pad: the lowest cell, then the nearest.
-    /// While the team has room for another player, on top of a lone crate first, to build
-    /// a 2-high stack (blue's bots only with "blue bots stack" on).
-    fn pad_cell(&self, i: usize) -> Vec3 {
-        let (team, from) = (self.actors[i].team, self.actors[i].pos);
-        let column = self.players(team) < self.team_size && (team == 1 || self.ally_stacks || i == YOU);
-        let pad = pads()[team];
-        let mut best: Option<(f32, Vec3)> = None;
-        for gx in -2..=2 {
-            for gz in -2..=2 {
-                let at = self.target_at(pad + Vec2::new(gx as f32, gz as f32) * CRATE);
-                let second = (at.y - CRATE * 1.5).abs() < 0.05;
-                let score = if column && second { -10.0 } else { at.y * 10.0 } + at.xz().distance(from.xz());
-                if best.is_none_or(|(b, _)| score < b) {
-                    best = Some((score, at));
+    /// The heights of a pad's 4 cells, the recipe they make, and the crates in it.
+    fn pad_state(&self, team: usize) -> ([u8; 4], Shape, Vec<u32>) {
+        let cells = pad_cells(team);
+        let mut h = [0u8; 4];
+        let mut ids = Vec::new();
+        let mut odd = false;
+        for c in self.crates.iter().filter(|c| c.state == CrateState::Free && c.kind == Kind::Normal) {
+            if !pad_contains(pads()[team], c.pos) {
+                continue;
+            }
+            ids.push(c.id);
+            let cell = cells.iter().position(|q| q.distance(c.pos.xz()) < 0.1);
+            let level = ((c.pos.y - HALF) / CRATE).round() as u8;
+            match cell {
+                Some(k) if c.vel.length() < 0.1 && (c.pos.y - HALF - level as f32 * CRATE).abs() < 0.05 && level < 2 => {
+                    h[k] += 1;
                 }
+                _ => odd = true,
             }
         }
-        best.map_or(pad.extend(HALF).xzy(), |(_, at)| at)
+        let shape = if odd { Shape::Unaligned } else { shape_of(h) };
+        (h, shape, ids)
+    }
+
+    /// Whether `team` can open its pad: the shape is a recipe, and there's room for any
+    /// players it brings.
+    fn can_open(&self, team: usize, shape: Shape) -> bool {
+        !matches!(shape, Shape::Empty | Shape::Odd | Shape::Unaligned)
+            && (shape.players() == 0 || self.players(team) < self.team_size)
+    }
+
+    /// Where bot `i` sets its crate down on its pad: the cell that best builds toward a
+    /// recipe (players while the team has room, else a turret). None when the pad is full.
+    fn pad_cell(&self, i: usize) -> Option<Vec3> {
+        let team = self.actors[i].team;
+        let (h, shape, _) = self.pad_state(team);
+        if shape == Shape::Unaligned {
+            return None;
+        }
+        let builds = team == 1 || self.ally_stacks || i == YOU;
+        let room = if builds { self.team_size - self.players(team) } else { 0 };
+        let score = |h: [u8; 4]| -> i32 {
+            let total: u8 = h.iter().sum();
+            match shape_of(h) {
+                Shape::TwoStacked if room >= 1 => 100,
+                Shape::FourStacked if room >= 2 => 95,
+                Shape::Cube => 70,
+                Shape::FourFlat => 60,
+                Shape::TwoFlat => 20,
+                Shape::One => 10,
+                _ if total == 3 => {
+                    let twos: Vec<usize> = (0..4).filter(|&k| h[k] == 2).collect();
+                    let ones: Vec<usize> = (0..4).filter(|&k| h[k] == 1).collect();
+                    match (twos.as_slice(), ones.as_slice()) {
+                        ([t], [o]) if room >= 2 && adjacent(*t, *o) => 50,
+                        ([], [_, _, _]) => 40,
+                        _ => 1,
+                    }
+                }
+                _ if total > 4 => 30 + total as i32,
+                _ => 1,
+            }
+        };
+        let cells = pad_cells(team);
+        (0..4)
+            .filter(|&k| h[k] < 2)
+            .max_by_key(|&k| {
+                let mut next = h;
+                next[k] += 1;
+                score(next)
+            })
+            .map(|k| Vec3::new(cells[k].x, HALF + h[k] as f32 * CRATE, cells[k].y))
+    }
+
+    /// Kicks `team`'s pad open: the crates are used up (they still score) and the shape's
+    /// recipe comes out.
+    fn open_pad(&mut self, team: usize, by: usize) {
+        let (_, shape, ids) = self.pad_state(team);
+        self.crates.retain(|c| {
+            let used = ids.contains(&c.id);
+            if used { self.despawn.extend(c.ent); }
+            !used
+        });
+        self.banked[team] += ids.len();
+        let pad = pads()[team];
+        let front = Vec3::new(pad.x + toward_centre(team) * 1.6, 0.0, pad.y);
+        let mut joined = 0;
+        for k in 0..shape.players() {
+            let Some(slot) = (0..self.actors.len()).find(|&j| self.actors[j].team == team && self.actors[j].dead.is_infinite())
+            else {
+                break;
+            };
+            let p = &mut self.actors[slot];
+            p.dead = 0.0;
+            p.hp = 100.0;
+            p.pos = front + Vec3::Z * (k as f32 * 1.2 - 0.6);
+            p.vel = Vec3::ZERO;
+            p.hist.clear();
+            joined += 1;
+        }
+        match shape {
+            Shape::One | Shape::TwoFlat => self.actors[by].hp = 100.0,
+            Shape::FourFlat | Shape::Cube => self.turrets.push(Turret {
+                team,
+                pos: front + Vec3::X * toward_centre(team) * 1.4,
+                facing: Vec3::X * toward_centre(team),
+                cd: 0.5,
+                life: 40.0,
+                ent: None,
+            }),
+            _ => {}
+        }
+        let who = if by == YOU { "YOU".to_string() } else { self.describe(by) };
+        let what = match joined {
+            0 => shape.result().to_string(),
+            1 => "1 new player".to_string(),
+            n => format!("{n} new players"),
+        };
+        let mut msg = format!("{} pad kicked open by {who}: {} -> {what}", ["BLUE", "RED"][team], shape.label());
+        if joined > 0 {
+            msg += &format!(" ({}/{})", self.players(team), self.team_size);
+        }
+        println!("t={:.1}s {msg}", self.t);
+        self.say(msg);
     }
 
     fn place(&mut self, who: usize, at: Vec3) {
@@ -592,7 +787,7 @@ impl Sim {
             self.say("you're down (3 s)");
         } else if !first {
             let how = if by == Some(YOU) { "you knocked out" } else { "out:" };
-            self.say(format!("{how} {what}. Stack 2 crates to bring a player back"));
+            self.say(format!("{how} {what}. Kick open a 2-stack on your pad to bring a player back"));
         } else if by == Some(YOU) {
             self.say(format!("you downed {what}"));
         }
@@ -1013,6 +1208,7 @@ fn tick(s: &mut Sim, c: &Controls, tune: &Tune, dt: f32) {
     }
     s.t += dt;
     s.ally_stacks = tune.c(P::AllyStacks) == 1;
+    s.you_play = tune.c(P::Seat) == 0;
     let t = s.t;
     for i in 0..s.actors.len() {
         let a = &mut s.actors[i];
@@ -1042,8 +1238,8 @@ fn tick(s: &mut Sim, c: &Controls, tune: &Tune, dt: f32) {
     crates_physics(s);
     crates_step(s, dt);
     shots_step(s, dt);
-    join_players(s);
-    craft(s, tune, dt);
+    pads_step(s, dt);
+    turrets_step(s, dt);
     refill(s, dt);
     for a in &mut s.actors {
         a.hist.push_back((t, a.pos));
@@ -1155,9 +1351,14 @@ fn player_step(s: &mut Sim, c: &Controls, dt: f32) {
 
     if !carrying {
         let pos = s.actors[YOU].pos;
+        let my_pad = pads()[s.actors[YOU].team];
+        // Hold kick beside your pad to open what's on it.
+        if c.kick_held && pos.xz().distance(my_pad) < PAD_HALF + 1.4 {
+            s.kicking[s.actors[YOU].team] = Some(YOU);
+        }
         let mut opened = None;
         let mut punted = false;
-        for cr in s.crates.iter_mut().filter(|cr| cr.state == CrateState::Free) {
+        for cr in s.crates.iter_mut().filter(|cr| cr.state == CrateState::Free && !pad_contains(my_pad, cr.pos)) {
             let near = cr.pos.xz().distance(pos.xz()) < 1.6 && cr.pos.y - pos.y < 1.5;
             match cr.kind {
                 Kind::Loot if near && c.kick_held => {
@@ -1232,7 +1433,14 @@ enum Act {
 fn haul_plan(s: &Sim, i: usize) -> (Option<Vec3>, Act, Option<u32>) {
     let a = &s.actors[i];
     if a.carrying.is_some() {
-        let cell = s.pad_cell(i);
+        let (_, shape, _) = s.pad_state(a.team);
+        let builds = a.team == 1 || s.ally_stacks || i == YOU;
+        // Hold on to it while the pad is ready to open (or full), so the shape survives.
+        let ready = s.can_open(a.team, shape) && worth_opening(s, a.team, shape);
+        let cell = s.pad_cell(i).filter(|_| !(builds && ready));
+        let Some(cell) = cell else {
+            return (Some(pad_front(a.team, a.slot)), Act::None, None);
+        };
         if cell.xz().distance(a.pos.xz()) < 2.0 {
             return (None, Act::Place(cell), None);
         }
@@ -1253,14 +1461,56 @@ fn haul_plan(s: &Sim, i: usize) -> (Option<Vec3>, Act, Option<u32>) {
     }
 }
 
+/// Shapes bots open: players while the team has room, turrets, or a pad stuck with no
+/// recipe for a while. Small shapes wait for more crates.
+fn worth_opening(s: &Sim, team: usize, shape: Shape) -> bool {
+    match shape {
+        Shape::TwoStacked | Shape::FourStacked | Shape::FourFlat | Shape::Cube => true,
+        Shape::Unaligned => s.odd_t[team] > 4.0,
+        _ => false,
+    }
+}
+
+/// A spot beside the pad, on the side facing the arena.
+fn pad_front(team: usize, slot: usize) -> Vec3 {
+    let pad = pads()[team];
+    Vec3::new(pad.x + toward_centre(team) * 1.6, 0.0, pad.y + (slot as f32 % 3.0 - 1.0) * 0.9)
+}
+
 fn guard_post(s: &Sim, i: usize) -> Vec3 {
     let a = &s.actors[i];
     let pad = pads()[a.team];
     Vec3::new(pad.x + toward_centre(a.team) * 2.8, 0.0, pad.y + (a.slot as f32 - 1.0) * 1.6)
 }
 
+/// Whether bot `i` should go kick its pad open: the pad makes something worth opening,
+/// and `i` is the nearest empty-handed teammate allowed to.
+fn wants_to_kick(s: &Sim, i: usize) -> bool {
+    let team = s.actors[i].team;
+    if !(team == 1 || s.ally_stacks || i == YOU) {
+        return false;
+    }
+    let (_, shape, _) = s.pad_state(team);
+    if !(s.can_open(team, shape) || shape == Shape::Unaligned) || !worth_opening(s, team, shape) {
+        return false;
+    }
+    let pad = pads()[team];
+    let me = s.actors[i].pos.xz().distance(pad);
+    let human = tune_free_seat(s);
+    !(0..s.actors.len()).any(|j| {
+        let b = &s.actors[j];
+        j != i && j != human && b.team == team && b.alive() && b.carrying.is_none() && b.pos.xz().distance(pad) < me
+    })
+}
+
+/// The seat you're playing (bots don't wait for you to kick), or none when it's a bot.
+fn tune_free_seat(s: &Sim) -> usize {
+    if s.you_play { YOU } else { usize::MAX }
+}
+
 /// A bot player: carry home, fight what's close, chase enemy carriers to steal back,
-/// otherwise haul (and steal). Guards the pad when there's nothing to haul.
+/// otherwise haul (and steal). Builds pad shapes and kicks them open. Guards the pad when
+/// there's nothing to haul.
 fn ai_step(s: &mut Sim, i: usize, dt: f32) {
     if !s.actors[i].alive() {
         return;
@@ -1278,6 +1528,17 @@ fn ai_step(s: &mut Sim, i: usize, dt: f32) {
             (Some(e), Some(pos + side * 2.0), Act::None, keep)
         }
         (false, None, Some(e)) => (Some(e), Some(s.actors[e].pos), Act::None, keep),
+        (false, None, None) if wants_to_kick(s, i) => {
+            // Go to the pad and kick it open.
+            let team = s.actors[i].team;
+            let spot = pad_front(team, s.actors[i].slot);
+            if pos.xz().distance(pads()[team]) < PAD_HALF + 1.2 {
+                s.kicking[team] = Some(i);
+                (None, None, Act::None, None)
+            } else {
+                (None, Some(spot), Act::None, None)
+            }
+        }
         _ => {
             let (goal, act, claim) = haul_plan(s, i);
             let idle = goal.is_none() && matches!(act, Act::None);
@@ -1490,54 +1751,8 @@ fn shots_step(s: &mut Sim, dt: f32) {
     }
 }
 
-/// Team Buddies' rule, with players: a 2-high stack resting on a team's pad brings in that
-/// team's next player at the stack, up to the team size. PLACEHOLDER shape (see #17).
-fn join_players(s: &mut Sim) {
-    let on_grid = |p: Vec3| (p.xz() / CRATE - (p.xz() / CRATE).round()).length() < 0.05;
-    let resting = |c: &Crate| c.state == CrateState::Free && c.kind == Kind::Normal && c.vel.length() < 0.1 && on_grid(c.pos);
-    for team in 0..2 {
-        let Some(slot) = (0..s.actors.len()).find(|&i| s.actors[i].team == team && s.actors[i].dead.is_infinite()) else {
-            continue;
-        };
-        let pad = pads()[team];
-        let stack = s.crates.iter().filter(|c| resting(c) && pad_contains(pad, c.pos)).find_map(|top| {
-            if (top.pos.y - CRATE * 1.5).abs() > 0.05 {
-                return None;
-            }
-            let bottom = s
-                .crates
-                .iter()
-                .find(|c| resting(c) && (c.pos.y - HALF).abs() < 0.05 && c.pos.xz().distance(top.pos.xz()) < 0.1)?;
-            Some((top.id, bottom.id, top.pos.with_y(0.0), top.placed_by))
-        });
-        let Some((a, b, at, by)) = stack else { continue };
-        s.crates.retain(|c| {
-            let used = c.id == a || c.id == b;
-            if used { s.despawn.extend(c.ent); }
-            !used
-        });
-        s.banked[team] += 2;
-        let p = &mut s.actors[slot];
-        p.dead = 0.0;
-        p.hp = 100.0;
-        p.pos = at;
-        p.vel = Vec3::ZERO;
-        p.hist.clear();
-        let (n, cap) = (s.players(team), s.team_size);
-        let who = match by {
-            Some(YOU) => "YOU".to_string(),
-            Some(j) => s.describe(j),
-            None => "a knocked crate".to_string(),
-        };
-        let msg = format!("{} stack by {who}: a player joins ({n}/{cap})", ["BLUE", "RED"][team]);
-        println!("t={:.1}s {msg}", s.t);
-        s.say(msg);
-    }
-}
-
-/// PLACEHOLDER (not a grammar decision, see #17): four resting crates on a team's pad in a
-/// 2x2 block on the same level merge into a turret for that team.
-fn craft(s: &mut Sim, tune: &Tune, dt: f32) {
+/// PLACEHOLDER turrets (from 4 flat or all 8, see #17): shoot the nearest enemy, then expire.
+fn turrets_step(s: &mut Sim, dt: f32) {
     for k in 0..s.turrets.len() {
         s.turrets[k].life -= dt;
         s.turrets[k].cd -= dt;
@@ -1562,41 +1777,35 @@ fn craft(s: &mut Sim, tune: &Tune, dt: f32) {
         if t.life <= 0.0 { s.despawn.extend(t.ent); }
         t.life > 0.0
     });
-    if tune.c(P::Craft) != 0 {
-        return;
-    }
+}
+
+/// Kick-open progress, and crates stacked higher than 2 on a pad slide off.
+fn pads_step(s: &mut Sim, dt: f32) {
     for team in 0..2 {
-        let cells: Vec<(IVec3, u32)> = s
-            .crates
-            .iter()
-            .filter(|c| c.state == CrateState::Free && c.kind == Kind::Normal && c.vel.length() < 0.1)
-            .filter(|c| pad_contains(pads()[team], c.pos))
-            .filter(|c| (c.pos.xz() / CRATE - (c.pos.xz() / CRATE).round()).length() < 0.05)
-            .map(|c| ((c.pos / CRATE - Vec3::Y * 0.5).round().as_ivec3(), c.id))
-            .collect();
-        let at = |g: IVec3| cells.iter().find(|(k, _)| *k == g).map(|(_, id)| *id);
-        for (g, _) in &cells {
-            let block = [*g, *g + IVec3::X, *g + IVec3::Z, *g + IVec3::X + IVec3::Z].map(at);
-            let centre = (g.as_vec3() + Vec3::new(0.5, 0.0, 0.5)) * CRATE;
-            let occupied = s.turrets.iter().any(|t| t.pos.xz().distance(centre.xz()) < 1.1);
-            if block.iter().all(Option::is_some) && !occupied {
-                let ids: Vec<u32> = block.into_iter().flatten().collect();
-                s.crates.retain(|c| {
-                    let used = ids.contains(&c.id);
-                    if used { s.despawn.extend(c.ent); }
-                    !used
-                });
-                s.turrets.push(Turret {
-                    team,
-                    pos: Vec3::new(centre.x, 0.0, centre.z),
-                    facing: Vec3::X,
-                    cd: 0.5,
-                    life: 40.0,
-                    ent: None,
-                });
-                s.banked[team] += 4;
-                s.say(format!("{} built a TURRET (placeholder, 40 s)", ["blue", "red"][team]));
-                return;
+        let (_, shape, _) = s.pad_state(team);
+        s.odd_t[team] = if shape == Shape::Unaligned { s.odd_t[team] + dt } else { 0.0 };
+        match s.kicking[team].take() {
+            // A pad with a crate out of line can only be cleared by breaking it.
+            Some(by) if s.can_open(team, shape) || shape == Shape::Unaligned => {
+                s.pad_kick[team] += dt;
+                if s.pad_kick[team] >= KICK_TIME {
+                    s.pad_kick[team] = 0.0;
+                    s.open_pad(team, by);
+                }
+            }
+            Some(YOU) if shape.players() > 0 => {
+                s.pad_kick[team] = 0.0;
+                if s.msgs.last().is_none_or(|m| !m.0.starts_with("team is full")) {
+                    s.say("team is full: this shape brings players, so it won't open");
+                }
+            }
+            _ => s.pad_kick[team] = (s.pad_kick[team] - dt).max(0.0),
+        }
+        let pad = pads()[team];
+        for c in s.crates.iter_mut().filter(|c| c.state == CrateState::Free && pad_contains(pad, c.pos)) {
+            if c.pos.y > HALF + 2.0 * CRATE - 0.1 && c.vel.length() < 0.5 {
+                let out = (c.pos.xz() - pad).normalize_or(Vec2::X);
+                c.vel = Vec3::new(out.x * 3.0, 2.0, out.y * 3.0);
             }
         }
     }
@@ -1921,12 +2130,20 @@ fn draw_gizmos(mut g: Gizmos, sim: Res<Sim>, tune: Res<Tune>, controls: Res<Cont
     for c in sim.crates.iter().filter(|c| c.kind == Kind::Loot && c.kick > 0.0) {
         g.circle(ground_circle(c.pos.with_y(0.04)), 0.2 + 0.6 * (c.kick / kt).min(1.0), Color::srgb(1.0, 0.7, 0.1));
     }
-    for pad in pads() {
-        g.rect(
-            Isometry3d::new(pad.extend(0.03).xzy(), Quat::from_rotation_x(FRAC_PI_2)),
-            Vec2::splat(PAD_HALF * 2.0),
-            Color::WHITE,
-        );
+    // Pads: 4 cells, gold when what's on them can be kicked open, and the kick progress.
+    for (team, pad) in pads().into_iter().enumerate() {
+        let (_, shape, _) = sim.pad_state(team);
+        let ready = sim.can_open(team, shape);
+        let color = if ready { Color::srgb(1.0, 0.8, 0.1) } else { Color::WHITE };
+        let iso = Isometry3d::new(pad.extend(0.03).xzy(), Quat::from_rotation_x(FRAC_PI_2));
+        g.rect(iso, Vec2::splat(PAD_HALF * 2.0), color);
+        let c = pad.extend(0.03).xzy();
+        g.line(c - Vec3::X * PAD_HALF, c + Vec3::X * PAD_HALF, color.with_alpha(0.6));
+        g.line(c - Vec3::Z * PAD_HALF, c + Vec3::Z * PAD_HALF, color.with_alpha(0.6));
+        if sim.pad_kick[team] > 0.0 {
+            let k = (sim.pad_kick[team] / KICK_TIME).min(1.0);
+            g.circle(ground_circle(c + Vec3::Y * 0.02), PAD_HALF * 1.5 + 0.6 * k, Color::srgb(1.0, 0.7, 0.1));
+        }
     }
     // Damage shows as a bar over the head.
     for (i, b) in sim.actors.iter().enumerate().filter(|(_, b)| b.alive() && b.hp < 100.0) {
@@ -1950,10 +2167,23 @@ fn hud(sim: Res<Sim>, tune: Res<Tune>, controls: Res<Controls>, mut hud: Single<
     );
     s += &format!("{}\n", roster_desc(&tune));
     s += &format!(
-        "players: BLUE {}/{n}  RED {}/{n}   stack 2 crates on your pad (one on top of another) to bring in a teammate\n",
+        "players: BLUE {}/{n}  RED {}/{n}\n",
         sim.players(0),
         sim.players(1),
         n = sim.team_size,
+    );
+    let (_, shape, _) = sim.pad_state(0);
+    s += &format!(
+        "your pad: {} -> {}{}\n",
+        shape.label(),
+        shape.result(),
+        if sim.can_open(0, shape) || shape == Shape::Unaligned {
+            "   HOLD F BESIDE THE PAD TO KICK IT OPEN"
+        } else if shape.players() > 0 {
+            "   (team full)"
+        } else {
+            ""
+        },
     );
     if tune.c(P::Seat) == 1 {
         s += "your seat is a BOT: watching\n";
@@ -1990,7 +2220,9 @@ fn guide_text(tune: Res<Tune>, mut text: Single<&mut Text, (With<GuideText>, Wit
     let a = arena() * 2.0;
     let mut s = format!(
         "YOU ARE PLAYING {n}v{n}   (arena {:.0} x {:.0} m)\n\
-         Teams start with 1 player. Stack 2 crates on your pad to add one, up to {n}.\n\n\
+         Teams start with 1 player. Your pad has 4 cells, 2 high. Build a shape, then hold F\n\
+         beside the pad to kick it open: 2 stacked = 1 player, 2 wide x 2 high = 2 players,\n\
+         4 flat or all 8 = turret, 1 or 2 side by side = full health. Up to {n} players.\n\n\
          Press a number to switch (restarts the match):\n",
         a.x,
         a.y

@@ -40,20 +40,35 @@ It's resolved when you pick the team-size range.
 
 - You are blue player 1. The other players are bots standing in for people. The core feel is
   fixed at the #9 baseline.
-- **Teams start with one player each.** A resting 2-high stack on a team's pad (one crate set
-  on top of another) brings in that team's next player at the stack, up to the team size.
-  So team size is the most a team can grow to. The two crates are used up, but they still
-  count for the score.
-  - **Knocked out = out.** A player who joined from a stack and then dies is gone until the
-    team stacks 2 crates again. Only each team's first player (you, and red's first)
+- **Teams start with one player each.** Others join from the pad, Team Buddies style:
+  - **The pad is 4 cells (2 × 2), at most 2 high**, so 8 crates fill it. Crates you place or
+    curl onto it sit in a cell. A third layer slides off.
+  - **Kick it open.** Hold **F** beside your pad for 1.5 s; a ring shows the progress. The
+    pad's outline turns **gold** when its shape makes something, and the HUD says what:
+    `your pad: 2 stacked -> 1 new player`. Opening uses up the crates, but they still count
+    for the score.
+  - **Recipes**, by shape as in Team Buddies. The results here are placeholders; what
+    shapes really build is #17:
+
+    | Shape | Team Buddies | Here |
+    |---|---|---|
+    | 2 stacked | a Buddy | **1 new player** |
+    | 2 wide × 2 high | specialist Buddy | **2 new players** |
+    | 4 flat | heavy weapon | turret (40 s) |
+    | all 8 | vehicle | turret (40 s) |
+    | 1 crate, 2 side by side | weapon | full health |
+
+    Other arrangements (3 crates, diagonals) are "no recipe yet": add crates. A shape that
+    brings players won't open while your team is full. A pad with a crate out of line can
+    only be broken.
+  - **Knocked out = out.** A player who joined from the pad and then dies is gone until the
+    team opens another player shape. Only each team's first player (you, and red's first)
     respawns after 3 s.
-  - **Everyone stacks**: your teammates build blue's stacks too, the same as red's bots do.
-    Turn "blue bots stack" off to build blue's stacks alone. With it off, red outgrows
-    blue: in a 6v6 test red stayed at 6/6 while blue hovered at 2–4.
-  - Each join names who completed the stack, for example `BLUE stack by YOU: a player joins
-    (2/3)`. The HUD shows `players: BLUE 1/3  RED 2/3`.
-  - The stack shape is a placeholder (#17).
-- Score = crates resting on your pad (a placeholder turret counts 4). Matches last 120 s.
+  - **Everyone builds**: bots on both teams build toward a shape (players while there's
+    room, else a turret), hold their crate while the pad is ready, and kick it open. Turn
+    "blue bots build" off to build and open blue's pad alone. Each opening names who
+    kicked it, e.g. `BLUE pad kicked open by YOU: 2 stacked -> 1 new player (2/3)`.
+  - Enemies can steal crates off your pad, which breaks your shape.
 - **Which size you're in:** the box top-left always says `YOU ARE PLAYING 3v3` and lists
   the sizes, with the one you're playing marked `>> ... << PLAYING`.
 - **Switching:** press **1** = 2v2, **2** = 3v3, **3** = 4v4, **4** = 6v6, at any time. The
@@ -83,4 +98,4 @@ It's resolved when you pick the team-size range.
 - Bots grab instantly, because they stand in for the server. Your grabs keep the 120 ms
   round trip.
 - No avian3d: the same hand-rolled physics as core feel.
-- The placeholder 2×2 turret is *not* a decision (#17).
+- The turret and health results are placeholders, not decisions (#17).
