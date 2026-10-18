@@ -44,9 +44,18 @@ It's resolved when you pick the team-size range.
 - **Guided:** press **N**, then **1–4** for 2v2 / 3v3 / 4v4 / 6v6 (each switch restarts the
   match). **Enter** keeps the one you're playing, and **P** prints settings, the verdict and
   the match results. "team size" in the panel goes from 1v1 to 8v8.
-- Things to watch: is there enough to do per player, how crowded the pads get, and whether
-  a fight is still readable.
-- The arena is fixed at 36 × 22 m (pads 29 m apart), so bigger teams are also more crowded.
+- Things to watch: is there enough to do per player, how long the haul from mid-field to the
+  pad feels, and whether a fight is still readable.
+- **The arena grows with team size**, keeping the same floor space per player and the 3v3
+  shape. At the default 130 m² per player:
+
+  | Team size | 1v1 | 2v2 | 3v3 | 4v4 | 6v6 | 8v8 |
+  |---|---|---|---|---|---|---|
+  | Arena (m) | 21 × 13 | 29 × 18 | 36 × 22 | 41 × 25 | 51 × 31 | 58 × 36 |
+
+  Pads stay 3.6 m in from each end, and the starting crates spread across the middle. Bigger
+  teams mean longer hauls. "space per player" (60–250 m²) in the panel tunes the space: try
+  less if 6v6 feels empty.
 - Other settings:
   - **online delay**: shows other players in the past, the way interpolation does online.
   - **your seat: bot**: lets you watch bot matches.

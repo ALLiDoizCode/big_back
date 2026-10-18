@@ -15,28 +15,57 @@
 //! R / Start resets, P prints settings, verdicts and results, H hides the panel.
 //!
 //! Smoke tests: `SQUAD_EXIT_AFTER=<s>`, `SQUAD_SCREENSHOT=<file.png>`, `SQUAD_SEAT=bot`,
-//! `SQUAD_COMPARISON=<n>`.
+//! `SQUAD_COMPARISON=<n>`, `SQUAD_TEAM=<n>` (team size, whole-arena camera).
 
 use std::collections::VecDeque;
 use std::f32::consts::FRAC_PI_2;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use bevy::prelude::*;
 use bevy::render::view::screenshot::{save_to_disk, Screenshot};
 
 const G: f32 = 20.0;
-const ARENA: Vec2 = Vec2::new(18.0, 11.0);
 const CRATE: f32 = 0.8;
 const HALF: f32 = CRATE / 2.0;
 const HEAD: f32 = 2.2;
 const CHEST: f32 = 1.2;
 const ACTOR_R: f32 = 0.45;
 const YOU: usize = 0;
-/// Team pads, on the crate grid (18 cells from the centre).
-const PADS: [Vec2; 2] = [Vec2::new(-14.4, 0.0), Vec2::new(14.4, 0.0)];
 const PAD_HALF: f32 = 2.0;
 const CAM_OFFSET: Vec3 = Vec3::new(0.0, 21.0, 14.0);
+/// The whole-arena camera at 3v3 size; it moves out with the arena.
 const ARENA_CAM: Vec3 = Vec3::new(0.0, 46.0, 28.0);
+/// Arena half-extents at 3v3 (36 x 22 m): the shape every team size keeps.
+const BASE_ARENA: Vec2 = Vec2::new(18.0, 11.0);
+
+/// Arena half-extents, set from team size on every reset. A static so the free physics
+/// functions can read it; there's one arena at a time.
+static ARENA_BITS: AtomicU64 = AtomicU64::new(0);
+
+fn arena() -> Vec2 {
+    let b = ARENA_BITS.load(Ordering::Relaxed);
+    Vec2::new(f32::from_bits(b as u32), f32::from_bits((b >> 32) as u32))
+}
+
+/// Same floor space per player at every team size: the 3v3 shape, scaled.
+fn set_arena(team_size: usize, space_per_player: f32) {
+    let base_area = BASE_ARENA.x * BASE_ARENA.y * 4.0;
+    let k = (2.0 * team_size as f32 * space_per_player / base_area).sqrt().max(0.5);
+    let a = BASE_ARENA * k;
+    ARENA_BITS.store(a.x.to_bits() as u64 | (a.y.to_bits() as u64) << 32, Ordering::Relaxed);
+}
+
+/// How far the arena is scaled from the 3v3 size.
+fn arena_scale() -> f32 {
+    arena().x / BASE_ARENA.x
+}
+
+/// Team pads, on the crate grid, 3.6 m in from each end.
+fn pads() -> [Vec2; 2] {
+    let x = ((arena().x - 3.6) / CRATE).round() * CRATE;
+    [Vec2::new(-x, 0.0), Vec2::new(x, 0.0)]
+}
 const TURRET_H: f32 = 1.1;
 const PLACE_REACH: f32 = 1.6;
 
@@ -79,6 +108,7 @@ const PLAYER_COLOR: [Color; 8] = [
 #[repr(usize)]
 enum P {
     TeamSize,
+    Space,
     OnlineDelay,
     Seat,
     MatchLength,
@@ -111,6 +141,8 @@ fn defaults() -> Vec<Param> {
     // Order must match `P`.
     vec![
         num("team size", 3.0, 1.0, 8.0, 1.0, "v"),
+        // 3v3 in 36 x 22 m is 132 m2 per player.
+        num("space per player", 130.0, 60.0, 250.0, 10.0, "m2"),
         num("online delay", 0.0, 0.0, 250.0, 25.0, "ms"),
         choice("your seat", 0, &["you play", "bot (watch)"]),
         num("match length", 120.0, 30.0, 300.0, 30.0, "s"),
@@ -164,7 +196,8 @@ fn fmt_value(v: &Value) -> String {
 
 fn roster_desc(tune: &Tune) -> String {
     let n = tune.c(P::TeamSize);
-    format!("{n}v{n} players, no AI units")
+    let a = arena() * 2.0;
+    format!("{n}v{n} players, no AI units, arena {:.0} x {:.0} m", a.x, a.y)
 }
 
 // ---------------------------------------------------------------------------------------
@@ -185,7 +218,7 @@ struct Comparison {
 const COMPARISONS: &[Comparison] = &[Comparison {
     row: "1", title: "team size",
     question: "How many players per team? This sets the range of team sizes. Budget: ~32 networked characters. \
-               The arena is fixed at 36 x 22 m, so bigger teams are also more crowded.",
+               The arena grows with team size, keeping the same space per player.",
     both: &[],
     variants: &[
         ("2v2", &[(P::TeamSize, 2.0)]),
@@ -228,6 +261,10 @@ fn start_next(tune: &mut Tune, sim: &mut Sim, from: Option<usize>) {
 }
 
 fn guide_from_env(mut tune: ResMut<Tune>, mut sim: ResMut<Sim>) {
+    if let Some(n) = std::env::var("SQUAD_TEAM").ok().and_then(|v| v.parse::<f32>().ok()) {
+        set(&mut tune.vals, P::TeamSize, n);
+        set(&mut tune.vals, P::Camera, 1.0);
+    }
     if std::env::var("SQUAD_SEAT").as_deref() == Ok("bot") {
         set(&mut tune.vals, P::Seat, 1.0);
     }
@@ -352,6 +389,8 @@ struct Sim {
     despawn: Vec<Entity>,
     /// Players per team.
     team_size: usize,
+    /// The space per player the arena was sized with.
+    space: f32,
     /// Crates spent on placeholder turrets: they still count for the score.
     banked: [usize; 2],
     match_left: f32,
@@ -380,6 +419,7 @@ impl Sim {
             msgs: Vec::new(),
             despawn: Vec::new(),
             team_size: 0,
+            space: 0.0,
             banked: [0; 2],
             match_left: 0.0,
             over: 0.0,
@@ -407,6 +447,8 @@ impl Sim {
         }
         self.pending = None;
         self.team_size = tune.c(P::TeamSize);
+        self.space = tune.f(P::Space);
+        set_arena(self.team_size, self.space);
         self.banked = [0; 2];
         for team in 0..2 {
             for slot in 0..self.team_size {
@@ -419,14 +461,18 @@ impl Sim {
             a.pos = p;
             a.facing = Vec3::X * toward_centre(a.team);
         }
+        // Starting crates in a grid across the middle, spread to fit the arena.
+        let (k, a) = (arena_scale(), arena());
         let count = 6 + 3 * self.team_size;
+        let rows = count.div_ceil(6);
+        let dz = (3.2 * k).min(a.y * 1.6 / rows as f32);
         for i in 0..count {
-            let x = -8.0 + (i % 6) as f32 * 3.2;
-            let z = -8.0 + (i / 6) as f32 * 3.2;
+            let x = ((i % 6) as f32 - 2.5) * 3.2 * k;
+            let z = ((i / 6) as f32 - (rows as f32 - 1.0) / 2.0) * dz;
             self.spawn_crate(Kind::Normal, Vec3::new(x, HALF, z));
         }
         self.spawn_crate(Kind::Loot, Vec3::new(0.0, HALF, -0.4));
-        self.spawn_crate(Kind::Loot, Vec3::new(0.0, HALF, 8.0));
+        self.spawn_crate(Kind::Loot, Vec3::new(0.0, HALF, a.y * 0.75));
         self.match_left = tune.f(P::MatchLength);
         self.over = 0.0;
         self.fired = 0;
@@ -438,9 +484,9 @@ impl Sim {
     fn spawn_point(&self, i: usize) -> Vec3 {
         let a = &self.actors[i];
         let n = self.team_size.max(1) as f32;
-        let gap = (18.0 / n).min(3.2);
+        let gap = (arena().y * 1.6 / n).min(3.2);
         let lane = (a.slot as f32 - (n - 1.0) / 2.0) * gap;
-        Vec3::new(PADS[a.team].x + toward_centre(a.team) * 4.0, 0.0, lane)
+        Vec3::new(pads()[a.team].x + toward_centre(a.team) * 4.0, 0.0, lane)
     }
 
     fn rand(&mut self) -> f32 {
@@ -513,7 +559,7 @@ impl Sim {
 
     /// Where a bot sets its crate down on its pad: the lowest cell, then the nearest.
     fn pad_cell(&self, team: usize, from: Vec3) -> Vec3 {
-        let pad = PADS[team];
+        let pad = pads()[team];
         let mut best: Option<(f32, Vec3)> = None;
         for gx in -2..=2 {
             for gz in -2..=2 {
@@ -597,7 +643,7 @@ impl Sim {
         let on_pad = self
             .crates
             .iter()
-            .filter(|c| c.state == CrateState::Free && c.kind == Kind::Normal && pad_contains(PADS[team], c.pos))
+            .filter(|c| c.state == CrateState::Free && c.kind == Kind::Normal && pad_contains(pads()[team], c.pos))
             .count();
         on_pad + self.banked[team]
     }
@@ -690,12 +736,13 @@ fn floor_under(p: Vec3, others: impl Iterator<Item = Vec3>, turrets: impl Iterat
 fn crate_motion(p: &mut Vec3, v: &mut Vec3, settling: &mut bool, floor: impl Fn(Vec3) -> f32, dt: f32) -> bool {
     v.y -= G * dt;
     *p += *v * dt;
-    if p.x.abs() > ARENA.x - HALF {
-        p.x = p.x.clamp(-ARENA.x + HALF, ARENA.x - HALF);
+    let arena = arena();
+    if p.x.abs() > arena.x - HALF {
+        p.x = p.x.clamp(-arena.x + HALF, arena.x - HALF);
         v.x *= -0.4;
     }
-    if p.z.abs() > ARENA.y - HALF {
-        p.z = p.z.clamp(-ARENA.y + HALF, ARENA.y - HALF);
+    if p.z.abs() > arena.y - HALF {
+        p.z = p.z.clamp(-arena.y + HALF, arena.y - HALF);
         v.z *= -0.4;
     }
     let floor = floor(*p);
@@ -971,7 +1018,7 @@ fn tune_input(
 
 fn step(time: Res<Time>, controls: Res<Controls>, tune: Res<Tune>, mut sim: ResMut<Sim>) {
     let s = &mut *sim;
-    if tune.c(P::TeamSize) != s.team_size {
+    if tune.c(P::TeamSize) != s.team_size || tune.f(P::Space) != s.space {
         s.reset(&tune);
     }
     let dt = time.delta_secs().min(1.0 / 30.0);
@@ -1225,7 +1272,7 @@ fn haul_plan(s: &Sim, i: usize) -> (Option<Vec3>, Act, Option<u32>) {
         }
         return (Some(cell.with_y(0.0)), Act::None, None);
     }
-    let pad = PADS[a.team];
+    let pad = pads()[a.team];
     let claimed = |id: u32| s.actors.iter().enumerate().any(|(j, b)| j != i && b.team == a.team && b.claim == Some(id));
     let pick = s
         .crates
@@ -1242,7 +1289,7 @@ fn haul_plan(s: &Sim, i: usize) -> (Option<Vec3>, Act, Option<u32>) {
 
 fn guard_post(s: &Sim, i: usize) -> Vec3 {
     let a = &s.actors[i];
-    let pad = PADS[a.team];
+    let pad = pads()[a.team];
     Vec3::new(pad.x + toward_centre(a.team) * 2.8, 0.0, pad.y + (a.slot as f32 - 1.0) * 1.6)
 }
 
@@ -1310,6 +1357,7 @@ fn ai_step(s: &mut Sim, i: usize, dt: f32) {
 // ---------------------------------------------------------------------------------------
 
 fn actors_physics(s: &mut Sim, dt: f32) {
+    let arena = arena();
     let blockers: Vec<Vec3> = s
         .crates
         .iter()
@@ -1355,8 +1403,8 @@ fn actors_physics(s: &mut Sim, dt: f32) {
         }
     }
     for a in &mut s.actors {
-        a.pos.x = a.pos.x.clamp(-ARENA.x + ACTOR_R, ARENA.x - ACTOR_R);
-        a.pos.z = a.pos.z.clamp(-ARENA.y + ACTOR_R, ARENA.y - ACTOR_R);
+        a.pos.x = a.pos.x.clamp(-arena.x + ACTOR_R, arena.x - ACTOR_R);
+        a.pos.z = a.pos.z.clamp(-arena.y + ACTOR_R, arena.y - ACTOR_R);
     }
 }
 
@@ -1511,7 +1559,7 @@ fn craft(s: &mut Sim, tune: &Tune, dt: f32) {
             .crates
             .iter()
             .filter(|c| c.state == CrateState::Free && c.kind == Kind::Normal && c.vel.length() < 0.1)
-            .filter(|c| pad_contains(PADS[team], c.pos))
+            .filter(|c| pad_contains(pads()[team], c.pos))
             .filter(|c| (c.pos.xz() / CRATE - (c.pos.xz() / CRATE).round()).length() < 0.05)
             .map(|c| ((c.pos / CRATE - Vec3::Y * 0.5).round().as_ivec3(), c.id))
             .collect();
@@ -1548,18 +1596,19 @@ fn refill(s: &mut Sim, dt: f32) {
         .crates
         .iter()
         .filter(|c| c.kind == Kind::Normal)
-        .filter(|c| c.state != CrateState::Free || !(pad_contains(PADS[0], c.pos) || pad_contains(PADS[1], c.pos)))
+        .filter(|c| c.state != CrateState::Free || !(pad_contains(pads()[0], c.pos) || pad_contains(pads()[1], c.pos)))
         .count();
     if loose < 3 + 2 * s.team_size {
-        let x = -7.0 + s.rand() * 14.0;
-        let z = -9.0 + s.rand() * 18.0;
+        let a = arena();
+        let x = (s.rand() * 2.0 - 1.0) * a.x * 0.4;
+        let z = (s.rand() * 2.0 - 1.0) * a.y * 0.8;
         s.spawn_crate(Kind::Normal, Vec3::new(x, 10.0, z));
     }
     if s.crates.iter().filter(|c| c.kind == Kind::Loot).count() < 2 {
         s.loot_respawn -= dt;
         if s.loot_respawn <= 0.0 {
-            let x = -3.0 + s.rand() * 6.0;
-            let z = -7.0 + s.rand() * 14.0;
+            let x = (s.rand() * 2.0 - 1.0) * 3.0 * arena_scale();
+            let z = (s.rand() * 2.0 - 1.0) * arena().y * 0.65;
             s.spawn_crate(Kind::Loot, Vec3::new(x, 10.0, z));
             s.loot_respawn = 6.0;
         }
@@ -1590,6 +1639,24 @@ struct Looks {
 struct Hud;
 
 #[derive(Component)]
+struct Ground;
+
+#[derive(Component)]
+struct PadView(usize);
+
+fn sync_arena(
+    mut ground: Single<&mut Transform, With<Ground>>,
+    mut pad_views: Query<(&PadView, &mut Transform), Without<Ground>>,
+) {
+    let a = arena();
+    ground.scale = Vec3::new(a.x * 2.0, 1.0, a.y * 2.0);
+    for (p, mut tf) in &mut pad_views {
+        let pad = pads()[p.0];
+        tf.translation = Vec3::new(pad.x, 0.01, pad.y);
+    }
+}
+
+#[derive(Component)]
 struct Panel;
 
 #[derive(Component)]
@@ -1605,16 +1672,19 @@ fn setup(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, mut mats: Res
         DirectionalLight { illuminance: 9_000.0, shadow_maps_enabled: true, ..default() },
         Transform::from_xyz(8.0, 20.0, 10.0).looking_at(Vec3::ZERO, Vec3::Y),
     ));
+    // Ground and pads are resized and moved by `sync_arena`.
     commands.spawn((
-        Mesh3d(meshes.add(Cuboid::new(ARENA.x * 2.0, 0.1, ARENA.y * 2.0))),
+        Ground,
+        Mesh3d(meshes.add(Cuboid::new(1.0, 0.1, 1.0))),
         MeshMaterial3d(mats.add(Color::srgb(0.32, 0.36, 0.3))),
         Transform::from_xyz(0.0, -0.05, 0.0),
     ));
-    for (pad, color) in PADS.iter().zip(TEAM_COLOR) {
+    for (team, color) in TEAM_COLOR.into_iter().enumerate() {
         commands.spawn((
+            PadView(team),
             Mesh3d(meshes.add(Cuboid::new(PAD_HALF * 2.0, 0.02, PAD_HALF * 2.0))),
             MeshMaterial3d(mats.add(color.with_alpha(0.6))),
-            Transform::from_xyz(pad.x, 0.01, pad.y),
+            Transform::from_xyz(0.0, 0.01, 0.0),
         ));
     }
     commands.insert_resource(Looks {
@@ -1766,8 +1836,9 @@ fn sync_views(
 fn follow_camera(time: Res<Time>, sim: Res<Sim>, tune: Res<Tune>, mut cam: Single<&mut Transform, With<MainCamera>>) {
     let k = 1.0 - (-time.delta_secs() * 6.0).exp();
     if tune.c(P::Camera) == 1 {
-        cam.translation = cam.translation.lerp(ARENA_CAM, k);
-        let look = cam.translation - ARENA_CAM;
+        let want = ARENA_CAM * arena_scale().max(1.0);
+        cam.translation = cam.translation.lerp(want, k);
+        let look = cam.translation - want;
         cam.look_at(look, Vec3::Y);
         return;
     }
@@ -1839,7 +1910,7 @@ fn draw_gizmos(mut g: Gizmos, sim: Res<Sim>, tune: Res<Tune>, controls: Res<Cont
     for c in sim.crates.iter().filter(|c| c.kind == Kind::Loot && c.kick > 0.0) {
         g.circle(ground_circle(c.pos.with_y(0.04)), 0.2 + 0.6 * (c.kick / kt).min(1.0), Color::srgb(1.0, 0.7, 0.1));
     }
-    for pad in PADS {
+    for pad in pads() {
         g.rect(
             Isometry3d::new(pad.extend(0.03).xzy(), Quat::from_rotation_x(FRAC_PI_2)),
             Vec2::splat(PAD_HALF * 2.0),
@@ -1990,7 +2061,7 @@ fn main() {
         .add_systems(Startup, (setup, guide_from_env).chain())
         .add_systems(
             Update,
-            (read_controls, tune_input, step, sync_views, follow_camera, draw_gizmos, hud, guide_text, panel, smoke_exit)
+            (read_controls, tune_input, step, sync_arena, sync_views, follow_camera, draw_gizmos, hud, guide_text, panel, smoke_exit)
                 .chain(),
         )
         .run();
