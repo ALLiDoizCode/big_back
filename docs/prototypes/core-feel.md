@@ -107,21 +107,62 @@ play has it.
 
 ## Verdict
 
-**Decided (2026-10-18), played by the human:**
+**Resolved 2026-10-18.** The human played every comparison and picked the baseline below.
+It's now the prototype's defaults. Human's verdict on the throwing: "this is fun".
 
-- **6e landing: curling** (slide + snap), not stick. Reading the slide is the skill: aim
-  short, lob vs. line drive, knock crates into place or off a pad. Played at slide keep 0.6,
-  friction 6 m/s², snap radius 0.3 m.
-- **6d jump throw power: peaks at jump apex**, not off or flat. Timing the throw at the top
-  of the jump adds reach, up to 1.5× at the apex.
-- Both build on what came before: aiming while carrying = the ghost, throws solved to the
-  touchdown, honest collision-aware preview, gamepad stick tilt = distance.
-- Verdict: "this is fun".
-- **Row 4 hit drops crate: yes.** Getting shot knocks the crate loose.
-- **Row 3 carrying disarms: full lock.** You can't fire while holding a crate. The human
-  liked both: carrying is a commitment, and getting hit ends it.
-- **Row 8 fire rate / shots to kill: 3/s, 4 shots** (about 1.0 s TTK if every shot hits),
-  over 5/s and 8. The faster TTK felt better.
+| Row | Comparison | Picked | Over |
+|---|---|---|---|
+| 6e | landing | **curling** (slide + snap into a cell, knocks) | stick (exact) |
+| 6d | jump throw power | **peaks at jump apex**, 1.5× reach | off, flat |
+| 5 | throw style | **must jump to throw** (grounded = short toss) | throw anytime |
+| 6 | throw angle / distance | **35°, 9 m** (as played) | 25°/7 m, 45°/12 m |
+| 6c | throw-building angle | **35°** | 60° |
+| 6f | slide | **long, loose snap**: keep 0.8, friction 4 m/s², snap 0.35 m | short/tight, as played |
+| 3 | carrying disarms | **full lock** | sidearm, melee only |
+| 4 | hit drops crate | **yes** | no |
+| 2 | carry speed | **0.6×** | 0.85× |
+| 1 | move speed | **6 m/s** | 8 m/s |
+| 7 | weapon | **projectile, 18 m/s** (visible, dodgeable) | hitscan |
+| 8 | fire rate / shots to kill | **3/s, 4 shots** (≈1.0 s TTK) | 5/s, 8 |
+| 9 | kick-open time | **1.5 s** | 0.5 s |
+| 10/11 | grab latency mask | **reach** (arm extends during the round trip) | none, lunge |
+| 12 | grab reach | **1.2 m** | 2.0 m |
 
-**Still open:** rows 1, 2, 5, 6, 6c, 6f, 7, 9, 10/11, 12 (the guided list above). Rows 6b
-(aimed throws) and 13 (placing under pressure) are covered by what was played and kept.
+Kept without a separate comparison, because it was played throughout: throws aim at the
+reticle (6b), aiming while carrying = the ghost, the collision-aware arc preview with a
+rest ghost, and gamepad stick tilt = distance.
+
+What it adds up to: **carrying is a commitment, and throwing is the skill.** A carrier is
+slow, can't shoot and loses the crate when hit. Distance comes from jump timing, and
+placement from reading the slide. The placeholder 2×2 turret is *not* a decision. What
+stacks build is #17.
+
+Baseline (P output):
+
+```
+move speed           = 6.00 m/s
+carry speed          = 0.60 x
+carrying disarms     = full lock
+hit drops crate      = yes
+jump velocity        = 6.00 m/s
+throw style          = jump-throw
+throw angle          = 35 deg
+throw distance       = 9 m
+throw aim            = to reticle (max = distance)
+jump throw power     = peaks at jump apex
+jump boost           = 1.50 x reach
+landing              = curling (slide + snap)
+slide keep on impact = 0.80 x
+slide friction       = 4.00 m/s2
+snap radius          = 0.35 m
+arc preview          = arc + rest ghost
+weapon               = projectile
+fire rate            = 3 /s
+projectile speed     = 18 m/s
+shots to kill        = 4
+shot range           = to reticle
+kick-open time       = 1.50 s
+fake grab latency    = 120 ms
+latency mask         = reach
+grab reach           = 1.20 m
+```
