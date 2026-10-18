@@ -54,11 +54,13 @@ enum P {
     ThrowStyle,
     ThrowAngle,
     ThrowDist,
+    ThrowAim,
     ArcPreview,
     Weapon,
     FireRate,
     ProjSpeed,
     ShotsToKill,
+    ShotRange,
     KickTime,
     GrabLatency,
     GrabMask,
@@ -98,11 +100,13 @@ fn defaults() -> Vec<Param> {
         choice("throw style", 0, &["ground throw", "jump-throw"]),
         num("throw angle", 35.0, 10.0, 70.0, 5.0, "deg"),
         num("throw distance", 9.0, 3.0, 20.0, 1.0, "m"),
+        choice("throw aim", 0, &["to reticle (max = distance)", "fixed distance"]),
         choice("arc preview", 0, &["on", "off"]),
         choice("weapon", 0, &["hitscan", "projectile"]),
         num("fire rate", 5.0, 1.0, 15.0, 1.0, "/s"),
         num("projectile speed", 30.0, 8.0, 80.0, 2.0, "m/s"),
         num("shots to kill", 8.0, 1.0, 20.0, 1.0, ""),
+        choice("shot range", 0, &["to reticle", "full 30 m"]),
         num("kick-open time", 1.0, 0.0, 3.0, 0.25, "s"),
         num("fake grab latency", 0.0, 0.0, 150.0, 10.0, "ms"),
         choice("latency mask", 0, &["none", "reach", "lunge"]),
@@ -432,12 +436,32 @@ fn pad_contains(pad: Vec2, p: Vec3) -> bool {
     (p.x - pad.x).abs() < PAD_HALF && (p.z - pad.y).abs() < PAD_HALF
 }
 
-fn throw_velocity(dir: Vec3, tune: &Tune) -> Vec3 {
+/// Horizontal throw distance: to the reticle (capped at "throw distance") in aimed mode,
+/// otherwise always "throw distance". The release point sits 0.3 m in front of you.
+fn throw_dist(tune: &Tune, aim_dist: Option<f32>) -> f32 {
+    let max = tune.f(P::ThrowDist);
+    match (tune.c(P::ThrowAim), aim_dist) {
+        (0, Some(d)) => (d - 0.3).clamp(1.0, max),
+        _ => max,
+    }
+}
+
+fn throw_velocity(dir: Vec3, tune: &Tune, aim_dist: Option<f32>) -> Vec3 {
     let angle = tune.f(P::ThrowAngle).to_radians();
-    let dist = tune.f(P::ThrowDist);
-    // Level-ground range formula: d = v^2 sin(2θ) / g.
-    let speed = (dist * G / (2.0 * angle).sin()).sqrt();
+    let d = throw_dist(tune, aim_dist);
+    // Lands a crate (centre at HALF) d metres out from head height, at the given angle:
+    // v^2 = g d^2 / (2 cos^2 θ (d tan θ + drop)).
+    let drop = HEAD - HALF;
+    let speed = (G * d * d / (2.0 * angle.cos().powi(2) * (d * angle.tan() + drop))).sqrt();
     dir * speed * angle.cos() + Vec3::Y * speed * angle.sin()
+}
+
+/// Shot range: to the reticle in "to reticle" mode (mouse only), otherwise 30 m.
+fn shot_range(tune: &Tune, aim_dist: Option<f32>) -> f32 {
+    match (tune.c(P::ShotRange), aim_dist) {
+        (0, Some(d)) => d.clamp(1.0, 30.0),
+        _ => 30.0,
+    }
 }
 
 // ---------------------------------------------------------------------------------------
@@ -457,6 +481,8 @@ struct Controls {
     use_mouse: bool,
     /// Where the mouse aims, for the reticle.
     aim_point: Option<Vec3>,
+    /// Horizontal distance from the player to the reticle (mouse only).
+    aim_dist: Option<f32>,
     source: &'static str,
 }
 
@@ -511,6 +537,7 @@ fn read_controls(
     c.mv = mv.clamp_length_max(1.0);
     c.aim = stick_aim;
     c.aim_point = None;
+    c.aim_dist = None;
     c.source = if stick_aim.is_some() { "right stick" } else { "move direction (no aim input yet)" };
     if c.use_mouse && stick_aim.is_none() {
         let (cam, cam_tf) = *camera;
@@ -521,6 +548,7 @@ fn read_controls(
             let p = ray.get_point(d);
             let to = (p - sim.actors[PLAYER].pos).with_y(0.0);
             c.aim_point = Some(p.with_y(CHEST));
+            c.aim_dist = Some(to.length());
             c.source = "mouse";
             if to.length() > 0.2 {
                 c.aim = Some(to.normalize());
@@ -738,8 +766,9 @@ fn player_step(s: &mut Sim, c: &Controls, tune: &Tune, dt: f32) {
             // Jump-throw: on the ground you can only toss it a short way.
             s.release(PLAYER, facing * 3.0 + Vec3::Y * 3.0, facing * 0.5);
         } else {
-            let inherit = a.vel.with_y(0.0);
-            s.release(PLAYER, throw_velocity(facing, tune) + inherit, facing * 0.3);
+            let aimed = tune.c(P::ThrowAim) == 0 && c.aim_dist.is_some();
+            let inherit = if aimed { Vec3::ZERO } else { a.vel.with_y(0.0) };
+            s.release(PLAYER, throw_velocity(facing, tune, c.aim_dist) + inherit, facing * 0.3);
         }
     }
 
@@ -764,7 +793,7 @@ fn player_step(s: &mut Sim, c: &Controls, tune: &Tune, dt: f32) {
             _ => {
                 let rate = if carrying { rate * 0.5 } else { rate };
                 s.actors[PLAYER].fire_cd = 1.0 / rate;
-                fire(s, PLAYER, facing, tune);
+                fire(s, PLAYER, facing, shot_range(tune, c.aim_dist), tune);
             }
         }
     }
@@ -812,16 +841,15 @@ fn player_step(s: &mut Sim, c: &Controls, tune: &Tune, dt: f32) {
     }
 }
 
-fn fire(s: &mut Sim, who: usize, dir: Vec3, tune: &Tune) {
+fn fire(s: &mut Sim, who: usize, dir: Vec3, range: f32, tune: &Tune) {
     let from = s.actors[who].pos + Vec3::Y * CHEST + dir * 0.5;
     s.fired += (who == PLAYER) as u32;
     if tune.c(P::Weapon) == 0 && who == PLAYER {
-        let range = 30.0;
         let b = &s.actors[BOT];
         let rel = (b.pos - s.actors[who].pos).with_y(0.0);
         let along = rel.dot(dir);
         let side = (rel - dir * along).length();
-        let hit = b.dead <= 0.0 && along > 0.0 && along < range && side < ACTOR_R + 0.15;
+        let hit = b.dead <= 0.0 && along > 0.0 && along < range + ACTOR_R && side < ACTOR_R + 0.15;
         let end = if hit { from + dir * along } else { from + dir * range };
         s.tracers.push((from, end, 0.06));
         if hit {
@@ -831,7 +859,7 @@ fn fire(s: &mut Sim, who: usize, dir: Vec3, tune: &Tune) {
         }
     } else {
         let speed = if who == PLAYER { tune.f(P::ProjSpeed) } else { 14.0 };
-        s.shots.push(Shot { pos: from, vel: dir * speed, owner: who, life: 30.0 / speed, counted: true, ent: None });
+        s.shots.push(Shot { pos: from, vel: dir * speed, owner: who, life: range / speed, counted: true, ent: None });
     }
 }
 
@@ -897,7 +925,7 @@ fn bot_step(s: &mut Sim, tune: &Tune, dt: f32) {
         s.bot_fire_cd -= dt;
         if s.bot_fire_cd <= 0.0 {
             s.bot_fire_cd = 1.4;
-            fire(s, BOT, to_p, tune);
+            fire(s, BOT, to_p, 30.0, tune);
         }
     }
 }
@@ -967,6 +995,11 @@ fn crates_physics(s: &mut Sim, tune: &Tune, dt: f32) {
                 }
                 if c.pos.y - HALF <= floor {
                     c.pos.y = floor + HALF;
+                    if c.vel.y < -2.0 {
+                        // A heavy box lands with a thud, not a skid, so throws stop near the reticle.
+                        c.vel.x *= 0.15;
+                        c.vel.z *= 0.15;
+                    }
                     c.vel.y = if c.vel.y < -6.0 { -c.vel.y * 0.25 } else { 0.0 };
                     let f = (-dt * 8.0).exp();
                     c.vel.x *= f;
@@ -1347,7 +1380,9 @@ fn draw_gizmos(mut g: Gizmos, sim: Res<Sim>, tune: Res<Tune>, controls: Res<Cont
         let (mut p, mut v) = if short {
             (a.pos + Vec3::Y * HEAD + a.facing * 0.5, a.facing * 3.0 + Vec3::Y * 3.0)
         } else {
-            (a.pos + Vec3::Y * HEAD + a.facing * 0.3, throw_velocity(a.facing, &tune) + a.vel.with_y(0.0))
+            let aimed = tune.c(P::ThrowAim) == 0 && controls.aim_dist.is_some();
+            let inherit = if aimed { Vec3::ZERO } else { a.vel.with_y(0.0) };
+            (a.pos + Vec3::Y * HEAD + a.facing * 0.3, throw_velocity(a.facing, &tune, controls.aim_dist) + inherit)
         };
         let color = if short { Color::srgb(1.0, 0.4, 0.2) } else { Color::srgb(0.4, 1.0, 0.4) };
         for _ in 0..80 {
