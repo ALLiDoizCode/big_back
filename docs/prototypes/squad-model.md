@@ -35,6 +35,20 @@ Knock-on decisions:
 - **#17** (what stacks build): shapes kicked open on the pad bring in *players*, not owned AI
   Buddies. A 2-stack gives 1 player and 2 wide × 2 high gives 2. The other results are open.
 
+## Verdict on how players join
+
+**Played 2026-10-18; human's verdict: "this feels good".** Teams start with one player.
+Others join from the pad, Team Buddies style:
+
+- The pad is 4 cells (2 × 2), at most 2 high.
+- You kick the pad open, and its shape is the recipe: 2 stacked = 1 player, 2 wide × 2 high
+  = 2 players.
+- A player who joined and then dies is out until the team opens another player shape. Each
+  team's first player respawns.
+- Bots on both teams build and kick by the same rules.
+
+The other recipe results (turret, health) are placeholders for #17.
+
 ## Still open: team size
 
 It's resolved when you pick the team-size range.
