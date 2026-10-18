@@ -32,7 +32,7 @@ shows what you're playing, with the current option in `[brackets]`.
 
 | Key | Rule | Options |
 |---|---|---|
-| **1** | What stacks build | **mix**, **weapons**, **base upgrades** (table below) |
+| **1** | What stacks build | **mix**, **weapons**, **base upgrades** (table below), **by kicker's class** (see "Classes") |
 | **2** | Recipe shape | **by shape** (Team Buddies) · **by count only** (any arrangement; the number of crates decides) |
 | **3** | Pad readout | **secret**: the HUD only says "4 crates: what will it make?", the pad never glows, and kicking a non-recipe does nothing · **pad shows what it makes**: `your pad: 4 flat -> rocket launcher`, gold outline when it can open |
 | **4** | Super crates | **off** · **upgrade**: a purple crate in a recipe makes the SUPER version · **branch**: it makes the result from another book instead |
@@ -57,6 +57,30 @@ carried crates still works.
 A branched weapons book gives the base-upgrades results, and the other way round. Super
 crates never branch a player recipe. Instead, a super crate there arms the new players with a
 super rapid gun.
+
+### Classes (rule 1: "by kicker's class")
+
+Every player has a class, and the class of whoever **kicks the pad open** picks what the
+non-player shapes make. The player recipes don't change. You start as a soldier; **C** changes
+your class at any time without restarting. Bots get classes by slot: a team's 1st player is a
+soldier, its 2nd an engineer and its 3rd a medic. So who joins from the pad decides what your
+team can build.
+
+| Shape | soldier | engineer | medic |
+|---|---|---|---|
+| 1 crate | shotgun | shield wall | full health |
+| 2 side by side | rapid gun | turret | heal your team |
+| 4 flat | rocket launcher | fortress (turret + wall) | shield wall |
+| all 8 | tank | tank | fortress |
+
+With the readout shown, a pad lists every class's result: `4 flat -> soldier (you): rocket
+launcher | engineer: fortress | medic: shield wall`. A branching super crate makes the next
+class's result (soldier > engineer > medic > soldier). A marker over each head shows the class:
+soldier ^, engineer square, medic +. The match log tags each result with the kicker's class.
+
+Things to watch: does choosing who kicks become a decision, or a chore? Can you read the
+enemy's threat from who's standing at their pad? Does a team that loses its engineer feel
+locked out of half the recipes?
 
 - **Guns** go to whoever kicked the pad open, and are lost when they're knocked out or run
   dry. Shotgun: 5 pellets, short range, 12 shells. Rapid: 6 shots/s, 60 rounds. Rocket: slow
@@ -86,7 +110,10 @@ super rapid gun.
 5. **Vulnerability (key 6).** Try each with the readout shown. In split/spill, shoot a red
    stack from range. In lock, watch the HUD's `locked into pads (asleep)` count, which is what
    the netcode research asks for. Does lock kill the stealing game?
-6. **Super crates (key 4).** One purple crate drops in the middle every 25 s (first at 15 s).
+6. **Classes (key 1 → "by kicker's class", C to switch).** Build 4 flat, then press C
+   before you kick to see the result change. Compare it with a fixed book: is "the same stack
+   makes different things" more fun, or just harder to read?
+7. **Super crates (key 4).** One purple crate drops in the middle every 25 s (first at 15 s).
    Is it worth a fight? Does upgrade or branch read better?
 
 **Shortcuts for trying recipes**: **T** drops a crate in front of you and **Y** drops a

@@ -13,6 +13,7 @@
 //! RMB / RB throw, LMB / RT shoot, F / B kick (hold beside your pad to open it).
 //! Rules: 1 what stacks build, 2 recipe shape, 3 pad readout, 4 super crates, 5 build time,
 //! 6 vulnerability. Each restarts the match. Enter picks the rules you're playing.
+//! C changes your class (matters when stacks build by class).
 //! T drops a crate at your feet, Y a super crate (for trying recipes).
 //! Tune: Up/Down pick, Left/Right change (Shift = x5).
 //! R / Start resets, P prints settings, verdicts and results, H hides the rules and panel.
@@ -180,13 +181,50 @@ enum GunKind {
     Rocket,
 }
 
+/// A player's class. With "what stacks build: by kicker's class", the class of whoever
+/// kicks the pad open picks the recipe book.
+#[derive(Clone, Copy, PartialEq, Debug)]
+enum Class {
+    Soldier,
+    Engineer,
+    Medic,
+}
+
+const CLASSES: [Class; 3] = [Class::Soldier, Class::Engineer, Class::Medic];
+
+impl Class {
+    fn name(self) -> &'static str {
+        match self {
+            Class::Soldier => "soldier",
+            Class::Engineer => "engineer",
+            Class::Medic => "medic",
+        }
+    }
+    fn book(self) -> usize {
+        match self {
+            Class::Soldier => 1,
+            Class::Engineer => 4,
+            Class::Medic => 5,
+        }
+    }
+    fn next(self) -> Class {
+        CLASSES[(self as usize + 1) % 3]
+    }
+}
+
+/// The "what stacks build" option that hands the choice to the kicker's class.
+const BY_CLASS: usize = 3;
+
 /// The recipe books: what 1 crate, 2 side by side, 4 flat and all 8 make.
-const BOOKS: [(&str, [Make; 4]); 4] = [
+const BOOKS: [(&str, [Make; 4]); 6] = [
     ("mix", [Make::Health, Make::Gun(GunKind::Rapid), Make::Turret, Make::Tank]),
     ("weapons", [Make::Gun(GunKind::Shotgun), Make::Gun(GunKind::Rapid), Make::Gun(GunKind::Rocket), Make::Tank]),
     ("base upgrades", [Make::TeamHeal, Make::Wall, Make::Turret, Make::Fortress]),
     // Only reached by a branching super crate in the mix book.
     ("mix (branched)", [Make::Gun(GunKind::Shotgun), Make::Wall, Make::Gun(GunKind::Rocket), Make::Fortress]),
+    // Class books (soldier uses "weapons").
+    ("engineer", [Make::Wall, Make::Turret, Make::Fortress, Make::Tank]),
+    ("medic", [Make::Health, Make::TeamHeal, Make::Wall, Make::Fortress]),
 ];
 
 /// The book a branching super crate switches to.
@@ -330,7 +368,7 @@ fn choice(name: &'static str, i: usize, opts: &'static [&'static str]) -> Param 
 fn defaults() -> Vec<Param> {
     // Order must match `P`.
     vec![
-        choice("1 what stacks build", 0, &["mix", "weapons", "base upgrades"]),
+        choice("1 what stacks build", 0, &["mix", "weapons", "base upgrades", "by kicker's class"]),
         choice("2 recipe shape", 0, &["by shape (TB)", "by count only"]),
         choice("3 pad readout", 1, &["secret (learn the shapes)", "pad shows what it makes"]),
         choice("4 super crates", 0, &["off", "upgrade the recipe", "branch the recipe"]),
@@ -497,6 +535,7 @@ struct Actor {
     stun: f32,
     gun: Option<Gun>,
     tank: Option<Tank>,
+    class: Class,
     /// Recent positions, to show other players slightly in the past (online interpolation).
     hist: VecDeque<(f32, Vec3)>,
     ent: Option<Entity>,
@@ -519,6 +558,8 @@ impl Actor {
             stun: 0.0,
             gun: None,
             tank: None,
+            // Bots by slot: 1st soldier, 2nd engineer, 3rd medic.
+            class: CLASSES[slot % 3],
             hist: VecDeque::new(),
             ent: None,
         }
@@ -621,6 +662,8 @@ struct Sim {
     super_mode: usize,
     build_time: f32,
     vuln: usize,
+    /// The class you play (C cycles it); survives resets.
+    your_class: Class,
     /// Blue's bots build pad shapes and kick them open too.
     ally_stacks: bool,
     /// You're in your seat (not watching a bot play it).
@@ -683,6 +726,7 @@ impl Sim {
             super_mode: 0,
             build_time: 0.0,
             vuln: STEAL,
+            your_class: Class::Soldier,
             ally_stacks: false,
             you_play: true,
             pad_kick: [0.0; 2],
@@ -756,6 +800,7 @@ impl Sim {
                 a.dead = f32::INFINITY;
             }
         }
+        self.actors[YOU].class = self.your_class;
         // Starting crates in a grid across the middle, spread to fit the arena.
         let (k, a) = (arena_scale(), arena());
         let count = 6 + 3 * self.team_size;
@@ -887,17 +932,27 @@ impl Sim {
         st
     }
 
-    /// What `team`'s pad makes if kicked open now, and whether a super crate upgrades it.
-    fn pad_make(&self, team: usize) -> Option<(Make, bool)> {
+    /// What `team`'s pad makes if `by` kicks it open now, and whether a super crate
+    /// upgrades it.
+    fn pad_make(&self, team: usize, by: usize) -> Option<(Make, bool)> {
+        self.pad_make_as(team, self.actors[by].class)
+    }
+
+    /// What the pad makes if a player of `class` kicks it (the class only matters when
+    /// stacks build by class).
+    fn pad_make_as(&self, team: usize, class: Class) -> Option<(Make, bool)> {
         let st = self.pad_state(team);
         let Shape::Recipe(slot) = st.shape else { return None };
+        let by_class = self.book == BY_CLASS;
+        let book = if by_class { class.book() } else { self.book };
         let sup = st.supers > 0 && self.super_mode > 0;
         let players = matches!(slot, Slot::Player1 | Slot::Player2);
         if sup && self.super_mode == 2 && !players {
-            return Some((make_of(branch_of(self.book), slot), false));
+            let other = if by_class { class.next().book() } else { branch_of(self.book) };
+            return Some((make_of(other, slot), false));
         }
         // Branching doesn't touch player recipes; a super crate arms the new players instead.
-        Some((make_of(self.book, slot), sup))
+        Some((make_of(book, slot), sup))
     }
 
     /// Whether `team` can open its pad: the shape is a recipe, and there's room for any
@@ -957,7 +1012,7 @@ impl Sim {
         let st = self.pad_state(team);
         let side = ["BLUE", "RED"][team];
         let who = if by == YOU { "YOU".to_string() } else { self.describe(by) };
-        let Some((make, gold)) = self.pad_make(team) else {
+        let Some((make, gold)) = self.pad_make(team, by) else {
             // Unaligned: the crates are broken and used up.
             self.use_up(&st.ids, team);
             self.say(format!("{side} pad kicked by {who}: crates out of line, broken for nothing"));
@@ -967,7 +1022,8 @@ impl Sim {
             Shape::Recipe(slot) => slot.label(self.count_only),
             _ => "",
         };
-        let what = format!("{}{}", if gold { "SUPER " } else { "" }, make.name());
+        let class = if self.book == BY_CLASS && !matches!(make, Make::Players(_)) { format!("{} ", self.actors[by].class.name()) } else { String::new() };
+        let what = format!("{class}{}{}", if gold { "SUPER " } else { "" }, make.name());
         if self.build_time > 0.0 {
             let n = st.ids.len() as f32;
             for c in self.crates.iter_mut().filter(|c| st.ids.contains(&c.id)) {
@@ -1014,7 +1070,8 @@ impl Sim {
     fn finish_build(&mut self, team: usize) {
         let Some(b) = self.builds[team].take() else { return };
         self.use_up(&b.ids, team);
-        let what = format!("{}{}", if b.gold { "SUPER " } else { "" }, b.make.name());
+        let class = if self.book == BY_CLASS && !matches!(b.make, Make::Players(_)) { format!("{} ", self.actors[b.by].class.name()) } else { String::new() };
+        let what = format!("{class}{}{}", if b.gold { "SUPER " } else { "" }, b.make.name());
         self.made[team].push(what.clone());
         let msg = format!("{} pad finished building: {what}", ["BLUE", "RED"][team]);
         println!("t={:.1}s {msg}", self.t);
@@ -1680,6 +1737,12 @@ fn tune_input(
             let p = &tune.vals[k];
             sim.say(format!("RULE {}: {} (match restarted)", &p.name[2..], fmt_value(&p.value)));
         }
+    }
+    if keys.just_pressed(KeyCode::KeyC) {
+        sim.your_class = sim.your_class.next();
+        sim.actors[YOU].class = sim.your_class;
+        let c = sim.your_class.name();
+        sim.say(format!("you're a {c} now"));
     }
     if keys.just_pressed(KeyCode::Enter) {
         let line = rules_desc(&tune);
@@ -2987,6 +3050,22 @@ fn draw_gizmos(mut g: Gizmos, sim: Res<Sim>, tune: Res<Tune>, controls: Res<Cont
             g.line(p, p + b.facing * 1.0, col);
         }
     }
+    // Class markers over heads when stacks build by class: soldier ^, engineer square,
+    // medic +.
+    if sim.book == BY_CLASS {
+        for (i, b) in sim.actors.iter().enumerate().filter(|(_, b)| b.alive()) {
+            let p = pos_of(i) + Vec3::Y * 3.0;
+            let col = PLAYER_COLOR[b.slot % PLAYER_COLOR.len()];
+            match b.class {
+                Class::Soldier => g.linestrip([p - Vec3::X * 0.3, p + Vec3::Y * 0.4, p + Vec3::X * 0.3, p - Vec3::X * 0.3], col),
+                Class::Engineer => g.rect(Isometry3d::from_translation(p + Vec3::Y * 0.2), Vec2::splat(0.5), col),
+                Class::Medic => {
+                    g.line(p - Vec3::X * 0.3 + Vec3::Y * 0.2, p + Vec3::X * 0.3 + Vec3::Y * 0.2, col);
+                    g.line(p - Vec3::Y * 0.1, p + Vec3::Y * 0.5, col);
+                }
+            }
+        }
+    }
     for (at, r, left) in &sim.booms {
         g.sphere(Isometry3d::from_translation(*at), r * (1.0 - left / 0.3 * 0.5), Color::srgb(1.0, 0.6, 0.1));
     }
@@ -3026,7 +3105,8 @@ fn hud(sim: Res<Sim>, tune: Res<Tune>, controls: Res<Controls>, mut hud: Single<
         s += "your seat is a BOT: watching\n";
     } else {
         s += &format!(
-            "you: {}{}  hp {:.0}{}\n",
+            "you ({}): {}{}  hp {:.0}{}\n",
+            a.class.name(),
             if a.carrying.is_some() { "CARRYING" } else { "empty-handed" },
             if a.grounded { "" } else { ", airborne" },
             a.hp.max(0.0),
@@ -3054,8 +3134,13 @@ fn hud(sim: Res<Sim>, tune: Res<Tune>, controls: Res<Controls>, mut hud: Single<
         s += &format!("> {m}\n");
     }
     s += "\nWASD move  mouse aim  Space jump  E grab/place  RMB throw  LMB shoot  F kick\n";
-    s += "1-6 change a rule  ENTER pick these rules  T drop crate  Y drop super crate  R reset  P print  H hide boxes";
+    s += "1-6 change a rule  C your class  ENTER pick these rules  T drop crate  Y drop super crate  R reset  P print  H hide boxes";
     hud.0 = s;
+}
+
+/// The first player on `team` (its starting player).
+fn team_lead(sim: &Sim, team: usize) -> usize {
+    (0..sim.actors.len()).find(|&j| sim.actors[j].team == team).unwrap_or(YOU)
 }
 
 /// What a pad says about itself: everything with the readout on, only the crate count
@@ -3080,8 +3165,20 @@ fn pad_readout(sim: &Sim, team: usize) -> String {
         Shape::Odd => format!("{n} crates: no recipe yet, add crates"),
         Shape::Unaligned => format!("a crate is out of line: kicking breaks them for nothing{kick}"),
         Shape::Busy => "building".into(),
+        Shape::Recipe(slot) if sim.book == BY_CLASS && st.shape.players() == 0 => {
+            // One shape, a result per class: whoever kicks it decides.
+            let each: Vec<String> = CLASSES
+                .iter()
+                .map(|&c| {
+                    let (make, gold) = sim.pad_make_as(team, c).unwrap_or((Make::Health, false));
+                    let you = if team == 0 && c == sim.actors[YOU].class { " (you)" } else { "" };
+                    format!("{}{you}: {}{}", c.name(), if gold { "SUPER " } else { "" }, make.name())
+                })
+                .collect();
+            format!("{} -> {}{kick}", slot.label(sim.count_only), each.join(" | "))
+        }
         Shape::Recipe(slot) => {
-            let (make, gold) = sim.pad_make(team).unwrap_or((Make::Health, false));
+            let (make, gold) = sim.pad_make(team, if team == 0 { YOU } else { team_lead(sim, 1) }).unwrap_or((Make::Health, false));
             let full = st.shape.players() > 0 && !sim.can_open(team, st.shape);
             let branched = st.supers > 0 && sim.super_mode == 2 && !matches!(make, Make::Players(_));
             format!(
@@ -3125,22 +3222,31 @@ fn guide_text(
     }
     // The recipe book: always listed (it's the manual); the pad readout is the variable.
     let co = sim.count_only;
-    let b = BOOKS[sim.book].1;
-    s += &format!(
-        "\nRECIPES: {} = 1 player, {} = 2 players, {} = {}, {} = {}, {} = {}, {} = {}",
-        Slot::Player1.label(co),
-        Slot::Player2.label(co),
-        Slot::Small.label(co),
-        b[0].name(),
-        Slot::Pair.label(co),
-        b[1].name(),
-        Slot::Flat4.label(co),
-        b[2].name(),
-        Slot::All8.label(co),
-        b[3].name(),
-    );
+    let line = |b: [Make; 4]| {
+        format!(
+            "{} = {}, {} = {}, {} = {}, {} = {}",
+            Slot::Small.label(co),
+            b[0].name(),
+            Slot::Pair.label(co),
+            b[1].name(),
+            Slot::Flat4.label(co),
+            b[2].name(),
+            Slot::All8.label(co),
+            b[3].name(),
+        )
+    };
+    s += &format!("\nRECIPES: {} = 1 player, {} = 2 players", Slot::Player1.label(co), Slot::Player2.label(co));
+    if sim.book == BY_CLASS {
+        s += &format!(", the rest by the KICKER'S CLASS (you: {}, C changes it):", sim.actors[YOU].class.name().to_uppercase());
+        for c in CLASSES {
+            s += &format!("\n  {:<8} {}", c.name(), line(BOOKS[c.book()].1));
+        }
+    } else {
+        s += &format!(", {}", line(BOOKS[sim.book].1));
+    }
     match sim.super_mode {
         1 => s += "\nSUPER crate (purple) in a recipe: a stronger version of it",
+        2 if sim.book == BY_CLASS => s += "\nSUPER crate (purple) in a recipe: makes the next class's result (soldier > engineer > medic > soldier)",
         2 => s += &format!("\nSUPER crate (purple) in a recipe: makes the {} book's result instead", BOOKS[branch_of(sim.book)].0),
         _ => {}
     }
