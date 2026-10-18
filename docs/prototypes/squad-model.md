@@ -19,10 +19,20 @@ model, and that pick sets the range of team sizes.
 - **Core feel is fixed at the #9 baseline.** Curling jump-throws, 0.6× carry speed, full lock,
   a hit drops the crate, 18 m/s projectiles at 3/s, 4 shots to kill a leader, and reach-masked
   grabs at 120 ms. It's not in the panel.
-- **Score** = crates resting on your pad (a placeholder turret counts 4). Matches last 120 s,
+- **Score** = crates resting on your pad, plus crates spent on builds there (2 per buddy, 4
+  per placeholder turret). Matches last 120 s,
   then the result prints and the match restarts.
-- **Model A**: every leader owns 0–3 buddies ("squad size"). Size 1 is the hero + partner
-  model (candidate C), and size 0 is one character per player.
+- **Model A**: every leader owns up to 0–3 buddies ("squad cap"). A cap of 1 is the hero +
+  partner model (candidate C), and 0 is one character per player.
+  - **Buddies come from crates** (the default, as in Team Buddies). You start alone. Set one
+    crate on top of another on your pad, by placing (E) or by a curling throw. A resting
+    2-high stack pops into a buddy for the leader whose side set the top crate, as long as
+    their squad is under the cap. A dead crate-built buddy is gone until you build another,
+    so the crate loop feeds your army. A stack at the cap stays a stack and scores. Bot
+    leaders and hauling buddies build columns when their squad has room. The shape is a
+    placeholder: what stacks really build is #17.
+  - The other setting, **start with full squad**, gives every leader a full squad at the
+    start, and dead buddies respawn after 5 s.
   - **Default job**, for a buddy with no order:
     - *follow & guard me*: shoots what's near you.
     - *haul to pad*: fetches crates within "leash" of your pad and sets them down on it.
@@ -80,11 +90,12 @@ median 1.10 s | looks | roster`. The target is right, in under a second. The tes
 
 | # | Compare | What it answers |
 |---|---|---|
-| 1 | **squad size** 0 / 1 / 2 / 3 at 3v3 | How many buddies should you own? Is 1 (hero + partner) a shallow middle, or the sweet spot? Is 3 noise? |
+| 1 | **squad cap** 0 / 1 / 2 / 3 at 3v3 | How many buddies should you own at once? Is 1 (hero + partner) a shallow middle, or the sweet spot? Is 3 noise? |
+| 1b | **where buddies come from**: built from 2-high stacks vs a full squad from the start | Does building your army from crates make the crate loop matter more? Is losing a buddy for good fun or punishing? |
 | 2 | **A own squad** vs **B neutral haulers** | Is commanding your own squad more fun than team haulers nobody commands? Does B lose the Team Buddies identity? |
 | 3 | **default job**: follow / haul / guard pad | What should an un-ordered buddy do? Does any job play the game for you? |
 | 4 | **orders**: none / one context button / 4 verbs | Do you give orders mid-fight at all (watch "orders given")? Which scheme do your hands accept? |
-| 5 | **readability at 24 bodies**: team colour only / owner bands / + small buddies / + human halo | **Press T in each.** Can you tell humans from AI, and who owns what, in under a second? |
+| 5 | **readability at 24 bodies** (full squads for the test): team colour only / owner bands / + small buddies / + human halo | **Press T in each.** Can you tell humans from AI, and who owns what, in under a second? |
 | 6 | **fairness probe**, bots only at 2× speed, with 1 / 2 / 3 buddies | Blue never orders, red micros. Watch a match per variant; the result prints. Keep the size where an idle squad is neither useless nor dominant, and micro still wins. |
 | 7 | **online delay** 0 / 100 / 200 ms | Buddies are always interpolated online. Does the squad still feel responsive? |
 | 8 | **team size** 2v2 / 3v3 / 4v4 | With your squad pick, how many players per team? 4v4 with 3 buddies is 32 bodies, the whole budget. |

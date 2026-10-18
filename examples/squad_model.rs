@@ -6,8 +6,9 @@
 //! Built on the core-feel baseline from #9 (`prototype/core-feel`), which is fixed here as
 //! constants: curling jump-throws, full-lock carrying, 18 m/s projectiles, reach-masked grabs.
 //! Two teams of leaders (you plus bot leaders standing in for humans) and their AI.
-//! Variant A: every leader has their own AI Buddies (squad size 0..3; 1 = hero + partner,
-//! 0 = one character per player). Variant B: no squad, team-owned neutral haulers.
+//! Variant A: every leader has their own AI Buddies (cap 0..3; 1 = hero + partner, 0 = one
+//! character per player), built Team Buddies style from 2-high crate stacks on the pad, or
+//! given at the start. Variant B: no squad, team-owned neutral haulers.
 //! See `docs/prototypes/squad-model.md` for what to try.
 //!
 //! Play: WASD / left stick move, mouse / right stick aim, Space / A jump, E / X grab or place,
@@ -83,6 +84,7 @@ enum P {
     Model,
     TeamSize,
     SquadSize,
+    BuddySource,
     Haulers,
     DefaultJob,
     Orders,
@@ -132,7 +134,8 @@ fn defaults() -> Vec<Param> {
     vec![
         choice("squad model", 0, &["A: leader + own buddies", "B: team neutral haulers"]),
         num("team size", 3.0, 1.0, 4.0, 1.0, "v"),
-        num("squad size (A)", 2.0, 0.0, 3.0, 1.0, "buddies"),
+        num("squad cap (A)", 2.0, 0.0, 3.0, 1.0, "buddies"),
+        choice("buddies come from", 1, &["start with full squad", "2-high stack on pad"]),
         num("haulers/player (B)", 1.0, 0.0, 3.0, 1.0, ""),
         choice("default job", 1, JOBS),
         choice("orders", 1, &["none", "one context button", "4 verbs"]),
@@ -197,13 +200,14 @@ fn fmt_value(v: &Value) -> String {
     }
 }
 
-/// Model, team size, squad size, haulers per team: changing any of these rebuilds the match.
-fn roster_of(tune: &Tune) -> [usize; 4] {
+/// Model, team size, squad cap, haulers per team, buddy source: changing any of these
+/// rebuilds the match.
+fn roster_of(tune: &Tune) -> [usize; 5] {
     let model = tune.c(P::Model);
     let n = tune.c(P::TeamSize);
     let squad = if model == 0 { tune.c(P::SquadSize) } else { 0 };
     let haulers = if model == 1 { tune.c(P::Haulers) * n } else { 0 };
-    [model, n, squad, haulers]
+    [model, n, squad, haulers, tune.c(P::BuddySource)]
 }
 
 fn roster_desc(tune: &Tune) -> String {
@@ -212,8 +216,9 @@ fn roster_desc(tune: &Tune) -> String {
         format!("B {n}v{n}, {} haulers per player", tune.c(P::Haulers))
     } else {
         format!(
-            "A {n}v{n}, {} buddies each, default job {}, orders {}",
+            "A {n}v{n}, up to {} buddies each {}, default job {}, orders {}",
             tune.c(P::SquadSize),
+            if tune.c(P::BuddySource) == 1 { "(built from 2-high stacks)" } else { "(start with full squad)" },
             JOBS[tune.c(P::DefaultJob)],
             fmt_value(&tune.vals[P::Orders as usize].value)
         )
@@ -248,14 +253,25 @@ struct Comparison {
 
 const COMPARISONS: &[Comparison] = &[
     Comparison {
-        row: "1", title: "squad size (3v3, model A)",
-        question: "How many buddies should you own? 0 = one character per player, 1 = hero + partner, 3 = Team Buddies.",
+        row: "1", title: "squad cap (3v3, model A)",
+        question: "How many buddies can you own at once? 0 = one character per player, 1 = hero + partner, 3 = Team Buddies.",
         both: &[(P::Model, 0.0), (P::TeamSize, 3.0)],
         variants: &[
             ("0: solo", &[(P::SquadSize, 0.0)]),
             ("1: hero + partner", &[(P::SquadSize, 1.0)]),
             ("2 buddies", &[(P::SquadSize, 2.0)]),
             ("3 buddies", &[(P::SquadSize, 3.0)]),
+        ],
+        restore: &[],
+    },
+    Comparison {
+        row: "1b", title: "where buddies come from (3v3, cap 3)",
+        question: "Built from crates (a 2-high stack on your pad pops a buddy; dead ones are gone), \
+                   or a full squad from the start that respawns? Does building your army make the crate loop matter more?",
+        both: &[(P::Model, 0.0), (P::TeamSize, 3.0), (P::SquadSize, 3.0)],
+        variants: &[
+            ("built from 2-high stacks", &[(P::BuddySource, 1.0)]),
+            ("start with full squad", &[(P::BuddySource, 0.0)]),
         ],
         restore: &[],
     },
@@ -295,14 +311,18 @@ const COMPARISONS: &[Comparison] = &[
         row: "5", title: "readability at full size (3v3, 3 buddies = 24 bodies)",
         question: "Press T in each variant: 8 freeze-frames. Click the highlighted unit's OWNER: the unit itself if it's a human, \
                    its leader if it's a buddy, its pad if it's a hauler. Target: right, in under 1 s.",
-        both: &[(P::Model, 0.0), (P::TeamSize, 3.0), (P::SquadSize, 3.0), (P::Tethers, 0.0), (P::Camera, 0.0)],
+        both: &[
+            (P::Model, 0.0), (P::TeamSize, 3.0), (P::SquadSize, 3.0), (P::BuddySource, 0.0), (P::Tethers, 0.0),
+            (P::Camera, 0.0),
+        ],
         variants: &[
             ("team colour only", &[(P::OwnerBand, 0.0), (P::BuddyScale, 1.0), (P::HumanHalo, 0.0)]),
             ("owner bands", &[(P::OwnerBand, 1.0), (P::BuddyScale, 1.0), (P::HumanHalo, 0.0)]),
             ("bands + small buddies", &[(P::OwnerBand, 1.0), (P::BuddyScale, 0.7), (P::HumanHalo, 0.0)]),
             ("bands + small + human halo", &[(P::OwnerBand, 1.0), (P::BuddyScale, 0.7), (P::HumanHalo, 1.0)]),
         ],
-        restore: &[],
+        // Full squads only for the test; keep your buddy source.
+        restore: &[P::BuddySource],
     },
     Comparison {
         row: "6", title: "fairness probe (bots only: you watch)",
@@ -409,6 +429,8 @@ struct Crate {
     state: CrateState,
     kick: f32,
     thrown_by: Option<usize>,
+    /// The leader whose side last set this crate down: a 2-high stack builds them a buddy.
+    placed_by: Option<usize>,
     settling: bool,
     ent: Option<Entity>,
 }
@@ -555,7 +577,11 @@ struct Sim {
     loot_respawn: f32,
     msgs: Vec<(String, f32)>,
     despawn: Vec<Entity>,
-    roster: [usize; 4],
+    roster: [usize; 5],
+    /// Buddies come from crates: a dead one is gone until you build another.
+    built_squads: bool,
+    /// Crates spent on builds (buddies, turrets): they still count for the score.
+    banked: [usize; 2],
     match_left: f32,
     /// Counts down the end-of-match result screen.
     over: f32,
@@ -586,7 +612,9 @@ impl Sim {
             loot_respawn: 0.0,
             msgs: Vec::new(),
             despawn: Vec::new(),
-            roster: [0; 4],
+            roster: [0; 5],
+            built_squads: false,
+            banked: [0; 2],
             match_left: 0.0,
             over: 0.0,
             frozen: false,
@@ -617,7 +645,10 @@ impl Sim {
         self.pending = None;
         self.orders.clear();
         self.roster = roster_of(tune);
-        let [_, n, squad, haulers] = self.roster;
+        let [_, n, cap, haulers, source] = self.roster;
+        self.built_squads = source == 1;
+        self.banked = [0; 2];
+        let squad = if self.built_squads { 0 } else { cap };
         let buddy_hp = tune.f(P::BuddyHp);
         for team in 0..2 {
             for slot in 0..n {
@@ -690,6 +721,7 @@ impl Sim {
             state: CrateState::Free,
             kick: 0.0,
             thrown_by: None,
+            placed_by: None,
             settling: false,
             ent: None,
         });
@@ -714,10 +746,12 @@ impl Sim {
     fn release(&mut self, who: usize, vel: Vec3, offset: Vec3) {
         let Some(id) = self.actors[who].carrying.take() else { return };
         let head = self.actors[who].pos + Vec3::Y * HEAD + offset;
+        let leader = self.leader_of(who);
         if let Some(c) = self.crate_mut(id) {
             c.state = CrateState::Free;
             c.pos = head;
             c.vel = vel;
+            c.placed_by = leader;
             c.thrown_by = if vel.length() > 4.0 { Some(who) } else { None };
         }
     }
@@ -745,13 +779,15 @@ impl Sim {
     }
 
     /// Where an AI hauler sets its crate down on its pad: the lowest cell, then the nearest.
-    fn pad_cell(&self, team: usize, from: Vec3) -> Vec3 {
+    /// When its leader's squad has room, on top of a lone crate first, to build a buddy.
+    fn pad_cell(&self, team: usize, from: Vec3, column: bool) -> Vec3 {
         let pad = PADS[team];
         let mut best: Option<(f32, Vec3)> = None;
         for gx in -2..=2 {
             for gz in -2..=2 {
                 let at = self.target_at(pad + Vec2::new(gx as f32, gz as f32) * CRATE);
-                let score = at.y * 10.0 + at.xz().distance(from.xz());
+                let second = (at.y - CRATE * 1.5).abs() < 0.05;
+                let score = if column && second { -10.0 } else { at.y * 10.0 } + at.xz().distance(from.xz());
                 if best.is_none_or(|(b, _)| score < b) {
                     best = Some((score, at));
                 }
@@ -762,8 +798,10 @@ impl Sim {
 
     fn place(&mut self, who: usize, at: Vec3) {
         let Some(id) = self.actors[who].carrying.take() else { return };
+        let leader = self.leader_of(who);
         if let Some(c) = self.crate_mut(id) {
             c.state = CrateState::Free;
+            c.placed_by = leader;
             c.pos = at;
             c.vel = Vec3::ZERO;
             c.thrown_by = None;
@@ -807,7 +845,12 @@ impl Sim {
         if a.hp > 0.0 {
             return;
         }
-        a.dead = if a.role == Role::Leader { 3.0 } else { 5.0 };
+        a.dead = match a.role {
+            Role::Leader => 3.0,
+            // Crate-built buddies don't respawn: build another.
+            Role::Buddy(_) if self.built_squads => f32::INFINITY,
+            _ => 5.0,
+        };
         a.claim = None;
         self.kills[by_team] += 1;
         if who == YOU {
@@ -834,14 +877,47 @@ impl Sim {
         (0..self.actors.len()).filter(move |&j| self.actors[j].role == Role::Buddy(leader))
     }
 
-    /// Crates resting on the team's pad, plus 4 per placeholder turret built from them.
+    /// Crates resting on the team's pad, plus crates spent on builds there.
     fn score(&self, team: usize) -> usize {
         let on_pad = self
             .crates
             .iter()
             .filter(|c| c.state == CrateState::Free && c.kind == Kind::Normal && pad_contains(PADS[team], c.pos))
             .count();
-        on_pad + 4 * self.turrets.iter().filter(|t| t.team == team).count()
+        on_pad + self.banked[team]
+    }
+
+    fn leader_of(&self, i: usize) -> Option<usize> {
+        match self.actors[i].role {
+            Role::Leader => Some(i),
+            Role::Buddy(o) => Some(o),
+            Role::Hauler => None,
+        }
+    }
+
+    /// Whether `i`'s leader has room for another crate-built buddy.
+    fn wants_buddy(&self, i: usize) -> bool {
+        self.built_squads
+            && self.leader_of(i).is_some_and(|l| self.squad(l).filter(|&j| self.actors[j].alive()).count() < self.roster[2])
+    }
+
+    /// A new buddy for `leader` at `at`, reusing a dead buddy's slot if there is one.
+    fn add_buddy(&mut self, leader: usize, at: Vec3, hp: f32) {
+        let (team, slot) = (self.actors[leader].team, self.actors[leader].slot);
+        let reuse = self.squad(leader).find(|&j| self.actors[j].dead.is_infinite());
+        let spot = reuse.map_or(self.squad(leader).count(), |j| self.actors[j].spot);
+        let mut a = Actor::new(Role::Buddy(leader), team, slot, spot, hp);
+        a.pos = at;
+        a.facing = Vec3::X * toward_centre(team);
+        a.told = 1.0;
+        match reuse {
+            Some(j) => {
+                a.ent = self.actors[j].ent.take();
+                self.orders.retain(|o| o.1 != j);
+                self.actors[j] = a;
+            }
+            None => self.actors.push(a),
+        }
     }
 
     fn order(&mut self, b: usize, job: Job, delay: f32) {
@@ -1334,6 +1410,7 @@ fn tick(s: &mut Sim, c: &Controls, tune: &Tune, dt: f32) {
     crates_physics(s);
     crates_step(s, dt);
     shots_step(s, dt);
+    build_buddies(s, tune);
     craft(s, tune, dt);
     refill(s, dt);
     for a in &mut s.actors {
@@ -1651,7 +1728,7 @@ fn haul_plan(s: &Sim, i: usize, only: Option<u32>, leash: Option<f32>) -> Haul {
     let a = &s.actors[i];
     let none = Haul { goal: None, act: Act::None, claim: None, done: false, idle: false };
     if a.carrying.is_some() {
-        let cell = s.pad_cell(a.team, a.pos);
+        let cell = s.pad_cell(a.team, a.pos, s.wants_buddy(i));
         if cell.xz().distance(a.pos.xz()) < 2.0 {
             return Haul { act: Act::Place(cell), done: only.is_some(), ..none };
         }
@@ -2092,6 +2169,43 @@ fn shots_step(s: &mut Sim, dt: f32) {
     }
 }
 
+/// Team Buddies' rule: a 2-high stack resting on your pad pops into a buddy for the leader
+/// whose side set the top crate, if their squad is under the cap. A stack at the cap stays
+/// a stack (and still scores). PLACEHOLDER shape: the real build grammar is #17.
+fn build_buddies(s: &mut Sim, tune: &Tune) {
+    if !s.built_squads {
+        return;
+    }
+    let on_grid = |p: Vec3| (p.xz() / CRATE - (p.xz() / CRATE).round()).length() < 0.05;
+    let resting = |c: &Crate| c.state == CrateState::Free && c.kind == Kind::Normal && c.vel.length() < 0.1 && on_grid(c.pos);
+    for team in 0..2 {
+        let found = s.crates.iter().filter(|c| resting(c) && pad_contains(PADS[team], c.pos)).find_map(|top| {
+            if (top.pos.y - CRATE * 1.5).abs() > 0.05 {
+                return None;
+            }
+            let leader = top.placed_by.filter(|&l| s.actors[l].team == team)?;
+            if s.squad(leader).filter(|&j| s.actors[j].alive()).count() >= s.roster[2] {
+                return None;
+            }
+            let bottom = s
+                .crates
+                .iter()
+                .find(|c| resting(c) && (c.pos.y - HALF).abs() < 0.05 && c.pos.xz().distance(top.pos.xz()) < 0.1)?;
+            Some((top.id, bottom.id, leader, top.pos.with_y(0.0)))
+        });
+        let Some((a, b, leader, at)) = found else { continue };
+        s.crates.retain(|c| {
+            let used = c.id == a || c.id == b;
+            if used { s.despawn.extend(c.ent); }
+            !used
+        });
+        s.banked[team] += 2;
+        s.add_buddy(leader, at, tune.f(P::BuddyHp));
+        let who = if leader == YOU { "you".to_string() } else { s.describe(leader) };
+        s.say(format!("2-high stack: a new buddy for {who}"));
+    }
+}
+
 /// PLACEHOLDER (not a grammar decision, see #17): four resting crates on a team's pad in a
 /// 2x2 block on the same level merge into a turret for that team.
 fn craft(s: &mut Sim, tune: &Tune, dt: f32) {
@@ -2151,6 +2265,7 @@ fn craft(s: &mut Sim, tune: &Tune, dt: f32) {
                     life: 40.0,
                     ent: None,
                 });
+                s.banked[team] += 4;
                 s.say(format!("{} built a TURRET (placeholder, 40 s)", ["blue", "red"][team]));
                 return;
             }
@@ -2306,7 +2421,7 @@ fn read_test(
             let mut times: Vec<f32> = rt.answers.iter().map(|a| a.1).collect();
             times.sort_by(f32::total_cmp);
             let median = times[n / 2];
-            let bodies = sim.actors.len();
+            let bodies = sim.actors.iter().filter(|a| !a.dead.is_infinite()).count();
             let line = format!(
                 "readability: {right}/{n} right, {fast}/{n} right in under 1 s, median {median:.2} s | {} | {} ({bodies} bodies)",
                 looks_desc(&tune),
@@ -2728,7 +2843,9 @@ fn hud(sim: Res<Sim>, tune: Res<Tune>, controls: Res<Controls>, mut hud: Single<
         .squad(YOU)
         .map(|j| {
             let b = &sim.actors[j];
-            if !b.alive() {
+            if b.dead.is_infinite() {
+                "gone (build another)".to_string()
+            } else if !b.alive() {
                 "down".to_string()
             } else {
                 let job = effective_job(&sim, j, &tune);
@@ -2737,10 +2854,15 @@ fn hud(sim: Res<Sim>, tune: Res<Tune>, controls: Res<Controls>, mut hud: Single<
             }
         })
         .collect();
-    if !mine.is_empty() {
+    let cap = sim.roster[2];
+    if sim.built_squads && cap > 0 {
+        let alive = sim.squad(YOU).filter(|&j| sim.actors[j].alive()).count();
+        s += &format!("squad {alive}/{cap}: set a crate on top of another on your pad (2-high stack) to build a buddy\n");
+    }
+    if mine.iter().any(|m| !m.starts_with("gone")) {
         s += &format!("your squad: {}\n", mine.join(" | "));
     }
-    let bodies = sim.actors.len();
+    let bodies = sim.actors.iter().filter(|a| !a.dead.is_infinite()).count();
     let moving = sim.crates.iter().filter(|c| c.state != CrateState::Free || c.vel.length() > 0.05).count();
     s += &format!(
         "netcode: {bodies} networked bodies (budget ~32), {moving} moving crates (~20-30), predicted here: you + crates near you\n"
