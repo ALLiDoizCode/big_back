@@ -36,6 +36,7 @@ const PLAYER_PAD: Vec2 = Vec2::new(-12.0, 0.0);
 const BOT_PAD: Vec2 = Vec2::new(12.0, 0.0);
 const PAD_HALF: f32 = 2.0;
 const CAM_OFFSET: Vec3 = Vec3::new(0.0, 21.0, 14.0);
+const TURRET_H: f32 = 1.1;
 const BOT_SPAWN: Vec3 = Vec3::new(5.0, 0.0, 0.0);
 const PLAYER_SPAWN: Vec3 = Vec3::new(-6.0, 0.0, 0.0);
 
@@ -64,6 +65,7 @@ enum P {
     GrabMask,
     GrabReach,
     BotMode,
+    Craft,
 }
 
 #[derive(Clone)]
@@ -107,6 +109,8 @@ fn defaults() -> Vec<Param> {
         choice("latency mask", 0, &["none", "reach", "lunge"]),
         num("grab reach", 1.6, 0.8, 3.0, 0.1, "m"),
         choice("bot", 1, &["dummy", "strafer", "hauler", "duelist"]),
+        // PLACEHOLDER only, so stacking does something. The real grammar is issue #17.
+        choice("placeholder craft", 0, &["2x2 = turret", "off"]),
     ]
 }
 
@@ -195,11 +199,22 @@ struct Pending {
     total: f32,
 }
 
+/// PLACEHOLDER craft result: shoots at the bot for a while, then expires.
+struct Turret {
+    pos: Vec3,
+    facing: Vec3,
+    cd: f32,
+    life: f32,
+    ent: Option<Entity>,
+}
+
 struct Shot {
     pos: Vec3,
     vel: Vec3,
     owner: usize,
     life: f32,
+    /// False for turret shots, so they stay out of your accuracy.
+    counted: bool,
     ent: Option<Entity>,
 }
 
@@ -208,6 +223,7 @@ struct Sim {
     actors: [Actor; 2],
     crates: Vec<Crate>,
     shots: Vec<Shot>,
+    turrets: Vec<Turret>,
     tracers: Vec<(Vec3, Vec3, f32)>,
     swings: Vec<(Vec3, Vec3, f32)>,
     pending: Option<Pending>,
@@ -233,6 +249,7 @@ impl Sim {
             actors: [Actor::default(), Actor::default()],
             crates: Vec::new(),
             shots: Vec::new(),
+            turrets: Vec::new(),
             tracers: Vec::new(),
             swings: Vec::new(),
             pending: None,
@@ -257,6 +274,9 @@ impl Sim {
     fn reset(&mut self) {
         for c in self.crates.drain(..) {
             self.despawn.extend(c.ent);
+        }
+        for t in self.turrets.drain(..) {
+            self.despawn.extend(t.ent);
         }
         for sh in self.shots.drain(..) {
             self.despawn.extend(sh.ent);
@@ -325,20 +345,23 @@ impl Sim {
         }
     }
 
-    /// Where a placed crate lands: snapped onto the nearest stack in front, otherwise onto
-    /// the crate-sized grid (which lines up with the pads). Returns the landing centre.
+    /// Where a placed crate lands: the crate-sized grid cell in front (the grid lines up with
+    /// the pads), on top of whatever is already in it. A loose, off-grid crate right under the
+    /// target is stacked on instead. Returns the landing centre.
     fn place_target(&self, who: usize) -> Vec3 {
         let a = &self.actors[who];
         let want = (a.pos + a.facing * 1.1).xz();
         let free = || self.crates.iter().filter(|c| c.state == CrateState::Free);
+        let cell = (want / CRATE).round() * CRATE;
         let xz = free()
             .map(|c| c.pos.xz())
-            .filter(|p| p.distance(want) < CRATE)
+            .filter(|p| p.distance(want) < HALF && p.distance(cell) > 0.05)
             .min_by(|x, y| x.distance(want).total_cmp(&y.distance(want)))
-            .unwrap_or_else(|| (want / CRATE).round() * CRATE);
+            .unwrap_or(cell);
         let top = free()
             .filter(|c| (c.pos.x - xz.x).abs() < CRATE * 0.9 && (c.pos.z - xz.y).abs() < CRATE * 0.9)
             .map(|c| c.pos.y + HALF)
+            .chain(self.turrets.iter().filter(|t| t.pos.xz().distance(xz) < 1.1).map(|_| TURRET_H))
             .fold(0.0, f32::max);
         Vec3::new(xz.x, top + HALF, xz.y)
     }
@@ -514,11 +537,17 @@ fn autoplay(sim: &Sim, c: &mut Controls) {
     let to_bot = (sim.actors[BOT].pos - a.pos).with_y(0.0).normalize_or_zero();
     *c = Controls::default();
     if a.carrying.is_some() && std::env::var("CORE_FEEL_AUTOPLAY").as_deref() == Ok("stack") {
-        // Walk to a spot beside the pad centre, face it, and place.
-        let pad = Vec3::new(PLAYER_PAD.x, 0.0, PLAYER_PAD.y);
-        let stand = pad + Vec3::X * 1.1;
+        // Fill a 2x2 block of grid cells on the pad, one crate per cell, from the side.
+        let placed = sim
+            .crates
+            .iter()
+            .filter(|cr| cr.state == CrateState::Free && pad_contains(PLAYER_PAD, cr.pos))
+            .count();
+        let cells = [(-12.0, 0.0, -1.0), (-12.8, 0.0, -1.0), (-12.0, 0.8, 1.0), (-12.8, 0.8, 1.0)];
+        let (x, z, side) = cells[placed % 4];
+        let stand = Vec3::new(x, 0.0, z + side * 1.1);
         let to = (stand - a.pos).with_y(0.0);
-        c.aim = Some(-Vec3::X);
+        c.aim = Some(Vec3::Z * -side);
         if to.length() > 0.2 {
             c.mv = Vec2::new(to.x, -to.z).normalize_or_zero();
         } else {
@@ -611,6 +640,7 @@ fn step(time: Res<Time>, controls: Res<Controls>, tune: Res<Tune>, mut sim: ResM
     actors_physics(s, &tune, dt);
     crates_physics(s, &tune, dt);
     shots_step(s, &tune, dt);
+    craft(s, &tune, dt);
     refill(s, dt);
 }
 
@@ -794,7 +824,7 @@ fn fire(s: &mut Sim, who: usize, dir: Vec3, tune: &Tune) {
         }
     } else {
         let speed = if who == PLAYER { tune.f(P::ProjSpeed) } else { 14.0 };
-        s.shots.push(Shot { pos: from, vel: dir * speed, owner: who, life: 30.0 / speed, ent: None });
+        s.shots.push(Shot { pos: from, vel: dir * speed, owner: who, life: 30.0 / speed, counted: true, ent: None });
     }
 }
 
@@ -871,6 +901,7 @@ fn actors_physics(s: &mut Sim, _tune: &Tune, dt: f32) {
         .iter()
         .filter(|c| c.state == CrateState::Free && c.pos.y < CRATE * 1.5)
         .map(|c| c.pos)
+        .chain(s.turrets.iter().map(|t| t.pos + Vec3::Y * HALF))
         .collect();
     for a in &mut s.actors {
         a.vel.y -= G * dt;
@@ -901,6 +932,7 @@ fn actors_physics(s: &mut Sim, _tune: &Tune, dt: f32) {
 fn crates_physics(s: &mut Sim, tune: &Tune, dt: f32) {
     let snapshot: Vec<(u32, Vec3, bool)> =
         s.crates.iter().map(|c| (c.id, c.pos, c.state == CrateState::Free)).collect();
+    let turrets: Vec<Vec2> = s.turrets.iter().map(|t| t.pos.xz()).collect();
     let mut thrown_hits = Vec::new();
     for c in &mut s.crates {
         match &mut c.state {
@@ -914,6 +946,9 @@ fn crates_physics(s: &mut Sim, tune: &Tune, dt: f32) {
                 c.vel.y -= G * dt;
                 c.pos += c.vel * dt;
                 let mut floor: f32 = 0.0;
+                if turrets.iter().any(|t| t.distance(c.pos.xz()) < 1.1) && c.pos.y > TURRET_H {
+                    floor = TURRET_H;
+                }
                 for (id, p, free) in &snapshot {
                     if *id == c.id || !*free {
                         continue;
@@ -974,7 +1009,7 @@ fn shots_step(s: &mut Sim, tune: &Tune, dt: f32) {
             && sh.pos.y > a.pos.y
             && sh.pos.y < a.pos.y + 1.9
         {
-            hits.push((target, sh.vel.normalize()));
+            hits.push((target, sh.vel.normalize(), sh.counted));
             sh.life = 0.0;
         }
     }
@@ -982,10 +1017,71 @@ fn shots_step(s: &mut Sim, tune: &Tune, dt: f32) {
         if sh.life <= 0.0 { s.despawn.extend(sh.ent); }
         sh.life > 0.0
     });
-    for (who, dir) in hits {
-        if who == BOT { s.hits += 1; }
+    for (who, dir, counted) in hits {
+        if who == BOT && counted { s.hits += 1; }
         let dmg = 100.0 / tune.f(P::ShotsToKill);
         s.hurt(who, dmg, dir * 1.5, tune);
+    }
+}
+
+/// PLACEHOLDER (not a grammar decision, see #17): four resting crates on your pad in a 2x2
+/// block on the same level merge into a turret.
+fn craft(s: &mut Sim, tune: &Tune, dt: f32) {
+    for t in &mut s.turrets {
+        t.life -= dt;
+        t.cd -= dt;
+        let b = &s.actors[BOT];
+        let to = (b.pos - t.pos).with_y(0.0);
+        if b.dead <= 0.0 && to.length() < 14.0 {
+            t.facing = to.normalize_or(Vec3::X);
+            if t.cd <= 0.0 {
+                t.cd = 0.8;
+                let from = t.pos + Vec3::Y * 0.4 + t.facing * 0.6;
+                s.shots.push(Shot { pos: from, vel: t.facing * 18.0, owner: PLAYER, life: 1.0, counted: false, ent: None });
+            }
+        }
+    }
+    s.turrets.retain(|t| {
+        if t.life <= 0.0 { s.despawn.extend(t.ent); }
+        t.life > 0.0
+    });
+    if tune.c(P::Craft) != 0 {
+        return;
+    }
+    let cells: Vec<(IVec3, u32)> = s
+        .crates
+        .iter()
+        .filter(|c| c.state == CrateState::Free && c.kind == Kind::Normal && c.vel.length() < 0.1)
+        .filter(|c| pad_contains(PLAYER_PAD, c.pos))
+        .filter(|c| (c.pos.xz() / CRATE - (c.pos.xz() / CRATE).round()).length() < 0.05)
+        .map(|c| {
+            let g = (c.pos / CRATE - Vec3::Y * 0.5).round().as_ivec3();
+            (g, c.id)
+        })
+        .collect();
+    let at = |g: IVec3| cells.iter().find(|(k, _)| *k == g).map(|(_, id)| *id);
+    for (g, _) in &cells {
+        let block = [*g, *g + IVec3::X, *g + IVec3::Z, *g + IVec3::X + IVec3::Z].map(at);
+        let centre = (g.as_vec3() + Vec3::new(0.5, 0.0, 0.5)) * CRATE;
+        let occupied = s.turrets.iter().any(|t| t.pos.xz().distance(centre.xz()) < 1.1);
+        if block.iter().all(Option::is_some) && !occupied {
+            let ids: Vec<u32> = block.into_iter().flatten().collect();
+            s.crates.retain(|c| {
+                let used = ids.contains(&c.id);
+                if used { s.despawn.extend(c.ent); }
+                !used
+            });
+            s.turrets.push(Turret {
+                pos: Vec3::new(centre.x, 0.0, centre.z),
+                facing: Vec3::X,
+                cd: 0.5,
+                life: 40.0,
+                ent: None,
+            });
+            println!("craft: 2x2 -> turret at ({:.1}, {:.1}) t={:.1}s", centre.x, centre.z, s.t);
+            s.say("2x2 crafted a TURRET (placeholder, 40 s)");
+            return;
+        }
     }
 }
 
@@ -1024,6 +1120,9 @@ struct Looks {
     shot_mesh: Handle<Mesh>,
     shot_mat: Handle<StandardMaterial>,
     bot_shot_mat: Handle<StandardMaterial>,
+    turret_base: Handle<Mesh>,
+    turret_barrel: Handle<Mesh>,
+    turret_mat: Handle<StandardMaterial>,
 }
 
 #[derive(Component)]
@@ -1079,6 +1178,9 @@ fn setup(
         shot_mesh: meshes.add(Sphere::new(0.15)),
         shot_mat: mats.add(StandardMaterial { emissive: LinearRgba::rgb(2.0, 2.0, 0.5), ..default() }),
         bot_shot_mat: mats.add(StandardMaterial { emissive: LinearRgba::rgb(3.0, 0.4, 0.2), ..default() }),
+        turret_base: meshes.add(Cylinder::new(0.7, 0.8)),
+        turret_barrel: meshes.add(Cuboid::new(0.25, 0.25, 1.2)),
+        turret_mat: mats.add(Color::srgb(0.25, 0.45, 0.95)),
     });
     commands.spawn((
         Hud,
@@ -1129,6 +1231,28 @@ fn sync_views(
                 c.ent = Some(
                     commands
                         .spawn((Mesh3d(looks.crate_mesh.clone()), MeshMaterial3d(mat), Transform::from_translation(c.pos)))
+                        .id(),
+                );
+            }
+        }
+    }
+    for t in &mut sim.turrets {
+        let rot = Transform::IDENTITY.looking_to(t.facing, Vec3::Y).rotation;
+        match t.ent {
+            Some(e) => {
+                if let Ok(mut tf) = tfs.get_mut(e) {
+                    tf.rotation = rot;
+                }
+            }
+            None => {
+                let (base, barrel, mat) = (looks.turret_base.clone(), looks.turret_barrel.clone(), looks.turret_mat.clone());
+                t.ent = Some(
+                    commands
+                        .spawn((Transform::from_translation(t.pos).with_rotation(rot), Visibility::default()))
+                        .with_children(|p| {
+                            p.spawn((Mesh3d(base), MeshMaterial3d(mat.clone()), Transform::from_xyz(0.0, 0.4, 0.0)));
+                            p.spawn((Mesh3d(barrel), MeshMaterial3d(mat), Transform::from_xyz(0.0, 0.9, -0.5)));
+                        })
                         .id(),
                 );
             }

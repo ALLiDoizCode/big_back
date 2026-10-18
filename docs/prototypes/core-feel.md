@@ -20,9 +20,12 @@ each contested parameter below and picked a baseline.
   about one step in front of you, in your aim direction. It snaps onto any crate or stack
   under it (to build up) and otherwise onto a crate-sized grid that lines up with the pads
   (to build out). The HUD shows your pad's crate count and tallest stack.
-- **No crafting here.** Stacks don't turn into anything yet. What stacking builds is the open
-  "crate economy grammar" question on the map, not part of #9. This prototype only tests
-  how carrying, placing and throwing feel.
+- **Placeholder craft:** four crates on your pad in a 2×2 block, on the same level, merge into
+  a **turret**. It shoots the bot within 14 m (so it guards your pad against the hauler) and
+  expires after 40 s. Build it by placing crates side by side: aim at the empty cell next to
+  a crate, not at the crate, or the ghost stacks on it. "placeholder craft: off" in the panel
+  disables it. **This is not a grammar decision.** It exists so stacking does something while
+  you play. What stacks really build is [#17](https://github.com/ALLiDoizCode/big_back/issues/17).
 - **Tune live:** Up/Down (D-pad) picks a parameter, Left/Right changes it (Shift ×5).
 - **A/B:** there are two full parameter slots. Tab/Select swaps between them. The panel marks
   every parameter that differs between the slots with `*`. Set A to one variant, swap, set B
@@ -48,6 +51,7 @@ each contested parameter below and picked a baseline.
 | 10 | **fake grab latency** 0 vs 100 ms vs 150 ms, mask **none** | bot: hauler | Online grabs cost about one round trip. Do you notice 100 ms? Do you get "GRAB DENIED" racing the hauler? |
 | 11 | **latency mask** none vs reach vs lunge, at 120 ms | bot: hauler | Which hides the round trip best? Reach shows an arm extending; lunge steps you toward the crate. Does lunge feel like lost control? |
 | 12 | **grab reach** 1.2 vs 2.0 m | 120 ms latency | Does a longer reach also hide latency, and does it make stealing too easy? |
+| 13 | **placing:** build a 2×2 on your pad with carry speed 0.6 vs 0.85 | bot: hauler, placeholder craft on | Is placing precise enough to build a shape under pressure? How long does a 2×2 take while the hauler steals? (Feel only. What the shape builds is #17.) |
 
 ## Notes on the model
 
