@@ -110,6 +110,7 @@ const PLAYER_COLOR: [Color; 8] = [
 enum P {
     TeamSize,
     Space,
+    AllyStacks,
     OnlineDelay,
     Seat,
     MatchLength,
@@ -144,6 +145,8 @@ fn defaults() -> Vec<Param> {
         num("team size", 3.0, 1.0, 8.0, 1.0, "v"),
         // 3v3 in 36 x 22 m is 132 m2 per player.
         num("space per player", 130.0, 60.0, 250.0, 10.0, "m2"),
+        // Off: only you build blue's stacks, so you can see each join is yours.
+        choice("blue bots stack", 0, &["off (only you)", "on"]),
         num("online delay", 0.0, 0.0, 250.0, 25.0, "ms"),
         choice("your seat", 0, &["you play", "bot (watch)"]),
         num("match length", 120.0, 30.0, 300.0, 30.0, "s"),
@@ -238,6 +241,8 @@ struct Crate {
     state: CrateState,
     kick: f32,
     thrown_by: Option<usize>,
+    /// Who last set this crate down: the one who completes a stack.
+    placed_by: Option<usize>,
     settling: bool,
     ent: Option<Entity>,
 }
@@ -331,6 +336,8 @@ struct Sim {
     team_size: usize,
     /// The space per player the arena was sized with.
     space: f32,
+    /// Blue's bots build 2-high stacks too.
+    ally_stacks: bool,
     /// Crates spent on placeholder turrets: they still count for the score.
     banked: [usize; 2],
     match_left: f32,
@@ -360,6 +367,7 @@ impl Sim {
             despawn: Vec::new(),
             team_size: 0,
             space: 0.0,
+            ally_stacks: false,
             banked: [0; 2],
             match_left: 0.0,
             over: 0.0,
@@ -451,6 +459,7 @@ impl Sim {
             state: CrateState::Free,
             kick: 0.0,
             thrown_by: None,
+            placed_by: None,
             settling: false,
             ent: None,
         });
@@ -476,6 +485,7 @@ impl Sim {
             c.pos = head;
             c.vel = vel;
             c.thrown_by = if vel.length() > 4.0 { Some(who) } else { None };
+            c.placed_by = Some(who);
         }
     }
 
@@ -501,11 +511,12 @@ impl Sim {
         Vec3::new(xz.x, top + HALF, xz.y)
     }
 
-    /// Where a bot sets its crate down on its pad: the lowest cell, then the nearest.
+    /// Where bot `i` sets its crate down on its pad: the lowest cell, then the nearest.
     /// While the team has room for another player, on top of a lone crate first, to build
-    /// a 2-high stack.
-    fn pad_cell(&self, team: usize, from: Vec3) -> Vec3 {
-        let column = self.players(team) < self.team_size;
+    /// a 2-high stack (blue's bots only with "blue bots stack" on).
+    fn pad_cell(&self, i: usize) -> Vec3 {
+        let (team, from) = (self.actors[i].team, self.actors[i].pos);
+        let column = self.players(team) < self.team_size && (team == 1 || self.ally_stacks || i == YOU);
         let pad = pads()[team];
         let mut best: Option<(f32, Vec3)> = None;
         for gx in -2..=2 {
@@ -528,6 +539,7 @@ impl Sim {
             c.pos = at;
             c.vel = Vec3::ZERO;
             c.thrown_by = None;
+            c.placed_by = Some(who);
         }
     }
 
@@ -568,14 +580,20 @@ impl Sim {
         if a.hp > 0.0 {
             return;
         }
-        a.dead = 3.0;
+        // A team's first player respawns; anyone who joined from a stack is out until the
+        // team stacks 2 crates again.
+        let first = a.slot == 0;
+        a.dead = if first { 3.0 } else { f32::INFINITY };
         a.claim = None;
         self.kills[by_team] += 1;
+        let what = self.describe(who);
         if who == YOU {
             self.pending = None;
             self.say("you're down (3 s)");
+        } else if !first {
+            let how = if by == Some(YOU) { "you knocked out" } else { "out:" };
+            self.say(format!("{how} {what}. Stack 2 crates to bring a player back"));
         } else if by == Some(YOU) {
-            let what = self.describe(who);
             self.say(format!("you downed {what}"));
         }
     }
@@ -994,6 +1012,7 @@ fn tick(s: &mut Sim, c: &Controls, tune: &Tune, dt: f32) {
         return;
     }
     s.t += dt;
+    s.ally_stacks = tune.c(P::AllyStacks) == 1;
     let t = s.t;
     for i in 0..s.actors.len() {
         let a = &mut s.actors[i];
@@ -1213,7 +1232,7 @@ enum Act {
 fn haul_plan(s: &Sim, i: usize) -> (Option<Vec3>, Act, Option<u32>) {
     let a = &s.actors[i];
     if a.carrying.is_some() {
-        let cell = s.pad_cell(a.team, a.pos);
+        let cell = s.pad_cell(i);
         if cell.xz().distance(a.pos.xz()) < 2.0 {
             return (None, Act::Place(cell), None);
         }
@@ -1489,9 +1508,9 @@ fn join_players(s: &mut Sim) {
                 .crates
                 .iter()
                 .find(|c| resting(c) && (c.pos.y - HALF).abs() < 0.05 && c.pos.xz().distance(top.pos.xz()) < 0.1)?;
-            Some((top.id, bottom.id, top.pos.with_y(0.0)))
+            Some((top.id, bottom.id, top.pos.with_y(0.0), top.placed_by))
         });
-        let Some((a, b, at)) = stack else { continue };
+        let Some((a, b, at, by)) = stack else { continue };
         s.crates.retain(|c| {
             let used = c.id == a || c.id == b;
             if used { s.despawn.extend(c.ent); }
@@ -1505,7 +1524,12 @@ fn join_players(s: &mut Sim) {
         p.vel = Vec3::ZERO;
         p.hist.clear();
         let (n, cap) = (s.players(team), s.team_size);
-        let msg = format!("{} stacked 2 crates: a new player joins ({n}/{cap})", ["BLUE", "RED"][team]);
+        let who = match by {
+            Some(YOU) => "YOU".to_string(),
+            Some(j) => s.describe(j),
+            None => "a knocked crate".to_string(),
+        };
+        let msg = format!("{} stack by {who}: a player joins ({n}/{cap})", ["BLUE", "RED"][team]);
         println!("t={:.1}s {msg}", s.t);
         s.say(msg);
     }

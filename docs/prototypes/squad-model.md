@@ -43,9 +43,16 @@ It's resolved when you pick the team-size range.
 - **Teams start with one player each.** A resting 2-high stack on a team's pad (one crate set
   on top of another) brings in that team's next player at the stack, up to the team size.
   So team size is the most a team can grow to. The two crates are used up, but they still
-  count for the score. Bots build stacks too. A player who dies respawns at the pad after
-  3 s without a new stack. The HUD shows `players: BLUE 1/3  RED 2/3`. The stack shape is a
-  placeholder (#17).
+  count for the score.
+  - **Knocked out = out.** A player who joined from a stack and then dies is gone until the
+    team stacks 2 crates again. Only each team's first player (you, and red's first)
+    respawns after 3 s.
+  - **Only you build blue's stacks** by default ("blue bots stack: off"), so every blue join
+    is yours. Red's bots build theirs. Turn "blue bots stack" on to let your teammates
+    stack too.
+  - Each join names who completed the stack, for example `BLUE stack by YOU: a player joins
+    (2/3)`. The HUD shows `players: BLUE 1/3  RED 2/3`.
+  - The stack shape is a placeholder (#17).
 - Score = crates resting on your pad (a placeholder turret counts 4). Matches last 120 s.
 - **Which size you're in:** the box top-left always says `YOU ARE PLAYING 3v3` and lists
   the sizes, with the one you're playing marked `>> ... << PLAYING`.
