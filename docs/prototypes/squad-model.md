@@ -40,6 +40,12 @@ It's resolved when you pick the team-size range.
 
 - You are blue player 1. The other players are bots standing in for people. The core feel is
   fixed at the #9 baseline.
+- **Teams start with one player each.** A resting 2-high stack on a team's pad (one crate set
+  on top of another) brings in that team's next player at the stack, up to the team size.
+  So team size is the most a team can grow to. The two crates are used up, but they still
+  count for the score. Bots build stacks too. A player who dies respawns at the pad after
+  3 s without a new stack. The HUD shows `players: BLUE 1/3  RED 2/3`. The stack shape is a
+  placeholder (#17).
 - Score = crates resting on your pad (a placeholder turret counts 4). Matches last 120 s.
 - **Which size you're in:** the box top-left always says `YOU ARE PLAYING 3v3` and lists
   the sizes, with the one you're playing marked `>> ... << PLAYING`.

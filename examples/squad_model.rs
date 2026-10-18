@@ -197,7 +197,7 @@ fn fmt_value(v: &Value) -> String {
 fn roster_desc(tune: &Tune) -> String {
     let n = tune.c(P::TeamSize);
     let a = arena() * 2.0;
-    format!("{n}v{n} players, no AI units, arena {:.0} x {:.0} m", a.x, a.y)
+    format!("up to {n}v{n} players (start 1v1, +1 per 2-high stack), no AI units, arena {:.0} x {:.0} m", a.x, a.y)
 }
 
 /// The team sizes keys 1-4 switch between.
@@ -400,6 +400,10 @@ impl Sim {
             let a = &mut self.actors[i];
             a.pos = p;
             a.facing = Vec3::X * toward_centre(a.team);
+            // Each team starts with one player; the rest join from 2-high stacks.
+            if a.slot > 0 {
+                a.dead = f32::INFINITY;
+            }
         }
         // Starting crates in a grid across the middle, spread to fit the arena.
         let (k, a) = (arena_scale(), arena());
@@ -498,13 +502,17 @@ impl Sim {
     }
 
     /// Where a bot sets its crate down on its pad: the lowest cell, then the nearest.
+    /// While the team has room for another player, on top of a lone crate first, to build
+    /// a 2-high stack.
     fn pad_cell(&self, team: usize, from: Vec3) -> Vec3 {
+        let column = self.players(team) < self.team_size;
         let pad = pads()[team];
         let mut best: Option<(f32, Vec3)> = None;
         for gx in -2..=2 {
             for gz in -2..=2 {
                 let at = self.target_at(pad + Vec2::new(gx as f32, gz as f32) * CRATE);
-                let score = at.y * 10.0 + at.xz().distance(from.xz());
+                let second = (at.y - CRATE * 1.5).abs() < 0.05;
+                let score = if column && second { -10.0 } else { at.y * 10.0 } + at.xz().distance(from.xz());
                 if best.is_none_or(|(b, _)| score < b) {
                     best = Some((score, at));
                 }
@@ -578,7 +586,13 @@ impl Sim {
         if i == YOU { "you".into() } else { format!("{team} player {}", a.slot + 1) }
     }
 
-    /// Crates resting on the team's pad, plus crates spent on placeholder turrets there.
+    /// Crates resting on the team's pad, plus crates spent there on new players and
+    /// placeholder turrets.
+    /// Players on the team: everyone who has joined, alive or waiting to respawn.
+    fn players(&self, team: usize) -> usize {
+        self.actors.iter().filter(|a| a.team == team && !a.dead.is_infinite()).count()
+    }
+
     fn score(&self, team: usize) -> usize {
         let on_pad = self
             .crates
@@ -1009,6 +1023,7 @@ fn tick(s: &mut Sim, c: &Controls, tune: &Tune, dt: f32) {
     crates_physics(s);
     crates_step(s, dt);
     shots_step(s, dt);
+    join_players(s);
     craft(s, tune, dt);
     refill(s, dt);
     for a in &mut s.actors {
@@ -1456,6 +1471,46 @@ fn shots_step(s: &mut Sim, dt: f32) {
     }
 }
 
+/// Team Buddies' rule, with players: a 2-high stack resting on a team's pad brings in that
+/// team's next player at the stack, up to the team size. PLACEHOLDER shape (see #17).
+fn join_players(s: &mut Sim) {
+    let on_grid = |p: Vec3| (p.xz() / CRATE - (p.xz() / CRATE).round()).length() < 0.05;
+    let resting = |c: &Crate| c.state == CrateState::Free && c.kind == Kind::Normal && c.vel.length() < 0.1 && on_grid(c.pos);
+    for team in 0..2 {
+        let Some(slot) = (0..s.actors.len()).find(|&i| s.actors[i].team == team && s.actors[i].dead.is_infinite()) else {
+            continue;
+        };
+        let pad = pads()[team];
+        let stack = s.crates.iter().filter(|c| resting(c) && pad_contains(pad, c.pos)).find_map(|top| {
+            if (top.pos.y - CRATE * 1.5).abs() > 0.05 {
+                return None;
+            }
+            let bottom = s
+                .crates
+                .iter()
+                .find(|c| resting(c) && (c.pos.y - HALF).abs() < 0.05 && c.pos.xz().distance(top.pos.xz()) < 0.1)?;
+            Some((top.id, bottom.id, top.pos.with_y(0.0)))
+        });
+        let Some((a, b, at)) = stack else { continue };
+        s.crates.retain(|c| {
+            let used = c.id == a || c.id == b;
+            if used { s.despawn.extend(c.ent); }
+            !used
+        });
+        s.banked[team] += 2;
+        let p = &mut s.actors[slot];
+        p.dead = 0.0;
+        p.hp = 100.0;
+        p.pos = at;
+        p.vel = Vec3::ZERO;
+        p.hist.clear();
+        let (n, cap) = (s.players(team), s.team_size);
+        let msg = format!("{} stacked 2 crates: a new player joins ({n}/{cap})", ["BLUE", "RED"][team]);
+        println!("t={:.1}s {msg}", s.t);
+        s.say(msg);
+    }
+}
+
 /// PLACEHOLDER (not a grammar decision, see #17): four resting crates on a team's pad in a
 /// 2x2 block on the same level merge into a turret for that team.
 fn craft(s: &mut Sim, tune: &Tune, dt: f32) {
@@ -1870,6 +1925,12 @@ fn hud(sim: Res<Sim>, tune: Res<Tune>, controls: Res<Controls>, mut hud: Single<
         sim.kills[1],
     );
     s += &format!("{}\n", roster_desc(&tune));
+    s += &format!(
+        "players: BLUE {}/{n}  RED {}/{n}   stack 2 crates on your pad (one on top of another) to bring in a teammate\n",
+        sim.players(0),
+        sim.players(1),
+        n = sim.team_size,
+    );
     if tune.c(P::Seat) == 1 {
         s += "your seat is a BOT: watching\n";
     } else {
@@ -1885,7 +1946,7 @@ fn hud(sim: Res<Sim>, tune: Res<Tune>, controls: Res<Controls>, mut hud: Single<
             s += &format!("throw reach: {:.1} m  (jump x{boost:.2})\n", THROW_DIST * boost);
         }
     }
-    let bodies = sim.actors.len();
+    let bodies = sim.players(0) + sim.players(1);
     let moving = sim.crates.iter().filter(|c| c.state != CrateState::Free || c.vel.length() > 0.05).count();
     s += &format!(
         "netcode: {bodies} networked characters (budget ~32), {moving} moving crates (~20-30), predicted here: you + crates near you\n"
@@ -1903,7 +1964,13 @@ fn hud(sim: Res<Sim>, tune: Res<Tune>, controls: Res<Controls>, mut hud: Single<
 fn guide_text(tune: Res<Tune>, mut text: Single<&mut Text, (With<GuideText>, Without<Hud>, Without<Panel>)>) {
     let n = tune.c(P::TeamSize);
     let a = arena() * 2.0;
-    let mut s = format!("YOU ARE PLAYING {n}v{n}   (arena {:.0} x {:.0} m)\n\nPress a number to switch (restarts the match):\n", a.x, a.y);
+    let mut s = format!(
+        "YOU ARE PLAYING {n}v{n}   (arena {:.0} x {:.0} m)\n\
+         Teams start with 1 player. Stack 2 crates on your pad to add one, up to {n}.\n\n\
+         Press a number to switch (restarts the match):\n",
+        a.x,
+        a.y
+    );
     for (k, size) in SIZES.iter().enumerate() {
         if *size == n {
             s += &format!("  >> {} = {size}v{size}  <<  PLAYING\n", k + 1);
