@@ -41,9 +41,13 @@ It's resolved when you pick the team-size range.
 - You are blue player 1. The other players are bots standing in for people. The core feel is
   fixed at the #9 baseline.
 - Score = crates resting on your pad (a placeholder turret counts 4). Matches last 120 s.
-- **Guided:** press **N**, then **1–4** for 2v2 / 3v3 / 4v4 / 6v6 (each switch restarts the
-  match). **Enter** keeps the one you're playing, and **P** prints settings, the verdict and
-  the match results. "team size" in the panel goes from 1v1 to 8v8.
+- **Which size you're in:** the box top-left always says `YOU ARE PLAYING 3v3` and lists
+  the sizes, with the one you're playing marked `>> ... << PLAYING`.
+- **Switching:** press **1** = 2v2, **2** = 3v3, **3** = 4v4, **4** = 6v6, at any time. The
+  match restarts at that size. The game starts at 3v3.
+- **Picking:** press **Enter** to pick the size you're playing. You can pick more than one,
+  for example the smallest and largest sizes you'd queue. **P** prints your picks and the
+  match results. "team size" in the panel also reaches 1v1, 5v5, 7v7 and 8v8.
 - Things to watch: is there enough to do per player, how long the haul from mid-field to the
   pad feels, and whether a fight is still readable.
 - **The arena grows with team size**, keeping the same floor space per player and the 3v3

@@ -11,11 +11,12 @@
 //!
 //! Play: WASD / left stick move, mouse / right stick aim, Space / A jump, E / X grab or place,
 //! RMB / RB throw, LMB / RT shoot, F / B kick (hold on an orange crate to open it).
-//! Tune: Up/Down pick, Left/Right change (Shift = x5). N / 1-4 / Enter: guided comparisons.
+//! Team size: 1-4 switch between 2v2 / 3v3 / 4v4 / 6v6, Enter picks the one you're playing.
+//! Tune: Up/Down pick, Left/Right change (Shift = x5).
 //! R / Start resets, P prints settings, verdicts and results, H hides the panel.
 //!
 //! Smoke tests: `SQUAD_EXIT_AFTER=<s>`, `SQUAD_SCREENSHOT=<file.png>`, `SQUAD_SEAT=bot`,
-//! `SQUAD_COMPARISON=<n>`, `SQUAD_TEAM=<n>` (team size, whole-arena camera).
+//! `SQUAD_TEAM=<n>` (team size, whole-arena camera).
 
 use std::collections::VecDeque;
 use std::f32::consts::FRAC_PI_2;
@@ -158,8 +159,7 @@ struct Tune {
     vals: Vec<Param>,
     selected: usize,
     panel: bool,
-    guide: Option<Guide>,
-    settled: Vec<bool>,
+    /// Team sizes picked with Enter, printed with P.
     verdicts: Vec<String>,
 }
 
@@ -200,67 +200,10 @@ fn roster_desc(tune: &Tune) -> String {
     format!("{n}v{n} players, no AI units, arena {:.0} x {:.0} m", a.x, a.y)
 }
 
-// ---------------------------------------------------------------------------------------
-// Guided comparisons. N starts the next one, 1-4 pick the variant you're playing, Enter
-// keeps it (it becomes the baseline) and moves on.
-// ---------------------------------------------------------------------------------------
+/// The team sizes keys 1-4 switch between.
+const SIZES: [usize; 4] = [2, 3, 4, 6];
 
-struct Comparison {
-    row: &'static str,
-    title: &'static str,
-    question: &'static str,
-    /// Applied to every variant.
-    both: &'static [(P, f32)],
-    variants: &'static [(&'static str, &'static [(P, f32)])],
-}
-
-// Decided by play and no longer listed: one character per player, no AI Buddies or haulers.
-const COMPARISONS: &[Comparison] = &[Comparison {
-    row: "1", title: "team size",
-    question: "How many players per team? This sets the range of team sizes. Budget: ~32 networked characters. \
-               The arena grows with team size, keeping the same space per player.",
-    both: &[],
-    variants: &[
-        ("2v2", &[(P::TeamSize, 2.0)]),
-        ("3v3", &[(P::TeamSize, 3.0)]),
-        ("4v4", &[(P::TeamSize, 4.0)]),
-        ("6v6", &[(P::TeamSize, 6.0)]),
-    ],
-}];
-
-struct Guide {
-    idx: usize,
-    variant: usize,
-    base: Vec<Param>,
-}
-
-fn apply_variant(tune: &mut Tune, v: usize) {
-    let Some(g) = &mut tune.guide else { return };
-    let cmp = &COMPARISONS[g.idx];
-    let v = v.min(cmp.variants.len() - 1);
-    g.variant = v;
-    let mut vals = g.base.clone();
-    for (p, x) in cmp.both.iter().chain(cmp.variants[v].1) {
-        set(&mut vals, *p, *x);
-    }
-    tune.vals = vals;
-}
-
-fn start_next(tune: &mut Tune, sim: &mut Sim, from: Option<usize>) {
-    let n = COMPARISONS.len();
-    let first = from.map_or(0, |i| i + 1);
-    let Some(idx) = (0..n).map(|k| (first + k) % n).find(|&i| !tune.settled[i]) else {
-        tune.guide = None;
-        sim.say("all comparisons done: press P and paste the output");
-        return;
-    };
-    let base = tune.vals.clone();
-    tune.guide = Some(Guide { idx, variant: 0, base });
-    apply_variant(tune, 0);
-    sim.reset(tune);
-}
-
-fn guide_from_env(mut tune: ResMut<Tune>, mut sim: ResMut<Sim>) {
+fn init_from_env(mut tune: ResMut<Tune>, mut sim: ResMut<Sim>) {
     if let Some(n) = std::env::var("SQUAD_TEAM").ok().and_then(|v| v.parse::<f32>().ok()) {
         set(&mut tune.vals, P::TeamSize, n);
         set(&mut tune.vals, P::Camera, 1.0);
@@ -268,10 +211,7 @@ fn guide_from_env(mut tune: ResMut<Tune>, mut sim: ResMut<Sim>) {
     if std::env::var("SQUAD_SEAT").as_deref() == Ok("bot") {
         set(&mut tune.vals, P::Seat, 1.0);
     }
-    if let Some(i) = std::env::var("SQUAD_COMPARISON").ok().and_then(|v| v.parse::<usize>().ok()) {
-        // Row numbers start at 1.
-        start_next(&mut tune, &mut sim, i.checked_sub(2));
-    }
+    sim.reset(&tune);
 }
 
 // ---------------------------------------------------------------------------------------
@@ -966,30 +906,22 @@ fn tune_input(
         sim.reset(&tune);
         sim.say("match reset");
     }
-    if keys.just_pressed(KeyCode::KeyN) {
-        let from = tune.guide.take().map(|g| {
-            tune.vals = g.base;
-            g.idx
-        });
-        start_next(&mut tune, &mut sim, from);
-    }
-    if tune.guide.is_some() {
-        for (v, key) in [KeyCode::Digit1, KeyCode::Digit2, KeyCode::Digit3, KeyCode::Digit4].iter().enumerate() {
-            if keys.just_pressed(*key) {
-                apply_variant(&mut tune, v);
-                sim.reset(&tune);
-            }
+    // 1-4 switch team size; Enter picks the one you're playing.
+    for (k, key) in [KeyCode::Digit1, KeyCode::Digit2, KeyCode::Digit3, KeyCode::Digit4].iter().enumerate() {
+        if keys.just_pressed(*key) {
+            let n = SIZES[k];
+            set(&mut tune.vals, P::TeamSize, n as f32);
+            sim.reset(&tune);
+            let a = arena() * 2.0;
+            sim.say(format!("NOW PLAYING {n}v{n} (arena {:.0} x {:.0} m)", a.x, a.y));
         }
     }
-    if keys.just_pressed(KeyCode::Enter)
-        && let Some(g) = tune.guide.take()
-    {
-        let cmp = &COMPARISONS[g.idx];
-        let line = format!("row {} {}: {}", cmp.row, cmp.title, cmp.variants[g.variant].0);
+    if keys.just_pressed(KeyCode::Enter) {
+        let line = format!("team size: {}", roster_desc(&tune));
         println!("verdict: {line}");
         tune.verdicts.push(line);
-        tune.settled[g.idx] = true;
-        start_next(&mut tune, &mut sim, Some(g.idx));
+        let n = tune.c(P::TeamSize);
+        sim.say(format!("picked {n}v{n} (P prints it)"));
     }
     if keys.just_pressed(KeyCode::KeyP) {
         println!("# squad_model settings");
@@ -1714,13 +1646,13 @@ fn setup(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, mut mats: Res
     commands.spawn((
         GuideText,
         Text::new(""),
-        TextFont::from_font_size(20.0),
+        TextFont::from_font_size(24.0),
         Node {
             position_type: PositionType::Absolute,
             top: px(10.0),
             left: px(10.0),
             padding: UiRect::all(px(10.0)),
-            max_width: percent(55.0),
+            max_width: percent(70.0),
             ..default()
         },
         BackgroundColor(Color::BLACK.with_alpha(0.7)),
@@ -1964,33 +1896,27 @@ fn hud(sim: Res<Sim>, tune: Res<Tune>, controls: Res<Controls>, mut hud: Single<
         s += &format!("> {m}\n");
     }
     s += "\nWASD move  mouse aim  Space jump  E grab/place  RMB throw  LMB shoot  F kick\n";
-    s += "R reset  P print  H panel  N next comparison";
+    s += "1-4 team size  ENTER pick it  R reset  P print  H panel";
     hud.0 = s;
 }
 
 fn guide_text(tune: Res<Tune>, mut text: Single<&mut Text, (With<GuideText>, Without<Hud>, Without<Panel>)>) {
-    let done = tune.settled.iter().filter(|s| **s).count();
-    let total = COMPARISONS.len();
-    text.0 = match &tune.guide {
-        Some(g) => {
-            let cmp = &COMPARISONS[g.idx];
-            let mut s = format!("COMPARISON {} of {total}: {}\n{}\n\n", g.idx + 1, cmp.title, cmp.question);
-            for (i, (label, _)) in cmp.variants.iter().enumerate() {
-                if i == g.variant {
-                    s += &format!("  >> [{}] {} <<  PLAYING\n", i + 1, label.to_uppercase());
-                } else {
-                    s += &format!("     [{}] {}\n", i + 1, label);
-                }
-            }
-            s += &format!(
-                "\nPress 1-{} to switch (restarts the match).  ENTER = keep the one you're playing, next.  N = skip.",
-                cmp.variants.len()
-            );
-            s
+    let n = tune.c(P::TeamSize);
+    let a = arena() * 2.0;
+    let mut s = format!("YOU ARE PLAYING {n}v{n}   (arena {:.0} x {:.0} m)\n\nPress a number to switch (restarts the match):\n", a.x, a.y);
+    for (k, size) in SIZES.iter().enumerate() {
+        if *size == n {
+            s += &format!("  >> {} = {size}v{size}  <<  PLAYING\n", k + 1);
+        } else {
+            s += &format!("     {} = {size}v{size}\n", k + 1);
         }
-        None if done == total => "All comparisons done. Press P and paste the output.".into(),
-        None => format!("Press N to start the next comparison ({done} of {total} done)."),
-    };
+    }
+    s += &format!("ENTER = pick {n}v{n} as the size you like");
+    if !tune.verdicts.is_empty() {
+        let picks: Vec<&str> = tune.verdicts.iter().map(|v| v.trim_start_matches("team size: ").split(',').next().unwrap_or("")).collect();
+        s += &format!("\nPicked so far: {}", picks.join(", "));
+    }
+    text.0 = s;
 }
 
 fn panel(tune: Res<Tune>, mut panel: Single<(&mut Text, &mut Visibility), (With<Panel>, Without<Hud>)>) {
@@ -2033,8 +1959,6 @@ fn main() {
         vals: defaults(),
         selected: 0,
         panel: true,
-        guide: None,
-        settled: vec![false; COMPARISONS.len()],
         verdicts: Vec::new(),
     };
     let sim = Sim::new(&tune);
@@ -2058,7 +1982,7 @@ fn main() {
         .insert_resource(sim)
         .init_resource::<Controls>()
         .init_resource::<Smoke>()
-        .add_systems(Startup, (setup, guide_from_env).chain())
+        .add_systems(Startup, (setup, init_from_env).chain())
         .add_systems(
             Update,
             (read_controls, tune_input, step, sync_arena, sync_views, follow_camera, draw_gizmos, hud, guide_text, panel, smoke_exit)
