@@ -47,9 +47,9 @@ It's resolved when you pick the team-size range.
   - **Knocked out = out.** A player who joined from a stack and then dies is gone until the
     team stacks 2 crates again. Only each team's first player (you, and red's first)
     respawns after 3 s.
-  - **Only you build blue's stacks** by default ("blue bots stack: off"), so every blue join
-    is yours. Red's bots build theirs. Turn "blue bots stack" on to let your teammates
-    stack too.
+  - **Everyone stacks**: your teammates build blue's stacks too, the same as red's bots do.
+    Turn "blue bots stack" off to build blue's stacks alone. With it off, red outgrows
+    blue: in a 6v6 test red stayed at 6/6 while blue hovered at 2–4.
   - Each join names who completed the stack, for example `BLUE stack by YOU: a player joins
     (2/3)`. The HUD shows `players: BLUE 1/3  RED 2/3`.
   - The stack shape is a placeholder (#17).

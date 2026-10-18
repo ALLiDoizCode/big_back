@@ -146,7 +146,7 @@ fn defaults() -> Vec<Param> {
         // 3v3 in 36 x 22 m is 132 m2 per player.
         num("space per player", 130.0, 60.0, 250.0, 10.0, "m2"),
         // Off: only you build blue's stacks, so you can see each join is yours.
-        choice("blue bots stack", 0, &["off (only you)", "on"]),
+        choice("blue bots stack", 1, &["off (only you)", "on"]),
         num("online delay", 0.0, 0.0, 250.0, 25.0, "ms"),
         choice("your seat", 0, &["you play", "bot (watch)"]),
         num("match length", 120.0, 30.0, 300.0, 30.0, "s"),
