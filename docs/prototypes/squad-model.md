@@ -32,7 +32,8 @@ Knock-on decisions:
   player.
 - **Netcode:** every character is a player and predicts itself, so the budget is the number
   of players (~32 networked characters at most).
-- **#17** (what stacks build) should not assume stacks build buddies.
+- **#17** (what stacks build): shapes kicked open on the pad bring in *players*, not owned AI
+  Buddies. A 2-stack gives 1 player and 2 wide × 2 high gives 2. The other results are open.
 
 ## Still open: team size
 
