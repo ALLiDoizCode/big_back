@@ -24,6 +24,19 @@ each contested parameter below and picked a baseline.
   clip a nearer stack, the cyan ghost moves to where the crate will really land and the cell
   you aimed at turns **orange**. Raise the throw angle, move, or fill the far cells first.
   That's the skill.
+- **Jump power:** with "jump throw power: peaks at jump apex", throw reach grows the higher
+  you are in a jump, up to "jump boost" × throw distance at the top. Time the throw at the
+  apex to reach farther. "flat when airborne" gives the full boost anywhere in the air. The
+  HUD shows the current throw reach and multiplier while you carry.
+- **Curling landings** ("landing: curling"): the reticle becomes the **touchdown** point (a
+  cyan ring). The crate keeps "slide keep on impact" of its speed, slides with "slide
+  friction", drops off the edge of a stack, and once slow within "snap radius" of a cell
+  clicks into it. A sliding crate that hits another hands over its momentum, curling-style,
+  so you can knock crates into place, or off a pad. To land in a cell, aim **short** of it.
+  Low throws slide far, high lobs barely slide. With "arc preview: arc + rest ghost" a ghost
+  shows where it'll stop (orange = it'll knock into a crate there). "arc only" hides the rest
+  spot, so you have to read the slide yourself. "landing: stick" is the exact landing from
+  before.
 - **Placing by hand:** E/X sets the crate on the ghost if it's within arm's length (1.6 m),
   otherwise on the cell a step in front, shown as a faint ghost.
 - **Gamepad aim distance:** right-stick tilt sets the reticle distance. Full tilt reaches
@@ -55,6 +68,9 @@ each contested parameter below and picked a baseline.
 | 5 | **throw style**: ground throw vs jump-throw | anything | Jump-throw (Team Buddies) means a grounded throw is only a short toss, so a full throw takes a jump first. Is that extra input skill expression or friction? |
 | 6 | **throw angle / distance**: 25°/7 m vs 45°/12 m | arc preview on, then off | Lob vs. line drive. Can you land a crate on your pad from mid-field? Should a throw reach across the map? Try with the preview off to see whether it's needed. |
 | 6b | **throw aim**: to reticle vs fixed distance | mouse, arc preview on | To reticle: the crate lands where the mouse points, up to "throw distance" (the max). Fixed: every throw flies the full distance in the aimed direction (Team Buddies style), and your run speed carries over. Precision vs. a learnable fixed arc. On a gamepad, stick tilt sets the distance. Is tilt precise enough to hit a cell? |
+| 6d | **jump throw power**: off vs flat vs peaks at apex (boost 1.5) | throw distance 9 m | Does jumping for reach add skill, or is it a chore? Can you feel the apex timing? Does "flat" make jumping mandatory on every throw? |
+| 6e | **landing**: stick vs curling | arc preview "arc + rest ghost", then "arc only" | Curling: does reading the slide feel like mastery (aim short, use lobs vs. line drives, knock crates in), or does it make building a 2×2 frustrating? Is the rest ghost needed? |
+| 6f | **slide**: keep 0.4 / friction 10 vs keep 0.8 / friction 4, snap radius 0.15 vs 0.35 | landing: curling, bot: hauler | How much slide is fun? A bigger snap radius forgives more. At 0, nothing aligns and crafts never form. Can you knock the hauler's crates off its pad? |
 | 6c | **throw-building**: build a 2×2 by throwing from 6+ m, at throw angle 35° vs 60° | bot: hauler, placeholder craft on | Does throwing into cells feel like a skill worth learning (watch for orange "blocked" ghosts and the fill order), or is it fiddly? Does a high lob make it too easy? |
 | 7 | **weapon**: hitscan vs projectile (30 m/s, then 14 m/s) | bot: strafer | Lag compensation covers ray casts only. Do slow, visible projectiles that can be dodged feel good enough to give up hitscan? Compare the TTK and accuracy readouts. |
 | 8 | **fire rate / shots to kill**: 5/s and 8 vs 3/s and 4 | bot: strafer | Spray vs. deliberate. Target TTK around 1.5–3 s? |

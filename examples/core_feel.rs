@@ -57,6 +57,12 @@ enum P {
     ThrowAngle,
     ThrowDist,
     ThrowAim,
+    JumpPower,
+    JumpBoost,
+    Landing,
+    SlideKeep,
+    SlideFriction,
+    SnapRadius,
     ArcPreview,
     Weapon,
     FireRate,
@@ -103,7 +109,13 @@ fn defaults() -> Vec<Param> {
         num("throw angle", 35.0, 10.0, 70.0, 5.0, "deg"),
         num("throw distance", 9.0, 3.0, 20.0, 1.0, "m"),
         choice("throw aim", 0, &["to reticle (max = distance)", "fixed distance"]),
-        choice("arc preview", 0, &["on", "off"]),
+        choice("jump throw power", 2, &["off", "flat when airborne", "peaks at jump apex"]),
+        num("jump boost", 1.5, 1.0, 2.5, 0.1, "x reach"),
+        choice("landing", 1, &["stick (exact)", "curling (slide + snap)"]),
+        num("slide keep on impact", 0.6, 0.1, 1.0, 0.05, "x"),
+        num("slide friction", 6.0, 1.0, 20.0, 0.5, "m/s2"),
+        num("snap radius", 0.3, 0.0, 0.4, 0.05, "m"),
+        choice("arc preview", 0, &["arc + rest ghost", "arc only", "off"]),
         choice("weapon", 0, &["hitscan", "projectile"]),
         num("fire rate", 5.0, 1.0, 15.0, 1.0, "/s"),
         num("projectile speed", 30.0, 8.0, 80.0, 2.0, "m/s"),
@@ -181,6 +193,8 @@ struct Crate {
     kick: f32,
     /// Set while airborne after a throw, so it can hurt the other actor.
     thrown_by: Option<usize>,
+    /// Curling: being pulled into a grid cell.
+    settling: bool,
     ent: Option<Entity>,
 }
 
@@ -322,6 +336,7 @@ impl Sim {
             state: CrateState::Free,
             kick: 0.0,
             thrown_by: None,
+            settling: false,
             ent: None,
         });
         id
@@ -465,37 +480,152 @@ struct ThrowPlan {
     path: Vec<Vec3>,
     /// Where the crate will really settle (it can clip a nearer stack and land on it).
     landing: Vec3,
+    /// The preview ends because the crate knocks into another one.
+    knock: bool,
+    /// Reach multiplier from jumping.
+    boost: f32,
 }
 
-/// Flies a crate from `from` at `vel` against the resting crates and turrets, exactly like
-/// `crates_physics`, and returns its path and where it settles (snapped like a real landing).
-fn predict(s: &Sim, from: Vec3, vel: Vec3) -> (Vec<Vec3>, Vec3) {
-    let (mut p, mut v) = (from, vel);
-    let mut path = vec![p];
-    for _ in 0..240 {
-        let dt = 1.0 / 60.0;
-        v.y -= G * dt;
-        p += v * dt;
-        p.x = p.x.clamp(-ARENA.x + HALF, ARENA.x - HALF);
-        p.z = p.z.clamp(-ARENA.y + HALF, ARENA.y - HALF);
-        path.push(p);
-        let mut floor: f32 = 0.0;
-        if s.turrets.iter().any(|t| t.pos.xz().distance(p.xz()) < 1.1) && p.y > TURRET_H {
+/// Jumping extends throw reach: flat while airborne, or scaled by how close to the top of
+/// the jump you are, so timing the throw at the apex is the skill.
+fn jump_boost(a: &Actor, tune: &Tune) -> f32 {
+    let b = tune.f(P::JumpBoost);
+    if a.grounded {
+        return 1.0;
+    }
+    match tune.c(P::JumpPower) {
+        1 => b,
+        2 => {
+            let apex = tune.f(P::JumpVel).powi(2) / (2.0 * G);
+            1.0 + (b - 1.0) * (a.pos.y / apex).clamp(0.0, 1.0)
+        }
+        _ => 1.0,
+    }
+}
+
+/// Highest surface under a crate centred at `p`: ground, a turret, or other crates below it.
+fn floor_under(p: Vec3, others: impl Iterator<Item = Vec3>, turrets: impl Iterator<Item = Vec2>) -> f32 {
+    let mut floor: f32 = 0.0;
+    for t in turrets {
+        if t.distance(p.xz()) < 1.1 && p.y > TURRET_H {
             floor = TURRET_H;
         }
-        for c in s.crates.iter().filter(|c| c.state == CrateState::Free) {
-            let overlap = (c.pos.x - p.x).abs() < CRATE * 0.9 && (c.pos.z - p.z).abs() < CRATE * 0.9;
-            if overlap && c.pos.y < p.y {
-                floor = floor.max(c.pos.y + HALF);
-            }
-        }
-        if p.y - HALF <= floor {
-            let cell = (p.xz() / CRATE).round() * CRATE;
-            let xz = if cell.distance(p.xz()) < 0.4 { cell } else { p.xz() };
-            return (path, Vec3::new(xz.x, floor + HALF, xz.y));
+    }
+    for o in others {
+        let overlap = (o.x - p.x).abs() < CRATE * 0.9 && (o.z - p.z).abs() < CRATE * 0.9;
+        // Only crates clearly below count, so a fast slide into a neighbour knocks it
+        // instead of riding up onto it.
+        if overlap && o.y + 0.5 < p.y {
+            floor = floor.max(o.y + HALF);
         }
     }
-    (path, p)
+    floor
+}
+
+/// One step of a free crate's motion: gravity, then ground contact. Returns true on the ground.
+/// Stick: a thud kills the slide and snaps to a cell. Curling: the crate keeps some speed,
+/// slides with constant friction, and once slow near a cell is pulled into it.
+fn crate_motion(p: &mut Vec3, v: &mut Vec3, settling: &mut bool, floor: impl Fn(Vec3) -> f32, dt: f32, tune: &Tune) -> bool {
+    v.y -= G * dt;
+    *p += *v * dt;
+    if p.x.abs() > ARENA.x - HALF {
+        p.x = p.x.clamp(-ARENA.x + HALF, ARENA.x - HALF);
+        v.x *= -0.4;
+    }
+    if p.z.abs() > ARENA.y - HALF {
+        p.z = p.z.clamp(-ARENA.y + HALF, ARENA.y - HALF);
+        v.z *= -0.4;
+    }
+    let floor = floor(*p);
+    if p.y - HALF > floor {
+        *settling = false;
+        return false;
+    }
+    p.y = floor + HALF;
+    let impact = v.y < -2.0;
+    let cell = (p.xz() / CRATE).round() * CRATE;
+    if tune.c(P::Landing) == 1 {
+        if impact {
+            let keep = tune.f(P::SlideKeep);
+            v.x *= keep;
+            v.z *= keep;
+        }
+        v.y = if v.y < -6.0 { -v.y * 0.25 } else { 0.0 };
+        let h = v.xz();
+        let speed = h.length();
+        let slowed = (speed - tune.f(P::SlideFriction) * dt).max(0.0);
+        let h = if speed > 0.0 { h * (slowed / speed) } else { h };
+        v.x = h.x;
+        v.z = h.y;
+        let off = cell.distance(p.xz());
+        let radius = tune.f(P::SnapRadius);
+        if v.y == 0.0 && radius > 0.0 && off < radius && (slowed < 1.5 || *settling) {
+            // Click into the cell.
+            *settling = true;
+            let pull = (cell - p.xz()) * 20.0;
+            v.x = pull.x;
+            v.z = pull.y;
+            if off < 0.02 {
+                p.x = cell.x;
+                p.z = cell.y;
+                v.x = 0.0;
+                v.z = 0.0;
+                *settling = false;
+            }
+        } else {
+            *settling = false;
+        }
+    } else {
+        if impact {
+            // A heavy box lands with a thud, not a skid, so throws stop near the reticle.
+            v.x *= 0.15;
+            v.z *= 0.15;
+            if cell.distance(p.xz()) < 0.4 {
+                p.x = cell.x;
+                p.z = cell.y;
+                v.x = 0.0;
+                v.z = 0.0;
+            }
+        }
+        v.y = if v.y < -6.0 { -v.y * 0.25 } else { 0.0 };
+        let f = (-dt * 8.0).exp();
+        v.x *= f;
+        v.z *= f;
+    }
+    true
+}
+
+/// Two crates side by side on the same level that overlap: they're colliding.
+fn side_hit(a: Vec3, b: Vec3) -> bool {
+    (a.y - b.y).abs() < 0.3 && (a.x - b.x).abs() < CRATE * 0.95 && (a.z - b.z).abs() < CRATE * 0.95
+}
+
+/// Flies a crate from `from` at `vel` with the same motion as `crates_physics` until it rests
+/// or knocks into another crate. Returns its path and where it ends up.
+fn predict(s: &Sim, from: Vec3, vel: Vec3, tune: &Tune) -> (Vec<Vec3>, Vec3, bool) {
+    let (mut p, mut v, mut settling) = (from, vel, false);
+    let others: Vec<Vec3> = s.crates.iter().filter(|c| c.state == CrateState::Free).map(|c| c.pos).collect();
+    let turrets: Vec<Vec2> = s.turrets.iter().map(|t| t.pos.xz()).collect();
+    let mut path = vec![p];
+    let dt = 1.0 / 60.0;
+    for _ in 0..600 {
+        let grounded = crate_motion(
+            &mut p,
+            &mut v,
+            &mut settling,
+            |q| floor_under(q, others.iter().copied(), turrets.iter().copied()),
+            dt,
+            tune,
+        );
+        path.push(p);
+        if others.iter().any(|o| side_hit(p, *o)) && v.xz().length() > 0.3 {
+            return (path, p, true);
+        }
+        if grounded && v.length() < 0.05 && !settling {
+            break;
+        }
+    }
+    (path, p, false)
 }
 
 fn throw_plan(s: &Sim, tune: &Tune, aim_dist: Option<f32>) -> ThrowPlan {
@@ -504,26 +634,35 @@ fn throw_plan(s: &Sim, tune: &Tune, aim_dist: Option<f32>) -> ThrowPlan {
         // Jump-throw: on the ground you can only toss it a short way.
         let from = a.pos + Vec3::Y * HEAD + a.facing * 0.5;
         let vel = a.facing * 3.0 + Vec3::Y * 3.0;
-        let (path, landing) = predict(s, from, vel);
-        return ThrowPlan { from, vel, target: None, short: true, path, landing };
+        let (path, landing, knock) = predict(s, from, vel, tune);
+        return ThrowPlan { from, vel, target: None, short: true, path, landing, knock, boost: 1.0 };
     }
     let from = a.pos + Vec3::Y * HEAD + a.facing * 0.3;
     let angle = tune.f(P::ThrowAngle).to_radians();
-    let max = tune.f(P::ThrowDist);
+    let boost = jump_boost(a, tune);
+    let max = tune.f(P::ThrowDist) * boost;
     match (tune.c(P::ThrowAim), aim_dist) {
         (0, Some(d)) => {
-            // Aimed: the reticle is the ghost, snapped to a cell or stack; the throw lands on it.
-            let target = s.target_at((a.pos + a.facing * d.clamp(1.0, max)).xz());
+            let want = (a.pos + a.facing * d.clamp(1.0, max)).xz();
+            let target = if tune.c(P::Landing) == 1 {
+                // Curling: the reticle is the touchdown point; the slide is up to you.
+                let free = s.crates.iter().filter(|c| c.state == CrateState::Free).map(|c| c.pos);
+                let top = floor_under(want.extend(99.0).xzy(), free, s.turrets.iter().map(|t| t.pos.xz()));
+                Vec3::new(want.x, top + HALF, want.y)
+            } else {
+                // Stick: the reticle is the ghost, snapped to a cell or stack; the throw lands on it.
+                s.target_at(want)
+            };
             let vel = velocity_to(from, target, angle);
-            let (path, landing) = predict(s, from, vel);
-            ThrowPlan { from, vel, target: Some(target), short: false, path, landing }
+            let (path, landing, knock) = predict(s, from, vel, tune);
+            ThrowPlan { from, vel, target: Some(target), short: false, path, landing, knock, boost }
         }
         _ => {
             // Fixed: always the full distance, and your run speed carries over.
             let land = (from + a.facing * max).with_y(HALF);
             let vel = velocity_to(from, land, angle) + a.vel.with_y(0.0);
-            let (path, landing) = predict(s, from, vel);
-            ThrowPlan { from, vel, target: None, short: false, path, landing }
+            let (path, landing, knock) = predict(s, from, vel, tune);
+            ThrowPlan { from, vel, target: None, short: false, path, landing, knock, boost }
         }
     }
 }
@@ -1078,49 +1217,18 @@ fn crates_physics(s: &mut Sim, tune: &Tune, dt: f32) {
                 c.pos = lift_from.lerp(head, k);
             }
             CrateState::Free => {
-                c.vel.y -= G * dt;
-                c.pos += c.vel * dt;
-                let mut floor: f32 = 0.0;
-                if turrets.iter().any(|t| t.distance(c.pos.xz()) < 1.1) && c.pos.y > TURRET_H {
-                    floor = TURRET_H;
-                }
-                for (id, p, free) in &snapshot {
-                    if *id == c.id || !*free {
-                        continue;
-                    }
-                    let overlap = (p.x - c.pos.x).abs() < CRATE * 0.9 && (p.z - c.pos.z).abs() < CRATE * 0.9;
-                    if overlap && p.y < c.pos.y {
-                        floor = floor.max(p.y + HALF);
-                    }
-                }
-                if c.pos.y - HALF <= floor {
-                    c.pos.y = floor + HALF;
-                    if c.vel.y < -2.0 {
-                        // A heavy box lands with a thud, not a skid, so throws stop near the reticle.
-                        c.vel.x *= 0.15;
-                        c.vel.z *= 0.15;
-                        // Close enough to a cell? Settle into it, so throws can build stacks.
-                        let cell = (c.pos.xz() / CRATE).round() * CRATE;
-                        if cell.distance(c.pos.xz()) < 0.4 {
-                            c.pos.x = cell.x;
-                            c.pos.z = cell.y;
-                            c.vel.x = 0.0;
-                            c.vel.z = 0.0;
-                        }
-                    }
-                    c.vel.y = if c.vel.y < -6.0 { -c.vel.y * 0.25 } else { 0.0 };
-                    let f = (-dt * 8.0).exp();
-                    c.vel.x *= f;
-                    c.vel.z *= f;
+                let me = c.id;
+                let others = || snapshot.iter().filter(move |(id, _, free)| *id != me && *free).map(|(_, p, _)| *p);
+                let grounded = crate_motion(
+                    &mut c.pos,
+                    &mut c.vel,
+                    &mut c.settling,
+                    |q| floor_under(q, others(), turrets.iter().copied()),
+                    dt,
+                    tune,
+                );
+                if grounded {
                     c.thrown_by = None;
-                }
-                if c.pos.x.abs() > ARENA.x - HALF {
-                    c.pos.x = c.pos.x.clamp(-ARENA.x + HALF, ARENA.x - HALF);
-                    c.vel.x *= -0.4;
-                }
-                if c.pos.z.abs() > ARENA.y - HALF {
-                    c.pos.z = c.pos.z.clamp(-ARENA.y + HALF, ARENA.y - HALF);
-                    c.vel.z *= -0.4;
                 }
                 if let Some(by) = c.thrown_by {
                     let other = 1 - by;
@@ -1134,6 +1242,39 @@ fn crates_physics(s: &mut Sim, tune: &Tune, dt: f32) {
                         c.vel *= -0.2;
                     }
                 }
+            }
+        }
+    }
+    // Curling knocks: a sliding crate that runs into one beside it on the same level hands
+    // over its momentum along the hit axis (equal masses), like stones in curling.
+    let n = s.crates.len();
+    for i in 0..n {
+        for j in (i + 1)..n {
+            let (a, b) = (&s.crates[i], &s.crates[j]);
+            if a.state != CrateState::Free || b.state != CrateState::Free || !side_hit(a.pos, b.pos) {
+                continue;
+            }
+            let rel = a.vel.xz() - b.vel.xz();
+            if rel.length() < 0.3 {
+                continue;
+            }
+            let d = b.pos.xz() - a.pos.xz();
+            let (axis, pen) = if (CRATE - d.x.abs()) < (CRATE - d.y.abs()) {
+                (Vec2::new(d.x.signum(), 0.0), CRATE - d.x.abs())
+            } else {
+                (Vec2::new(0.0, d.y.signum()), CRATE - d.y.abs())
+            };
+            let closing = rel.dot(axis);
+            let (pa, pb) = (s.crates[i].pos, s.crates[j].pos);
+            let push = (axis * pen * 0.5).extend(0.0).xzy();
+            s.crates[i].pos = pa - push;
+            s.crates[j].pos = pb + push;
+            if closing > 0.0 {
+                let dv = (axis * closing * 0.9).extend(0.0).xzy();
+                s.crates[i].vel -= dv;
+                s.crates[j].vel += dv;
+                s.crates[i].settling = false;
+                s.crates[j].settling = false;
             }
         }
     }
@@ -1487,7 +1628,22 @@ fn draw_gizmos(mut g: Gizmos, sim: Res<Sim>, tune: Res<Tune>, controls: Res<Cont
             g.cube(Transform::from_translation(at).with_scale(Vec3::splat(CRATE)), color);
         };
         let near = sim.place_target(PLAYER);
+        let curling = tune.c(P::Landing) == 1;
         match plan.target {
+            Some(t) if curling => {
+                // Curling: the ring is the touchdown; the ghost is where the slide ends
+                // (hidden unless the preview shows the rest spot, so reading the slide is a skill).
+                g.circle(ground_circle(t.with_y(t.y - HALF + 0.03)), 0.55, Color::srgb(0.6, 1.0, 1.0));
+                g.circle(ground_circle(t.with_y(t.y - HALF + 0.03)), 0.1, Color::srgb(0.6, 1.0, 1.0));
+                if tune.c(P::ArcPreview) == 0 {
+                    // Orange: it'll knock into a crate there and hand over its momentum.
+                    let color = if plan.knock { Color::srgb(1.0, 0.55, 0.1) } else { Color::srgb(0.6, 1.0, 1.0) };
+                    ghost(&mut g, plan.landing.with_y(plan.landing.y.max(HALF)), color);
+                }
+                if t.xz().distance(a.pos.xz()) > PLACE_REACH {
+                    ghost(&mut g, near, Color::srgba(0.6, 1.0, 1.0, 0.25));
+                }
+            }
             Some(t) => {
                 let land = plan.landing;
                 ghost(&mut g, land, Color::srgb(0.6, 1.0, 1.0));
@@ -1505,7 +1661,7 @@ fn draw_gizmos(mut g: Gizmos, sim: Res<Sim>, tune: Res<Tune>, controls: Res<Cont
     }
     // Throw arc preview.
     if let Some(plan) = &plan
-        && tune.c(P::ArcPreview) == 0
+        && tune.c(P::ArcPreview) != 2
     {
         let color = if plan.short { Color::srgb(1.0, 0.4, 0.2) } else { Color::srgb(0.4, 1.0, 0.4) };
         g.linestrip(plan.path.iter().copied(), color);
@@ -1558,6 +1714,14 @@ fn hud(sim: Res<Sim>, tune: Res<Tune>, controls: Res<Controls>, mut hud: Single<
         }
     );
     s += &format!("aim: {}\n", controls.source);
+    if a.carrying.is_some() {
+        let plan = throw_plan(&sim, &tune, controls.aim_dist);
+        s += &format!(
+            "throw reach: {:.1} m  (jump x{:.2})\n",
+            tune.f(P::ThrowDist) * plan.boost,
+            plan.boost
+        );
+    }
     let tallest = |pad: Vec2| {
         sim.crates
             .iter()
