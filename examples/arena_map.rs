@@ -573,7 +573,8 @@ fn defaults() -> Vec<Param> {
         num("5 build time", 0.0, 0.0, 3.0, 0.5, "s per crate"),
         choice("6 vulnerability", 0, &["steal only", "a hit splits the stack", "a hit spills the pad", "locks once placed"]),
         choice("map", 0, &["lanes + jungle (90 x 50 m)", "open arena (#10)"]),
-        num("team size", 3.0, 1.0, 8.0, 1.0, "v"),
+        // 5v5, as in League of Legends (the #10 verdict was 3v3 on the small arena).
+        num("team size", 5.0, 1.0, 8.0, 1.0, "v"),
         // Off: only you build and open blue's pad.
         choice("blue bots build", 1, &["off (only you)", "on"]),
         num("online delay", 0.0, 0.0, 250.0, 25.0, "ms"),
@@ -4052,7 +4053,7 @@ fn guide_text(
 fn panel(tune: Res<Tune>, mut panel: Single<(&mut Text, &mut Visibility), (With<Panel>, Without<Hud>)>) {
     let (text, vis) = &mut *panel;
     **vis = if tune.panel { Visibility::Visible } else { Visibility::Hidden };
-    let mut s = "TUNING (core feel #9, 3v3 and pad joins #10 fixed)\n\n".to_string();
+    let mut s = "TUNING (core feel #9 and pad joins #10 fixed)\n\n".to_string();
     for (i, p) in tune.vals.iter().enumerate() {
         let cursor = if i == tune.selected { ">" } else { " " };
         s += &format!("{cursor} {:<20} {}\n", p.name, fmt_value(&p.value));

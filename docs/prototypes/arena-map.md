@@ -11,6 +11,9 @@ cargo run --example arena_map
 each end, lanes and jungle entrances that pull players into fights, and PvE camps that drop
 heals and shields?
 
+**Team size is 5v5 by default**, as in League of Legends (10 players). "team size" in the panel still
+goes from 1 to 8. Teams still start with one player and the rest join from the pad (ADR-0005).
+
 Everything from the crate-grammar prototype still works here (keys 1–6, C for class, T and Y
 to drop crates). The **map** setting in the panel switches back to the open #10 arena
 (36 × 22 m) to compare. Changing it restarts the match.
@@ -55,21 +58,23 @@ to drop crates). The **map** setting in the panel switches back to the open #10 
 4. **Entrances**: wait at a jungle entrance for an enemy carrier. Do the walls make ambushes,
    or just make it slower to get around?
 
-## What the bot matches showed (5 min, 3v3, bots on both teams)
+## What the bot matches showed (5 min, bots on both teams)
 
-| | open arena | lanes + jungle |
-|---|---|---|
-| Player kills per match | about 45–50 | about 7–9 |
-| Deaths to PvE | — | about 2–4 |
-| Crates scored | about 100–120 | about 50 |
+| | open arena, 3v3 | lanes + jungle, 3v3 | lanes + jungle, 5v5 |
+|---|---|---|---|
+| Player kills per match | about 45–50 | about 7–9 | about 22–26 |
+| Deaths to PvE | — | about 2–4 | about 3–7 |
+| Crates scored | about 100–120 | about 50 | about 70 |
 
 **At 3v3 the map is too empty for PvP.** It has about 750 m² per player, where the #10
-verdict tuned the arena to 130 m². Bots only fight what they can see within 10 m, so this
+verdict tuned the arena to 130 m². That's why 5v5 is the default: it has 450 m² per player
+and about three times the fights, though that's still about half the open arena's rate. Bots only fight what they can see within 10 m, so this
 undercounts how often humans who go looking for fights would meet. The gap is still large.
 Ways to close it, if the layout is otherwise liked:
 
 - a smaller version of this layout (about 60 × 34 m);
-- bigger teams (5v5 is the League of Legends number), which reopens the #10 team-size verdict;
+- bigger teams: 5v5 is now the default here. If it's picked, it reopens the #10 team-size
+  verdict (3v3, ADR-0005's "3 for now");
 - more pull to the middle: all new crates already land in the river and mid lane here, but
   the river objectives could drop more, or the pads could move closer.
 
