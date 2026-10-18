@@ -3,28 +3,22 @@
 //!
 //!     cargo run --example squad_model
 //!
-//! Built on the core-feel baseline from #9 (`prototype/core-feel`), which is fixed here as
-//! constants: curling jump-throws, full-lock carrying, 18 m/s projectiles, reach-masked grabs.
-//! Two teams of leaders (you plus bot leaders standing in for humans) and their AI.
-//! Variant A: every leader has their own AI Buddies (cap 0..3; 1 = hero + partner, 0 = one
-//! character per player), built Team Buddies style from 2-high crate stacks on the pad, or
-//! given at the start. Variant B: no squad, team-owned neutral haulers.
+//! Verdict so far (2026-10-18): one character per player, no AI Buddies and no AI haulers.
+//! What's left is the range of team sizes. Teams of players (you plus bots standing in for
+//! other players) on the core-feel baseline from #9, fixed here as constants: curling
+//! jump-throws, full-lock carrying, 18 m/s projectiles, reach-masked grabs.
 //! See `docs/prototypes/squad-model.md` for what to try.
 //!
 //! Play: WASD / left stick move, mouse / right stick aim, Space / A jump, E / X grab or place,
 //! RMB / RB throw, LMB / RT shoot, F / B kick (hold on an orange crate to open it).
-//! Orders: Q / LB context order (tap = one buddy, hold = whole squad) or, with "4 verbs",
-//! Z follow, X haul, C guard pad, V attack / hold at the reticle (gamepad: hold LB + D-pad).
-//! G / left-stick click recalls everyone to their default job.
-//! T runs the readability test (freeze-frames; click the highlighted unit's owner).
 //! Tune: Up/Down pick, Left/Right change (Shift = x5). N / 1-4 / Enter: guided comparisons.
 //! R / Start resets, P prints settings, verdicts and results, H hides the panel.
 //!
 //! Smoke tests: `SQUAD_EXIT_AFTER=<s>`, `SQUAD_SCREENSHOT=<file.png>`, `SQUAD_SEAT=bot`,
-//! `SQUAD_COMPARISON=<n>`, `SQUAD_READTEST=1` (starts the readability test after 3 s).
+//! `SQUAD_COMPARISON=<n>`.
 
 use std::collections::VecDeque;
-use std::f32::consts::{FRAC_PI_2, PI};
+use std::f32::consts::FRAC_PI_2;
 use std::time::Duration;
 
 use bevy::prelude::*;
@@ -45,7 +39,6 @@ const CAM_OFFSET: Vec3 = Vec3::new(0.0, 21.0, 14.0);
 const ARENA_CAM: Vec3 = Vec3::new(0.0, 46.0, 28.0);
 const TURRET_H: f32 = 1.1;
 const PLACE_REACH: f32 = 1.6;
-const READ_QUESTIONS: usize = 8;
 
 // The core-feel baseline picked by play in #9 (docs/prototypes/core-feel.md), fixed here.
 const MOVE_SPEED: f32 = 6.0;
@@ -59,19 +52,23 @@ const SLIDE_FRICTION: f32 = 4.0;
 const SNAP_RADIUS: f32 = 0.35;
 const FIRE_RATE: f32 = 3.0;
 const PROJ_SPEED: f32 = 18.0;
-/// 4 shots kill a 100 hp leader.
+/// 4 shots kill a 100 hp player.
 const SHOT_DMG: f32 = 25.0;
 const KICK_TIME: f32 = 1.5;
 const GRAB_LATENCY: f32 = 0.12;
 const GRAB_REACH: f32 = 1.2;
 
 const TEAM_COLOR: [Color; 2] = [Color::srgb(0.3, 0.55, 1.0), Color::srgb(1.0, 0.35, 0.3)];
-/// Owner colours by leader slot: a leader and their buddies share one.
-const OWNER_COLOR: [Color; 4] = [
+/// Player colours by slot, worn as a band: tells teammates apart.
+const PLAYER_COLOR: [Color; 8] = [
     Color::srgb(1.0, 0.9, 0.15),
     Color::srgb(0.25, 1.0, 0.35),
     Color::srgb(0.97, 0.97, 0.97),
     Color::srgb(0.85, 0.3, 1.0),
+    Color::srgb(1.0, 0.55, 0.1),
+    Color::srgb(0.2, 0.95, 0.95),
+    Color::srgb(1.0, 0.5, 0.75),
+    Color::srgb(0.15, 0.15, 0.15),
 ];
 
 // ---------------------------------------------------------------------------------------
@@ -81,25 +78,9 @@ const OWNER_COLOR: [Color; 4] = [
 #[derive(Clone, Copy, PartialEq)]
 #[repr(usize)]
 enum P {
-    Model,
     TeamSize,
-    SquadSize,
-    BuddySource,
-    Haulers,
-    DefaultJob,
-    Orders,
-    Leash,
-    BuddyHp,
-    BuddyDamage,
     OnlineDelay,
-    BlueBots,
-    RedBots,
     Seat,
-    OwnerBand,
-    BuddyScale,
-    HumanHalo,
-    Tethers,
-    OrderLines,
     MatchLength,
     TimeScale,
     Camera,
@@ -126,31 +107,12 @@ fn choice(name: &'static str, i: usize, opts: &'static [&'static str]) -> Param 
     Param { name, value: Value::Choice { i, opts } }
 }
 
-const JOBS: &[&str] = &["follow & guard me", "haul to pad", "guard pad"];
-const ORDER_STYLES: &[&str] = &["never", "micro"];
-
 fn defaults() -> Vec<Param> {
     // Order must match `P`.
     vec![
-        choice("squad model", 0, &["A: leader + own buddies", "B: team neutral haulers"]),
-        num("team size", 3.0, 1.0, 4.0, 1.0, "v"),
-        num("squad cap (A)", 2.0, 0.0, 3.0, 1.0, "buddies"),
-        choice("buddies come from", 1, &["start with full squad", "2-high stack on pad"]),
-        num("haulers/player (B)", 1.0, 0.0, 3.0, 1.0, ""),
-        choice("default job", 1, JOBS),
-        choice("orders", 1, &["none", "one context button", "4 verbs"]),
-        num("leash", 14.0, 6.0, 30.0, 2.0, "m"),
-        num("buddy hp", 50.0, 25.0, 100.0, 25.0, ""),
-        num("buddy damage", 0.5, 0.25, 1.0, 0.25, "x"),
+        num("team size", 3.0, 1.0, 8.0, 1.0, "v"),
         num("online delay", 0.0, 0.0, 250.0, 25.0, "ms"),
-        choice("blue bots order", 0, ORDER_STYLES),
-        choice("red bots order", 0, ORDER_STYLES),
         choice("your seat", 0, &["you play", "bot (watch)"]),
-        choice("owner band", 1, &["off", "on"]),
-        num("buddy scale", 0.75, 0.5, 1.0, 0.05, "x"),
-        choice("human halo", 0, &["off", "on"]),
-        choice("tethers", 0, &["off", "own squad", "everyone"]),
-        choice("order lines", 1, &["off", "own squad"]),
         num("match length", 120.0, 30.0, 300.0, 30.0, "s"),
         num("time scale", 1.0, 1.0, 4.0, 1.0, "x"),
         choice("camera", 0, &["follow you", "whole arena"]),
@@ -200,39 +162,9 @@ fn fmt_value(v: &Value) -> String {
     }
 }
 
-/// Model, team size, squad cap, haulers per team, buddy source: changing any of these
-/// rebuilds the match.
-fn roster_of(tune: &Tune) -> [usize; 5] {
-    let model = tune.c(P::Model);
-    let n = tune.c(P::TeamSize);
-    let squad = if model == 0 { tune.c(P::SquadSize) } else { 0 };
-    let haulers = if model == 1 { tune.c(P::Haulers) * n } else { 0 };
-    [model, n, squad, haulers, tune.c(P::BuddySource)]
-}
-
 fn roster_desc(tune: &Tune) -> String {
     let n = tune.c(P::TeamSize);
-    if tune.c(P::Model) == 1 {
-        format!("B {n}v{n}, {} haulers per player", tune.c(P::Haulers))
-    } else {
-        format!(
-            "A {n}v{n}, up to {} buddies each {}, default job {}, orders {}",
-            tune.c(P::SquadSize),
-            if tune.c(P::BuddySource) == 1 { "(built from 2-high stacks)" } else { "(start with full squad)" },
-            JOBS[tune.c(P::DefaultJob)],
-            fmt_value(&tune.vals[P::Orders as usize].value)
-        )
-    }
-}
-
-fn looks_desc(tune: &Tune) -> String {
-    format!(
-        "band {}, buddy scale {:.2}, halo {}, tethers {}",
-        fmt_value(&tune.vals[P::OwnerBand as usize].value),
-        tune.f(P::BuddyScale),
-        fmt_value(&tune.vals[P::HumanHalo as usize].value),
-        fmt_value(&tune.vals[P::Tethers as usize].value),
-    )
+    format!("{n}v{n} players, no AI units")
 }
 
 // ---------------------------------------------------------------------------------------
@@ -247,121 +179,21 @@ struct Comparison {
     /// Applied to every variant.
     both: &'static [(P, f32)],
     variants: &'static [(&'static str, &'static [(P, f32)])],
-    /// Set back to the baseline when the comparison ends, so a test setup doesn't leak.
-    restore: &'static [P],
 }
 
-const COMPARISONS: &[Comparison] = &[
-    Comparison {
-        row: "1", title: "squad cap (3v3, model A)",
-        question: "How many buddies can you own at once? 0 = one character per player, 1 = hero + partner, 3 = Team Buddies.",
-        both: &[(P::Model, 0.0), (P::TeamSize, 3.0)],
-        variants: &[
-            ("0: solo", &[(P::SquadSize, 0.0)]),
-            ("1: hero + partner", &[(P::SquadSize, 1.0)]),
-            ("2 buddies", &[(P::SquadSize, 2.0)]),
-            ("3 buddies", &[(P::SquadSize, 3.0)]),
-        ],
-        restore: &[],
-    },
-    Comparison {
-        row: "1b", title: "where buddies come from (3v3, cap 3)",
-        question: "Built from crates (a 2-high stack on your pad pops a buddy; dead ones are gone), \
-                   or a full squad from the start that respawns? Does building your army make the crate loop matter more?",
-        both: &[(P::Model, 0.0), (P::TeamSize, 3.0), (P::SquadSize, 3.0)],
-        variants: &[
-            ("built from 2-high stacks", &[(P::BuddySource, 1.0)]),
-            ("start with full squad", &[(P::BuddySource, 0.0)]),
-        ],
-        restore: &[],
-    },
-    Comparison {
-        row: "2", title: "A own squad vs B neutral haulers (3v3)",
-        question: "Is owning and ordering buddies more fun than team haulers nobody commands? Is B still Team Buddies?",
-        both: &[(P::TeamSize, 3.0)],
-        variants: &[
-            ("A: 2 buddies each", &[(P::Model, 0.0), (P::SquadSize, 2.0)]),
-            ("B: 2 haulers per player", &[(P::Model, 1.0), (P::Haulers, 2.0)]),
-        ],
-        restore: &[],
-    },
-    Comparison {
-        row: "3", title: "default job",
-        question: "What should a buddy do with no order? It must never idle. Which job helps without playing for you?",
-        both: &[(P::Model, 0.0)],
-        variants: &[
-            ("follow & guard me", &[(P::DefaultJob, 0.0)]),
-            ("haul to pad", &[(P::DefaultJob, 1.0)]),
-            ("guard pad", &[(P::DefaultJob, 2.0)]),
-        ],
-        restore: &[],
-    },
-    Comparison {
-        row: "4", title: "order verbs",
-        question: "Do you give orders mid-fight at all? One context button (tap = one buddy, hold = all) vs four verbs vs none.",
-        both: &[(P::Model, 0.0)],
-        variants: &[
-            ("none (default job only)", &[(P::Orders, 0.0)]),
-            ("one context button (Q / LB)", &[(P::Orders, 1.0)]),
-            ("4 verbs (Z X C V)", &[(P::Orders, 2.0)]),
-        ],
-        restore: &[],
-    },
-    Comparison {
-        row: "5", title: "readability at full size (3v3, 3 buddies = 24 bodies)",
-        question: "Press T in each variant: 8 freeze-frames. Click the highlighted unit's OWNER: the unit itself if it's a human, \
-                   its leader if it's a buddy, its pad if it's a hauler. Target: right, in under 1 s.",
-        both: &[
-            (P::Model, 0.0), (P::TeamSize, 3.0), (P::SquadSize, 3.0), (P::BuddySource, 0.0), (P::Tethers, 0.0),
-            (P::Camera, 0.0),
-        ],
-        variants: &[
-            ("team colour only", &[(P::OwnerBand, 0.0), (P::BuddyScale, 1.0), (P::HumanHalo, 0.0)]),
-            ("owner bands", &[(P::OwnerBand, 1.0), (P::BuddyScale, 1.0), (P::HumanHalo, 0.0)]),
-            ("bands + small buddies", &[(P::OwnerBand, 1.0), (P::BuddyScale, 0.7), (P::HumanHalo, 0.0)]),
-            ("bands + small + human halo", &[(P::OwnerBand, 1.0), (P::BuddyScale, 0.7), (P::HumanHalo, 1.0)]),
-        ],
-        // Full squads only for the test; keep your buddy source.
-        restore: &[P::BuddySource],
-    },
-    Comparison {
-        row: "6", title: "fairness probe (bots only: you watch)",
-        question: "Blue's bots never order, red's micro. A match per variant, results print at the end. \
-                   Keep the squad size where an idle squad is neither useless nor dominant, and micro still wins.",
-        both: &[
-            (P::Model, 0.0), (P::TeamSize, 3.0), (P::Seat, 1.0), (P::Camera, 1.0), (P::TimeScale, 2.0),
-            (P::BlueBots, 0.0), (P::RedBots, 1.0),
-        ],
-        variants: &[
-            ("1 buddy", &[(P::SquadSize, 1.0)]),
-            ("2 buddies", &[(P::SquadSize, 2.0)]),
-            ("3 buddies", &[(P::SquadSize, 3.0)]),
-        ],
-        restore: &[P::Seat, P::Camera, P::TimeScale, P::BlueBots, P::RedBots],
-    },
-    Comparison {
-        row: "7", title: "online delay on buddies",
-        question: "Online, buddies are always interpolated (shown in the past) and orders take a round trip. Does the squad still feel responsive?",
-        both: &[(P::Model, 0.0)],
-        variants: &[
-            ("local 0 ms", &[(P::OnlineDelay, 0.0)]),
-            ("100 ms", &[(P::OnlineDelay, 100.0)]),
-            ("200 ms", &[(P::OnlineDelay, 200.0)]),
-        ],
-        restore: &[P::OnlineDelay],
-    },
-    Comparison {
-        row: "8", title: "team size",
-        question: "With the squad you picked, how many players per team? This sets the range of team sizes. Budget: ~32 networked bodies.",
-        both: &[],
-        variants: &[
-            ("2v2", &[(P::TeamSize, 2.0)]),
-            ("3v3", &[(P::TeamSize, 3.0)]),
-            ("4v4", &[(P::TeamSize, 4.0)]),
-        ],
-        restore: &[],
-    },
-];
+// Decided by play and no longer listed: one character per player, no AI Buddies or haulers.
+const COMPARISONS: &[Comparison] = &[Comparison {
+    row: "1", title: "team size",
+    question: "How many players per team? This sets the range of team sizes. Budget: ~32 networked characters. \
+               The arena is fixed at 36 x 22 m, so bigger teams are also more crowded.",
+    both: &[],
+    variants: &[
+        ("2v2", &[(P::TeamSize, 2.0)]),
+        ("3v3", &[(P::TeamSize, 3.0)]),
+        ("4v4", &[(P::TeamSize, 4.0)]),
+        ("6v6", &[(P::TeamSize, 6.0)]),
+    ],
+}];
 
 struct Guide {
     idx: usize,
@@ -429,85 +261,36 @@ struct Crate {
     state: CrateState,
     kick: f32,
     thrown_by: Option<usize>,
-    /// The leader whose side last set this crate down: a 2-high stack builds them a buddy.
-    placed_by: Option<usize>,
     settling: bool,
     ent: Option<Entity>,
 }
 
-#[derive(Clone, Copy, PartialEq)]
-enum Role {
-    /// A player seat: you, or a bot standing in for a human.
-    Leader,
-    /// An AI Buddy owned by the leader at this index.
-    Buddy(usize),
-    /// Variant B: owned by the team, takes no orders.
-    Hauler,
-}
-
-#[derive(Clone, Copy, PartialEq)]
-enum Job {
-    /// No order: the "default job" knob decides.
-    Default,
-    Follow,
-    Haul,
-    GuardPad,
-    HaulThis(u32),
-    Attack(usize),
-    Hold(Vec3),
-}
-
-impl Job {
-    fn label(self) -> &'static str {
-        match self {
-            Job::Default => "default",
-            Job::Follow => "follow",
-            Job::Haul => "haul",
-            Job::GuardPad => "guard pad",
-            Job::HaulThis(_) => "haul THIS",
-            Job::Attack(_) => "ATTACK",
-            Job::Hold(_) => "HOLD",
-        }
-    }
-}
-
+/// A player: you, or a bot standing in for another player.
 struct Actor {
-    role: Role,
     team: usize,
-    /// Leader slot in the team (buddies copy their leader's): picks the owner colour.
+    /// Slot in the team: picks the player colour.
     slot: usize,
-    /// Index within the squad (or among the team's haulers).
-    spot: usize,
     pos: Vec3,
     vel: Vec3,
     facing: Vec3,
     grounded: bool,
     carrying: Option<u32>,
-    /// The crate this AI is heading for, so teammates pick different ones.
+    /// The crate this bot is heading for, so teammates pick different ones.
     claim: Option<u32>,
     fire_cd: f32,
     hp: f32,
-    max_hp: f32,
     dead: f32,
     stun: f32,
-    job: Job,
-    job_t: f32,
-    /// Order tell: counts down from 1 after an order lands.
-    told: f32,
-    /// Bot leaders: time to the next squad re-think.
-    think: f32,
-    /// Recent positions, to show remote units slightly in the past (online interpolation).
+    /// Recent positions, to show other players slightly in the past (online interpolation).
     hist: VecDeque<(f32, Vec3)>,
     ent: Option<Entity>,
 }
 
 impl Actor {
-    fn new(role: Role, team: usize, slot: usize, spot: usize, hp: f32) -> Self {
+    fn new(team: usize, slot: usize) -> Self {
         Actor {
-            role,
             team,
             slot,
-            spot,
             pos: Vec3::ZERO,
             vel: Vec3::ZERO,
             facing: Vec3::X,
@@ -515,23 +298,15 @@ impl Actor {
             carrying: None,
             claim: None,
             fire_cd: 0.5,
-            hp,
-            max_hp: hp,
+            hp: 100.0,
             dead: 0.0,
             stun: 0.0,
-            job: Job::Default,
-            job_t: 0.0,
-            told: 0.0,
-            think: 1.0,
             hist: VecDeque::new(),
             ent: None,
         }
     }
     fn alive(&self) -> bool {
         self.dead <= 0.0
-    }
-    fn is_ai(&self) -> bool {
-        self.role != Role::Leader
     }
 }
 
@@ -569,32 +344,25 @@ struct Sim {
     shots: Vec<Shot>,
     turrets: Vec<Turret>,
     pending: Option<Pending>,
-    /// Orders in flight: (lands at, buddy, job). Online they take a round trip.
-    orders: Vec<(f32, usize, Job)>,
     next_id: u32,
     rng: u32,
     t: f32,
     loot_respawn: f32,
     msgs: Vec<(String, f32)>,
     despawn: Vec<Entity>,
-    roster: [usize; 5],
-    /// Buddies come from crates: a dead one is gone until you build another.
-    built_squads: bool,
-    /// Crates spent on builds (buddies, turrets): they still count for the score.
+    /// Players per team.
+    team_size: usize,
+    /// Crates spent on placeholder turrets: they still count for the score.
     banked: [usize; 2],
     match_left: f32,
     /// Counts down the end-of-match result screen.
     over: f32,
-    /// Freeze-frame for the readability test.
-    frozen: bool,
-    /// Match results and readability results, printed with P. Survives resets.
+    /// Match results, printed with P. Survives resets.
     log: Vec<String>,
-    view_key: u64,
     // Stats.
     fired: u32,
     hits: u32,
     kills: [u32; 2],
-    orders_given: u32,
 }
 
 impl Sim {
@@ -605,25 +373,20 @@ impl Sim {
             shots: Vec::new(),
             turrets: Vec::new(),
             pending: None,
-            orders: Vec::new(),
             next_id: 1,
             rng: 0x2545_f491,
             t: 0.0,
             loot_respawn: 0.0,
             msgs: Vec::new(),
             despawn: Vec::new(),
-            roster: [0; 5],
-            built_squads: false,
+            team_size: 0,
             banked: [0; 2],
             match_left: 0.0,
             over: 0.0,
-            frozen: false,
             log: Vec::new(),
-            view_key: 0,
             fired: 0,
             hits: 0,
             kills: [0; 2],
-            orders_given: 0,
         };
         s.reset(tune);
         s
@@ -643,27 +406,11 @@ impl Sim {
             self.despawn.extend(a.ent);
         }
         self.pending = None;
-        self.orders.clear();
-        self.roster = roster_of(tune);
-        let [_, n, cap, haulers, source] = self.roster;
-        self.built_squads = source == 1;
+        self.team_size = tune.c(P::TeamSize);
         self.banked = [0; 2];
-        let squad = if self.built_squads { 0 } else { cap };
-        let buddy_hp = tune.f(P::BuddyHp);
         for team in 0..2 {
-            for slot in 0..n {
-                self.actors.push(Actor::new(Role::Leader, team, slot, 0, 100.0));
-            }
-        }
-        for li in 0..2 * n {
-            let (team, slot) = (self.actors[li].team, self.actors[li].slot);
-            for k in 0..squad {
-                self.actors.push(Actor::new(Role::Buddy(li), team, slot, k, buddy_hp));
-            }
-        }
-        for team in 0..2 {
-            for k in 0..haulers {
-                self.actors.push(Actor::new(Role::Hauler, team, k % n.max(1), k, buddy_hp));
+            for slot in 0..self.team_size {
+                self.actors.push(Actor::new(team, slot));
             }
         }
         for i in 0..self.actors.len() {
@@ -672,10 +419,10 @@ impl Sim {
             a.pos = p;
             a.facing = Vec3::X * toward_centre(a.team);
         }
-        let count = 6 + 3 * n;
+        let count = 6 + 3 * self.team_size;
         for i in 0..count {
-            let x = -4.8 + (i % 4) as f32 * 3.2;
-            let z = -8.0 + (i / 4) as f32 * 3.2;
+            let x = -8.0 + (i % 6) as f32 * 3.2;
+            let z = -8.0 + (i / 6) as f32 * 3.2;
             self.spawn_crate(Kind::Normal, Vec3::new(x, HALF, z));
         }
         self.spawn_crate(Kind::Loot, Vec3::new(0.0, HALF, -0.4));
@@ -685,22 +432,15 @@ impl Sim {
         self.fired = 0;
         self.hits = 0;
         self.kills = [0; 2];
-        self.orders_given = 0;
     }
 
-    /// Leaders start in a line in front of their pad; buddies beside their leader;
-    /// haulers on the pad's front edge.
+    /// Players start in a line in front of their pad.
     fn spawn_point(&self, i: usize) -> Vec3 {
         let a = &self.actors[i];
-        let n = self.roster[1].max(1);
-        let dir = toward_centre(a.team);
-        let pad = PADS[a.team];
-        let lane = (a.slot as f32 - (n as f32 - 1.0) / 2.0) * 3.2;
-        match a.role {
-            Role::Leader => Vec3::new(pad.x + dir * 4.0, 0.0, lane),
-            Role::Buddy(_) => Vec3::new(pad.x + dir * 2.8, 0.0, lane + (a.spot as f32 - 1.0) * 1.0),
-            Role::Hauler => Vec3::new(pad.x + dir * 2.6, 0.0, (a.spot as f32 - 2.0) * 1.1),
-        }
+        let n = self.team_size.max(1) as f32;
+        let gap = (18.0 / n).min(3.2);
+        let lane = (a.slot as f32 - (n - 1.0) / 2.0) * gap;
+        Vec3::new(PADS[a.team].x + toward_centre(a.team) * 4.0, 0.0, lane)
     }
 
     fn rand(&mut self) -> f32 {
@@ -721,7 +461,6 @@ impl Sim {
             state: CrateState::Free,
             kick: 0.0,
             thrown_by: None,
-            placed_by: None,
             settling: false,
             ent: None,
         });
@@ -730,10 +469,6 @@ impl Sim {
 
     fn crate_mut(&mut self, id: u32) -> Option<&mut Crate> {
         self.crates.iter_mut().find(|c| c.id == id)
-    }
-
-    fn free_crate(&self, id: u32) -> Option<&Crate> {
-        self.crates.iter().find(|c| c.id == id && c.state == CrateState::Free)
     }
 
     fn say(&mut self, s: impl Into<String>) {
@@ -746,12 +481,10 @@ impl Sim {
     fn release(&mut self, who: usize, vel: Vec3, offset: Vec3) {
         let Some(id) = self.actors[who].carrying.take() else { return };
         let head = self.actors[who].pos + Vec3::Y * HEAD + offset;
-        let leader = self.leader_of(who);
         if let Some(c) = self.crate_mut(id) {
             c.state = CrateState::Free;
             c.pos = head;
             c.vel = vel;
-            c.placed_by = leader;
             c.thrown_by = if vel.length() > 4.0 { Some(who) } else { None };
         }
     }
@@ -778,16 +511,14 @@ impl Sim {
         Vec3::new(xz.x, top + HALF, xz.y)
     }
 
-    /// Where an AI hauler sets its crate down on its pad: the lowest cell, then the nearest.
-    /// When its leader's squad has room, on top of a lone crate first, to build a buddy.
-    fn pad_cell(&self, team: usize, from: Vec3, column: bool) -> Vec3 {
+    /// Where a bot sets its crate down on its pad: the lowest cell, then the nearest.
+    fn pad_cell(&self, team: usize, from: Vec3) -> Vec3 {
         let pad = PADS[team];
         let mut best: Option<(f32, Vec3)> = None;
         for gx in -2..=2 {
             for gz in -2..=2 {
                 let at = self.target_at(pad + Vec2::new(gx as f32, gz as f32) * CRATE);
-                let second = (at.y - CRATE * 1.5).abs() < 0.05;
-                let score = if column && second { -10.0 } else { at.y * 10.0 } + at.xz().distance(from.xz());
+                let score = at.y * 10.0 + at.xz().distance(from.xz());
                 if best.is_none_or(|(b, _)| score < b) {
                     best = Some((score, at));
                 }
@@ -798,10 +529,8 @@ impl Sim {
 
     fn place(&mut self, who: usize, at: Vec3) {
         let Some(id) = self.actors[who].carrying.take() else { return };
-        let leader = self.leader_of(who);
         if let Some(c) = self.crate_mut(id) {
             c.state = CrateState::Free;
-            c.placed_by = leader;
             c.pos = at;
             c.vel = Vec3::ZERO;
             c.thrown_by = None;
@@ -845,12 +574,7 @@ impl Sim {
         if a.hp > 0.0 {
             return;
         }
-        a.dead = match a.role {
-            Role::Leader => 3.0,
-            // Crate-built buddies don't respawn: build another.
-            Role::Buddy(_) if self.built_squads => f32::INFINITY,
-            _ => 5.0,
-        };
+        a.dead = 3.0;
         a.claim = None;
         self.kills[by_team] += 1;
         if who == YOU {
@@ -865,19 +589,10 @@ impl Sim {
     fn describe(&self, i: usize) -> String {
         let a = &self.actors[i];
         let team = ["blue", "red"][a.team];
-        match a.role {
-            Role::Leader if i == YOU => "you".into(),
-            Role::Leader => format!("{team} leader {}", a.slot + 1),
-            Role::Buddy(o) => format!("{team} leader {}'s buddy", self.actors[o].slot + 1),
-            Role::Hauler => format!("a {team} hauler"),
-        }
+        if i == YOU { "you".into() } else { format!("{team} player {}", a.slot + 1) }
     }
 
-    fn squad(&self, leader: usize) -> impl Iterator<Item = usize> + '_ {
-        (0..self.actors.len()).filter(move |&j| self.actors[j].role == Role::Buddy(leader))
-    }
-
-    /// Crates resting on the team's pad, plus crates spent on builds there.
+    /// Crates resting on the team's pad, plus crates spent on placeholder turrets there.
     fn score(&self, team: usize) -> usize {
         let on_pad = self
             .crates
@@ -885,44 +600,6 @@ impl Sim {
             .filter(|c| c.state == CrateState::Free && c.kind == Kind::Normal && pad_contains(PADS[team], c.pos))
             .count();
         on_pad + self.banked[team]
-    }
-
-    fn leader_of(&self, i: usize) -> Option<usize> {
-        match self.actors[i].role {
-            Role::Leader => Some(i),
-            Role::Buddy(o) => Some(o),
-            Role::Hauler => None,
-        }
-    }
-
-    /// Whether `i`'s leader has room for another crate-built buddy.
-    fn wants_buddy(&self, i: usize) -> bool {
-        self.built_squads
-            && self.leader_of(i).is_some_and(|l| self.squad(l).filter(|&j| self.actors[j].alive()).count() < self.roster[2])
-    }
-
-    /// A new buddy for `leader` at `at`, reusing a dead buddy's slot if there is one.
-    fn add_buddy(&mut self, leader: usize, at: Vec3, hp: f32) {
-        let (team, slot) = (self.actors[leader].team, self.actors[leader].slot);
-        let reuse = self.squad(leader).find(|&j| self.actors[j].dead.is_infinite());
-        let spot = reuse.map_or(self.squad(leader).count(), |j| self.actors[j].spot);
-        let mut a = Actor::new(Role::Buddy(leader), team, slot, spot, hp);
-        a.pos = at;
-        a.facing = Vec3::X * toward_centre(team);
-        a.told = 1.0;
-        match reuse {
-            Some(j) => {
-                a.ent = self.actors[j].ent.take();
-                self.orders.retain(|o| o.1 != j);
-                self.actors[j] = a;
-            }
-            None => self.actors.push(a),
-        }
-    }
-
-    fn order(&mut self, b: usize, job: Job, delay: f32) {
-        self.orders.retain(|o| o.1 != b);
-        self.orders.push((self.t + delay, b, job));
     }
 }
 
@@ -1126,19 +803,12 @@ struct Controls {
     use_mouse: bool,
     aim_point: Option<Vec3>,
     aim_dist: Option<f32>,
-    /// Context order: when the button went down, and how long it was held on release.
-    order_down: Option<f32>,
-    order_release: Option<f32>,
-    /// 4 verbs: 0 follow, 1 haul, 2 guard pad, 3 attack / hold at the reticle.
-    verb: Option<u8>,
-    recall: bool,
 }
 
 #[derive(Component)]
 struct MainCamera;
 
 fn read_controls(
-    time: Res<Time>,
     keys: Res<ButtonInput<KeyCode>>,
     mouse: Res<ButtonInput<MouseButton>>,
     // CursorMoved, not MouseMotion: raw device motion often never arrives on Wayland.
@@ -1149,7 +819,6 @@ fn read_controls(
     sim: Res<Sim>,
     mut c: ResMut<Controls>,
 ) {
-    let now = time.elapsed_secs();
     let mut mv = Vec2::ZERO;
     if keys.pressed(KeyCode::KeyW) { mv.y += 1.0; }
     if keys.pressed(KeyCode::KeyS) { mv.y -= 1.0; }
@@ -1161,13 +830,6 @@ fn read_controls(
     c.fire = mouse.pressed(MouseButton::Left);
     c.kick_held = keys.pressed(KeyCode::KeyF);
     c.kick = keys.just_pressed(KeyCode::KeyF);
-    c.recall = keys.just_pressed(KeyCode::KeyG);
-    c.verb = [KeyCode::KeyZ, KeyCode::KeyX, KeyCode::KeyC, KeyCode::KeyV]
-        .iter()
-        .position(|k| keys.just_pressed(*k))
-        .map(|i| i as u8);
-    let mut order_press = keys.just_pressed(KeyCode::KeyQ);
-    let mut order_up = keys.just_released(KeyCode::KeyQ);
     if moved.read().count() > 0 || mouse.just_pressed(MouseButton::Left) {
         c.use_mouse = true;
     }
@@ -1188,22 +850,6 @@ fn read_controls(
         c.fire |= pad.pressed(GamepadButton::RightTrigger2);
         c.kick_held |= pad.pressed(GamepadButton::East);
         c.kick |= pad.just_pressed(GamepadButton::East);
-        c.recall |= pad.just_pressed(GamepadButton::LeftThumb);
-        order_press |= pad.just_pressed(GamepadButton::LeftTrigger);
-        order_up |= pad.just_released(GamepadButton::LeftTrigger);
-        if pad.pressed(GamepadButton::LeftTrigger) {
-            let dpad = [GamepadButton::DPadUp, GamepadButton::DPadLeft, GamepadButton::DPadDown, GamepadButton::DPadRight];
-            if let Some(i) = dpad.iter().position(|b| pad.just_pressed(*b)) {
-                c.verb = Some(i as u8);
-            }
-        }
-    }
-    c.order_release = None;
-    if order_press {
-        c.order_down = Some(now);
-    }
-    if order_up && let Some(t0) = c.order_down.take() {
-        c.order_release = Some(now - t0);
     }
     c.mv = mv.clamp_length_max(1.0);
     c.aim = stick_aim;
@@ -1239,9 +885,7 @@ fn tune_input(
     mut tune: ResMut<Tune>,
     mut sim: ResMut<Sim>,
 ) {
-    // Holding LB turns the D-pad into order verbs.
-    let lb = gamepads.iter().any(|g| g.pressed(GamepadButton::LeftTrigger));
-    let any = |k: KeyCode, b: GamepadButton| keys.just_pressed(k) || (!lb && gamepads.iter().any(|g| g.just_pressed(b)));
+    let any = |k: KeyCode, b: GamepadButton| keys.just_pressed(k) || gamepads.iter().any(|g| g.just_pressed(b));
     let n = tune.vals.len();
     if any(KeyCode::ArrowUp, GamepadButton::DPadUp) {
         tune.selected = (tune.selected + n - 1) % n;
@@ -1298,9 +942,6 @@ fn tune_input(
         println!("verdict: {line}");
         tune.verdicts.push(line);
         tune.settled[g.idx] = true;
-        for p in cmp.restore {
-            tune.vals[*p as usize] = g.base[*p as usize].clone();
-        }
         start_next(&mut tune, &mut sim, Some(g.idx));
     }
     if keys.just_pressed(KeyCode::KeyP) {
@@ -1330,15 +971,12 @@ fn tune_input(
 
 fn step(time: Res<Time>, controls: Res<Controls>, tune: Res<Tune>, mut sim: ResMut<Sim>) {
     let s = &mut *sim;
-    if roster_of(&tune) != s.roster {
+    if tune.c(P::TeamSize) != s.team_size {
         s.reset(&tune);
     }
     let dt = time.delta_secs().min(1.0 / 30.0);
     for m in &mut s.msgs { m.1 -= dt; }
     s.msgs.retain(|m| m.1 > 0.0);
-    if s.frozen {
-        return;
-    }
     // Faster-than-real-time for watching bot matches; edge inputs only on the first substep.
     let quiet = Controls {
         mv: controls.mv,
@@ -1364,26 +1002,10 @@ fn tick(s: &mut Sim, c: &Controls, tune: &Tune, dt: f32) {
     }
     s.t += dt;
     let t = s.t;
-    // Orders land after the round trip.
-    let due: Vec<(f32, usize, Job)> = s.orders.iter().filter(|o| o.0 <= t).copied().collect();
-    s.orders.retain(|o| o.0 > t);
-    for (_, b, job) in due {
-        if let Some(a) = s.actors.get_mut(b)
-            && a.alive()
-        {
-            a.job = job;
-            a.job_t = 0.0;
-            a.told = 1.0;
-            a.claim = None;
-        }
-    }
     for i in 0..s.actors.len() {
         let a = &mut s.actors[i];
         a.fire_cd -= dt;
         a.stun -= dt;
-        a.told -= dt;
-        a.job_t += dt;
-        a.think -= dt;
         if a.dead > 0.0 {
             a.dead -= dt;
             if a.dead <= 0.0 {
@@ -1391,26 +1013,23 @@ fn tick(s: &mut Sim, c: &Controls, tune: &Tune, dt: f32) {
                 let a = &mut s.actors[i];
                 a.pos = p;
                 a.vel = Vec3::ZERO;
-                a.hp = a.max_hp;
-                a.job = Job::Default;
+                a.hp = 100.0;
                 a.hist.clear();
             }
         }
     }
     if tune.c(P::Seat) == 1 {
-        ai_step(s, YOU, tune, dt);
+        ai_step(s, YOU, dt);
     } else {
-        player_step(s, c, tune, dt);
+        player_step(s, c, dt);
     }
     for i in 1..s.actors.len() {
-        ai_step(s, i, tune, dt);
+        ai_step(s, i, dt);
     }
-    bot_orders(s, tune);
     actors_physics(s, dt);
     crates_physics(s);
     crates_step(s, dt);
     shots_step(s, dt);
-    build_buddies(s, tune);
     craft(s, tune, dt);
     refill(s, dt);
     for a in &mut s.actors {
@@ -1434,13 +1053,10 @@ fn end_match(s: &mut Sim, tune: &Tune) {
     };
     let seat = if tune.c(P::Seat) == 1 { "bot" } else { "you" };
     let line = format!(
-        "match: BLUE {b} - {r} RED, {winner} | {} | blue bots {}, red bots {}, blue seat 1 = {seat} | kills {}-{} | your orders {}",
+        "match: BLUE {b} - {r} RED, {winner} | {} | blue player 1 = {seat} | kills {}-{}",
         roster_desc(tune),
-        ORDER_STYLES[tune.c(P::BlueBots)],
-        ORDER_STYLES[tune.c(P::RedBots)],
         s.kills[0],
         s.kills[1],
-        s.orders_given,
     );
     println!("{line}");
     s.log.push(line);
@@ -1448,7 +1064,7 @@ fn end_match(s: &mut Sim, tune: &Tune) {
     s.over = 4.0;
 }
 
-fn player_step(s: &mut Sim, c: &Controls, tune: &Tune, dt: f32) {
+fn player_step(s: &mut Sim, c: &Controls, dt: f32) {
     if !s.actors[YOU].alive() {
         s.pending = None;
         return;
@@ -1489,8 +1105,6 @@ fn player_step(s: &mut Sim, c: &Controls, tune: &Tune, dt: f32) {
         }
     }
 
-    player_orders(s, c, tune);
-
     if s.actors[YOU].stun > 0.0 {
         return;
     }
@@ -1523,7 +1137,7 @@ fn player_step(s: &mut Sim, c: &Controls, tune: &Tune, dt: f32) {
     if c.fire && !carrying && s.actors[YOU].fire_cd <= 0.0 {
         s.actors[YOU].fire_cd = 1.0 / FIRE_RATE;
         let range = c.aim_dist.map_or(30.0, |d| d.clamp(1.0, 30.0));
-        fire(s, YOU, facing, range, tune);
+        fire(s, YOU, facing, range);
     }
 
     if !carrying {
@@ -1565,132 +1179,19 @@ fn player_step(s: &mut Sim, c: &Controls, tune: &Tune, dt: f32) {
     }
 }
 
-/// Your orders: one context button (target decides the verb) or four verbs.
-fn player_orders(s: &mut Sim, c: &Controls, tune: &Tune) {
-    let wants = c.order_release.is_some() || c.verb.is_some() || c.recall;
-    if !wants {
-        return;
-    }
-    let scheme = tune.c(P::Orders);
-    let mine: Vec<usize> = s.squad(YOU).filter(|&j| s.actors[j].alive()).collect();
-    if scheme == 0 {
-        s.say("orders are off: buddies run their default job");
-        return;
-    }
-    if mine.is_empty() {
-        s.say("no squad to order");
-        return;
-    }
-    let delay = tune.delay();
-    let p = c.aim_point.unwrap_or(s.actors[YOU].pos + s.actors[YOU].facing * 4.0).with_y(0.0);
-    if c.recall {
-        for &b in &mine {
-            s.order(b, Job::Default, delay);
-        }
-        s.orders_given += 1;
-        s.say(format!("RECALL: {} back to {}", mine.len(), JOBS[tune.c(P::DefaultJob)]));
-        return;
-    }
-    match (scheme, c.order_release, c.verb) {
-        (1, Some(held), _) => context_order(s, &mine, p, held >= 0.3, delay),
-        (2, _, Some(v)) if v < 3 => {
-            let job = [Job::Follow, Job::Haul, Job::GuardPad][v as usize];
-            for &b in &mine {
-                s.order(b, job, delay);
-            }
-            s.orders_given += 1;
-            s.say(format!("order: all {}", job.label()));
-        }
-        (2, _, Some(_)) => context_order(s, &mine, p, true, delay),
-        _ => {}
-    }
-}
-
-/// The target under the reticle picks the verb: an enemy = attack, a crate = haul it,
-/// your pad = guard it, ground = hold there. Tap = the nearest buddy, hold = all of them.
-fn context_order(s: &mut Sim, mine: &[usize], p: Vec3, all: bool, delay: f32) {
-    let team = s.actors[YOU].team;
-    let enemy = (0..s.actors.len())
-        .filter(|&j| s.actors[j].team != team && s.actors[j].alive())
-        .filter(|&j| s.actors[j].pos.xz().distance(p.xz()) < 1.3)
-        .min_by(|&x, &y| s.actors[x].pos.distance(p).total_cmp(&s.actors[y].pos.distance(p)));
-    let near_crates: Vec<u32> = {
-        let mut v: Vec<(u32, f32)> = s
-            .crates
-            .iter()
-            .filter(|cr| cr.state == CrateState::Free && cr.kind == Kind::Normal && !pad_contains(PADS[team], cr.pos))
-            .map(|cr| (cr.id, cr.pos.xz().distance(p.xz())))
-            .filter(|(_, d)| *d < 4.0)
-            .collect();
-        v.sort_by(|a, b| a.1.total_cmp(&b.1));
-        v.into_iter().map(|(id, _)| id).collect()
-    };
-    let crate_hit = near_crates.first().copied().filter(|&id| {
-        s.crates.iter().any(|cr| cr.id == id && cr.pos.xz().distance(p.xz()) < 1.0)
-    });
-    let who: Vec<usize> = if all {
-        mine.to_vec()
-    } else {
-        // Prefer an empty-handed buddy, then the nearest to the target.
-        let pick = mine.iter().copied().min_by(|&x, &y| {
-            let k = |j: usize| s.actors[j].carrying.is_some() as u32 as f32 * 100.0 + s.actors[j].pos.distance(p);
-            k(x).total_cmp(&k(y))
-        });
-        pick.into_iter().collect()
-    };
-    let mut verb = "";
-    for (k, &b) in who.iter().enumerate() {
-        let job = if let Some(e) = enemy {
-            verb = "ATTACK";
-            Job::Attack(e)
-        } else if crate_hit.is_some() {
-            verb = "HAUL that";
-            match near_crates.get(k) {
-                Some(&id) => Job::HaulThis(id),
-                None => Job::Haul,
-            }
-        } else if pad_contains(PADS[team], p) {
-            verb = "GUARD PAD";
-            Job::GuardPad
-        } else {
-            verb = "HOLD there";
-            let a = k as f32 * 2.1;
-            Job::Hold(p + Vec3::new(a.cos(), 0.0, a.sin()) * if k == 0 { 0.0 } else { 1.0 })
-        };
-        s.order(b, job, delay);
-    }
-    s.orders_given += 1;
-    let n = who.len();
-    s.say(format!("order: {verb} ({} buddy{})", n, if n == 1 { "" } else { "s" }));
-}
-
-fn fire(s: &mut Sim, who: usize, dir: Vec3, range: f32, tune: &Tune) {
+fn fire(s: &mut Sim, who: usize, dir: Vec3, range: f32) {
     let a = &s.actors[who];
     let from = a.pos + Vec3::Y * CHEST + dir * 0.5;
-    let dmg = if a.is_ai() { SHOT_DMG * tune.f(P::BuddyDamage) } else { SHOT_DMG };
     let team = a.team;
     if who == YOU {
         s.fired += 1;
     }
-    s.shots.push(Shot { pos: from, vel: dir * PROJ_SPEED, owner: Some(who), team, dmg, life: range / PROJ_SPEED, ent: None });
+    s.shots.push(Shot { pos: from, vel: dir * PROJ_SPEED, owner: Some(who), team, dmg: SHOT_DMG, life: range / PROJ_SPEED, ent: None });
 }
 
 // ---------------------------------------------------------------------------------------
-// AI: one brain for bot leaders, buddies and haulers
+// Bots standing in for other players
 // ---------------------------------------------------------------------------------------
-
-/// What a buddy is really doing: its order, or the default job when it has none.
-fn effective_job(s: &Sim, i: usize, tune: &Tune) -> Job {
-    let a = &s.actors[i];
-    match a.role {
-        Role::Hauler => Job::Haul,
-        Role::Leader => Job::Default,
-        Role::Buddy(o) => {
-            let j = if a.job == Job::Default { [Job::Follow, Job::Haul, Job::GuardPad][tune.c(P::DefaultJob)] } else { a.job };
-            if j == Job::Follow && !s.actors[o].alive() { Job::GuardPad } else { j }
-        }
-    }
-}
 
 /// The nearest live enemy within `radius` of `around`, carriers first (they hold crates).
 fn nearest_enemy(s: &Sim, i: usize, around: Vec3, radius: f32) -> Option<usize> {
@@ -1712,187 +1213,69 @@ enum Act {
     Place(Vec3),
 }
 
-struct Haul {
-    goal: Option<Vec3>,
-    act: Act,
-    claim: Option<u32>,
-    /// A one-off haul order is done (or the crate is gone).
-    done: bool,
-    /// Nothing to haul.
-    idle: bool,
-}
-
-/// Fetch a crate (a given one, or the nearest unclaimed one within `leash` of the pad) and
-/// set it down on the team pad. AI grabs are instant: the AI runs on the server.
-fn haul_plan(s: &Sim, i: usize, only: Option<u32>, leash: Option<f32>) -> Haul {
+/// Fetch the nearest crate no teammate is after (stealing from the enemy pad included) and
+/// set it down on the team pad. Returns the goal and the action; `None` goal and no action
+/// means there's nothing to haul. Bot grabs are instant: they stand in for the server.
+fn haul_plan(s: &Sim, i: usize) -> (Option<Vec3>, Act, Option<u32>) {
     let a = &s.actors[i];
-    let none = Haul { goal: None, act: Act::None, claim: None, done: false, idle: false };
     if a.carrying.is_some() {
-        let cell = s.pad_cell(a.team, a.pos, s.wants_buddy(i));
+        let cell = s.pad_cell(a.team, a.pos);
         if cell.xz().distance(a.pos.xz()) < 2.0 {
-            return Haul { act: Act::Place(cell), done: only.is_some(), ..none };
+            return (None, Act::Place(cell), None);
         }
-        return Haul { goal: Some(cell.with_y(0.0)), ..none };
+        return (Some(cell.with_y(0.0)), Act::None, None);
     }
     let pad = PADS[a.team];
     let claimed = |id: u32| s.actors.iter().enumerate().any(|(j, b)| j != i && b.team == a.team && b.claim == Some(id));
-    let pick = match only {
-        Some(id) => s.free_crate(id).map(|c| (c.id, c.pos)),
-        None => s
-            .crates
-            .iter()
-            .filter(|c| c.state == CrateState::Free && c.kind == Kind::Normal && c.pos.y < 3.0)
-            .filter(|c| !pad_contains(pad, c.pos))
-            .filter(|c| leash.is_none_or(|l| c.pos.xz().distance(pad) <= l))
-            .filter(|c| !claimed(c.id))
-            .min_by(|x, y| x.pos.distance(a.pos).total_cmp(&y.pos.distance(a.pos)))
-            .map(|c| (c.id, c.pos)),
-    };
+    let pick = s
+        .crates
+        .iter()
+        .filter(|c| c.state == CrateState::Free && c.kind == Kind::Normal && c.pos.y < 3.0)
+        .filter(|c| !pad_contains(pad, c.pos) && !claimed(c.id))
+        .min_by(|x, y| x.pos.distance(a.pos).total_cmp(&y.pos.distance(a.pos)));
     match pick {
-        None => Haul { done: only.is_some(), idle: only.is_none(), ..none },
-        Some((id, at)) if at.xz().distance(a.pos.xz()) <= GRAB_REACH + HALF => {
-            Haul { act: Act::Grab(id), claim: Some(id), ..none }
-        }
-        Some((id, at)) => Haul { goal: Some(at.with_y(0.0)), claim: Some(id), ..none },
+        None => (None, Act::None, None),
+        Some(c) if c.pos.xz().distance(a.pos.xz()) <= GRAB_REACH + HALF => (None, Act::Grab(c.id), Some(c.id)),
+        Some(c) => (Some(c.pos.with_y(0.0)), Act::None, Some(c.id)),
     }
 }
 
 fn guard_post(s: &Sim, i: usize) -> Vec3 {
     let a = &s.actors[i];
     let pad = PADS[a.team];
-    let side = (a.spot as f32 - 1.0) * 1.6 + (a.slot as f32 - 1.0) * 0.5;
-    Vec3::new(pad.x + toward_centre(a.team) * 2.8, 0.0, pad.y + side)
+    Vec3::new(pad.x + toward_centre(a.team) * 2.8, 0.0, pad.y + (a.slot as f32 - 1.0) * 1.6)
 }
 
-fn ai_step(s: &mut Sim, i: usize, tune: &Tune, dt: f32) {
+/// A bot player: carry home, fight what's close, chase enemy carriers to steal back,
+/// otherwise haul (and steal). Guards the pad when there's nothing to haul.
+fn ai_step(s: &mut Sim, i: usize, dt: f32) {
     if !s.actors[i].alive() {
         return;
     }
-    let job = effective_job(s, i, tune);
-    let (pos, team, role) = (s.actors[i].pos, s.actors[i].team, s.actors[i].role);
+    let pos = s.actors[i].pos;
     let carrying = s.actors[i].carrying.is_some();
-    let leash = tune.f(P::Leash);
-    let mut goal: Option<Vec3> = None;
-    let mut target: Option<usize> = None;
-    let mut act = Act::None;
-    let mut claim = s.actors[i].claim;
-    let mut revert = false;
-
-    let haul = |s: &Sim, only: Option<u32>, leash: Option<f32>, goal: &mut Option<Vec3>, act: &mut Act, claim: &mut Option<u32>| {
-        let h = haul_plan(s, i, only, leash);
-        *goal = h.goal;
-        *act = h.act;
-        *claim = h.claim;
-        (h.done, h.idle)
+    let near = nearest_enemy(s, i, pos, 8.0);
+    let carrier = nearest_enemy(s, i, pos, 14.0).filter(|&e| s.actors[e].carrying.is_some());
+    let keep = s.actors[i].claim;
+    let (target, goal, act, claim) = match (carrying, near, carrier) {
+        (false, Some(e), _) => {
+            // Strafe while fighting.
+            let to = (s.actors[e].pos - pos).with_y(0.0).normalize_or_zero();
+            let side = Vec3::new(-to.z, 0.0, to.x) * (s.t * 0.7 + i as f32).sin().signum();
+            (Some(e), Some(pos + side * 2.0), Act::None, keep)
+        }
+        (false, None, Some(e)) => (Some(e), Some(s.actors[e].pos), Act::None, keep),
+        _ => {
+            let (goal, act, claim) = haul_plan(s, i);
+            let idle = goal.is_none() && matches!(act, Act::None);
+            (None, if idle { Some(guard_post(s, i)) } else { goal }, act, claim)
+        }
     };
-
-    match role {
-        Role::Leader => {
-            // Bot leader: haul, fight what's close, chase carriers to steal back.
-            if carrying {
-                haul(s, None, None, &mut goal, &mut act, &mut claim);
-            } else if let Some(e) = nearest_enemy(s, i, pos, 8.0) {
-                target = Some(e);
-                let to = (s.actors[e].pos - pos).with_y(0.0).normalize_or_zero();
-                let side = Vec3::new(-to.z, 0.0, to.x) * (s.t * 0.7 + i as f32).sin().signum();
-                goal = Some(pos + side * 2.0);
-            } else if let Some(e) = nearest_enemy(s, i, pos, 14.0).filter(|&e| s.actors[e].carrying.is_some()) {
-                target = Some(e);
-                goal = Some(s.actors[e].pos);
-            } else {
-                let (_, idle) = haul(s, None, None, &mut goal, &mut act, &mut claim);
-                if idle {
-                    goal = Some(guard_post(s, i));
-                }
-            }
-        }
-        _ => match job {
-            Job::Haul => {
-                let (_, idle) = haul(s, None, Some(leash), &mut goal, &mut act, &mut claim);
-                if idle {
-                    // Nothing in range: guard the pad meanwhile.
-                    goal = Some(guard_post(s, i));
-                    target = nearest_enemy(s, i, PADS[team].extend(0.0).xzy(), 10.0);
-                } else if !carrying {
-                    target = nearest_enemy(s, i, pos, 6.0);
-                }
-            }
-            Job::HaulThis(id) => {
-                let (done, _) = haul(s, Some(id), None, &mut goal, &mut act, &mut claim);
-                revert = done || s.actors[i].job_t > 20.0;
-            }
-            Job::Follow => {
-                let Role::Buddy(o) = role else { unreachable!() };
-                let l = &s.actors[o];
-                if carrying {
-                    haul(s, None, None, &mut goal, &mut act, &mut claim);
-                } else {
-                    let n = s.roster[2].max(1) as f32;
-                    let ang = PI + (s.actors[i].spot as f32 - (n - 1.0) / 2.0) * 0.8;
-                    let spot = l.pos + Quat::from_rotation_y(ang) * l.facing * 2.0;
-                    if spot.xz().distance(pos.xz()) > 0.6 {
-                        goal = Some(spot);
-                    }
-                    target = nearest_enemy(s, i, pos, 9.0);
-                }
-            }
-            Job::GuardPad => {
-                if carrying {
-                    haul(s, None, None, &mut goal, &mut act, &mut claim);
-                } else {
-                    goal = Some(guard_post(s, i));
-                    target = nearest_enemy(s, i, PADS[team].extend(0.0).xzy(), 10.0);
-                }
-            }
-            Job::Attack(e) => {
-                if !s.actors[e].alive() || s.actors[i].job_t > 15.0 || carrying {
-                    revert = true;
-                } else {
-                    let d = s.actors[e].pos.xz().distance(pos.xz());
-                    if d > 6.0 {
-                        goal = Some(s.actors[e].pos);
-                    }
-                    target = Some(e);
-                }
-            }
-            Job::Hold(p) => {
-                if s.actors[i].job_t > 20.0 {
-                    revert = true;
-                }
-                if p.xz().distance(pos.xz()) > 0.5 {
-                    goal = Some(p);
-                }
-                target = nearest_enemy(s, i, pos, 8.0);
-            }
-            Job::Default => {}
-        },
-    }
-    // Buddies stay on a leash to their leader while following or holding.
-    if let Role::Buddy(o) = role
-        && matches!(job, Job::Follow | Job::Hold(_))
-        && s.actors[o].alive()
-        && let Some(g) = goal
-    {
-        let l = s.actors[o].pos;
-        if g.xz().distance(l.xz()) > leash {
-            goal = Some(l + (g - l).with_y(0.0).normalize_or_zero() * leash);
-        }
-    }
-
-    let speed = MOVE_SPEED
-        * match role {
-            Role::Leader => 0.85,
-            Role::Buddy(_) => 0.9,
-            Role::Hauler => 0.8,
-        }
-        * if carrying { CARRY_SPEED } else { 1.0 };
+    let speed = MOVE_SPEED * 0.85 * if carrying { CARRY_SPEED } else { 1.0 };
     let spread = (s.rand() - 0.5) * 0.15;
     {
         let a = &mut s.actors[i];
         a.claim = claim;
-        if revert {
-            a.job = Job::Default;
-        }
         let want = match goal.map(|g| (g - a.pos).with_y(0.0)) {
             Some(v) if v.length() > 0.4 && a.stun <= 0.0 => v.normalize() * speed,
             _ => Vec3::ZERO,
@@ -1910,90 +1293,15 @@ fn ai_step(s: &mut Sim, i: usize, tune: &Tune, dt: f32) {
         let lead = ep + ev * (d / PROJ_SPEED);
         let dir = Quat::from_rotation_y(spread) * (lead - pos).with_y(0.0).normalize_or_zero();
         s.actors[i].facing = dir;
-        let rate = match role {
-            Role::Leader => 2.0,
-            Role::Buddy(_) => 1.5,
-            Role::Hauler => 1.0,
-        };
         if !carrying && d < 12.0 && s.actors[i].fire_cd <= 0.0 && s.actors[i].stun <= 0.0 {
-            s.actors[i].fire_cd = 1.0 / rate;
-            fire(s, i, dir, 14.0, tune);
+            s.actors[i].fire_cd = 0.5;
+            fire(s, i, dir, 14.0);
         }
     }
     match act {
         Act::Grab(id) => s.take(i, id),
-        Act::Place(at) => {
-            s.place(i, at);
-            if matches!(s.actors[i].job, Job::HaulThis(_)) {
-                s.actors[i].job = Job::Default;
-            }
-        }
+        Act::Place(at) => s.place(i, at),
         Act::None => {}
-    }
-}
-
-/// Bot leaders set to "micro" re-order their squad every 2.5 s: attack a threat to the pad
-/// or to the leader, else send each buddy for a different crate anywhere (stealing included).
-fn bot_orders(s: &mut Sim, tune: &Tune) {
-    let delay = tune.delay();
-    let seat_bot = tune.c(P::Seat) == 1;
-    for l in 0..s.actors.len() {
-        let leader = &s.actors[l];
-        if leader.role != Role::Leader || !leader.alive() || (l == YOU && !seat_bot) || leader.think > 0.0 {
-            continue;
-        }
-        let team = leader.team;
-        if tune.c(if team == 0 { P::BlueBots } else { P::RedBots }) == 0 {
-            continue;
-        }
-        s.actors[l].think = 2.5;
-        let squad: Vec<usize> = s.squad(l).filter(|&j| s.actors[j].alive()).collect();
-        if squad.is_empty() {
-            continue;
-        }
-        let pad = PADS[team];
-        let lpos = s.actors[l].pos;
-        let threat = (0..s.actors.len())
-            .filter(|&j| s.actors[j].team != team && s.actors[j].alive())
-            .filter(|&j| {
-                let e = &s.actors[j];
-                (e.carrying.is_some() && e.pos.xz().distance(pad) < 12.0) || e.pos.xz().distance(lpos.xz()) < 7.0
-            })
-            .min_by(|&x, &y| s.actors[x].pos.xz().distance(pad).total_cmp(&s.actors[y].pos.xz().distance(pad)));
-        let mut taken: Vec<u32> = s.actors.iter().filter(|a| a.team == team).filter_map(|a| a.claim).collect();
-        for b in squad {
-            if s.actors[b].carrying.is_some() || s.orders.iter().any(|o| o.1 == b) {
-                continue;
-            }
-            let job = match threat {
-                Some(e) => Job::Attack(e),
-                None => {
-                    if let Job::HaulThis(id) = s.actors[b].job
-                        && s.free_crate(id).is_some()
-                    {
-                        continue;
-                    }
-                    let bp = s.actors[b].pos;
-                    let pick = s
-                        .crates
-                        .iter()
-                        .filter(|c| c.state == CrateState::Free && c.kind == Kind::Normal && c.pos.y < 3.0)
-                        .filter(|c| !pad_contains(pad, c.pos) && !taken.contains(&c.id))
-                        .min_by(|x, y| x.pos.distance(bp).total_cmp(&y.pos.distance(bp)))
-                        .map(|c| c.id);
-                    match pick {
-                        Some(id) => {
-                            taken.push(id);
-                            Job::HaulThis(id)
-                        }
-                        None => Job::Default,
-                    }
-                }
-            };
-            if s.actors[b].job != job {
-                s.order(b, job, delay);
-            }
-        }
     }
 }
 
@@ -2144,7 +1452,6 @@ fn shots_step(s: &mut Sim, dt: f32) {
     for sh in &mut s.shots {
         sh.pos += sh.vel * dt;
         sh.life -= dt;
-        // Hitboxes don't scale with the buddy look: it's readability only.
         let hit = s.actors.iter().position(|a| {
             a.team != sh.team
                 && a.alive()
@@ -2166,43 +1473,6 @@ fn shots_step(s: &mut Sim, dt: f32) {
             s.hits += 1;
         }
         s.hurt(who, dmg, dir * 1.5, owner, team);
-    }
-}
-
-/// Team Buddies' rule: a 2-high stack resting on your pad pops into a buddy for the leader
-/// whose side set the top crate, if their squad is under the cap. A stack at the cap stays
-/// a stack (and still scores). PLACEHOLDER shape: the real build grammar is #17.
-fn build_buddies(s: &mut Sim, tune: &Tune) {
-    if !s.built_squads {
-        return;
-    }
-    let on_grid = |p: Vec3| (p.xz() / CRATE - (p.xz() / CRATE).round()).length() < 0.05;
-    let resting = |c: &Crate| c.state == CrateState::Free && c.kind == Kind::Normal && c.vel.length() < 0.1 && on_grid(c.pos);
-    for team in 0..2 {
-        let found = s.crates.iter().filter(|c| resting(c) && pad_contains(PADS[team], c.pos)).find_map(|top| {
-            if (top.pos.y - CRATE * 1.5).abs() > 0.05 {
-                return None;
-            }
-            let leader = top.placed_by.filter(|&l| s.actors[l].team == team)?;
-            if s.squad(leader).filter(|&j| s.actors[j].alive()).count() >= s.roster[2] {
-                return None;
-            }
-            let bottom = s
-                .crates
-                .iter()
-                .find(|c| resting(c) && (c.pos.y - HALF).abs() < 0.05 && c.pos.xz().distance(top.pos.xz()) < 0.1)?;
-            Some((top.id, bottom.id, leader, top.pos.with_y(0.0)))
-        });
-        let Some((a, b, leader, at)) = found else { continue };
-        s.crates.retain(|c| {
-            let used = c.id == a || c.id == b;
-            if used { s.despawn.extend(c.ent); }
-            !used
-        });
-        s.banked[team] += 2;
-        s.add_buddy(leader, at, tune.f(P::BuddyHp));
-        let who = if leader == YOU { "you".to_string() } else { s.describe(leader) };
-        s.say(format!("2-high stack: a new buddy for {who}"));
     }
 }
 
@@ -2280,7 +1550,7 @@ fn refill(s: &mut Sim, dt: f32) {
         .filter(|c| c.kind == Kind::Normal)
         .filter(|c| c.state != CrateState::Free || !(pad_contains(PADS[0], c.pos) || pad_contains(PADS[1], c.pos)))
         .count();
-    if loose < 3 + 2 * s.roster[1] {
+    if loose < 3 + 2 * s.team_size {
         let x = -7.0 + s.rand() * 14.0;
         let z = -9.0 + s.rand() * 18.0;
         s.spawn_crate(Kind::Normal, Vec3::new(x, 10.0, z));
@@ -2292,145 +1562,6 @@ fn refill(s: &mut Sim, dt: f32) {
             let z = -7.0 + s.rand() * 14.0;
             s.spawn_crate(Kind::Loot, Vec3::new(x, 10.0, z));
             s.loot_respawn = 6.0;
-        }
-    }
-}
-
-// ---------------------------------------------------------------------------------------
-// Readability test: freeze-frame, highlight a unit, click its owner
-// ---------------------------------------------------------------------------------------
-
-#[derive(Resource, Default)]
-struct ReadTest {
-    on: bool,
-    /// 0 = playing between questions, 1 = asking (frozen), 2 = showing the answer (frozen).
-    phase: u8,
-    timer: f32,
-    target: Option<usize>,
-    asked: f32,
-    answers: Vec<(bool, f32)>,
-    right: bool,
-    answer_at: Vec3,
-    auto_started: bool,
-}
-
-fn read_test(
-    time: Res<Time>,
-    keys: Res<ButtonInput<KeyCode>>,
-    mouse: Res<ButtonInput<MouseButton>>,
-    window: Single<&Window>,
-    camera: Single<(&Camera, &GlobalTransform), With<MainCamera>>,
-    tune: Res<Tune>,
-    mut sim: ResMut<Sim>,
-    mut rt: ResMut<ReadTest>,
-) {
-    let now = time.elapsed_secs();
-    let auto = std::env::var("SQUAD_READTEST").is_ok() && !rt.auto_started && now > 3.0;
-    if keys.just_pressed(KeyCode::KeyT) || auto {
-        let was_on = rt.on;
-        *rt = ReadTest { auto_started: true, ..default() };
-        sim.frozen = false;
-        if was_on {
-            sim.say("readability test stopped");
-            return;
-        }
-        rt.on = true;
-        rt.timer = now;
-    }
-    if !rt.on {
-        return;
-    }
-    let (cam, cam_tf) = *camera;
-    match rt.phase {
-        0 => {
-            sim.frozen = false;
-            if now < rt.timer {
-                return;
-            }
-            // Any unit but you that's alive and on screen; two times in three, an AI one.
-            let size = window.size();
-            let on_screen = |i: usize| {
-                cam.world_to_viewport(cam_tf, shown_at(&sim, i, &tune) + Vec3::Y)
-                    .is_ok_and(|p| p.x > 60.0 && p.y > 60.0 && p.x < size.x - 60.0 && p.y < size.y - 60.0)
-            };
-            let seat_bot = tune.c(P::Seat) == 1;
-            let cands: Vec<usize> = (0..sim.actors.len())
-                .filter(|&i| (i != YOU || seat_bot) && sim.actors[i].alive() && on_screen(i))
-                .collect();
-            let ai: Vec<usize> = cands.iter().copied().filter(|&i| sim.actors[i].is_ai()).collect();
-            let pool = if !ai.is_empty() && sim.rand() < 0.67 { ai } else { cands };
-            if pool.is_empty() {
-                rt.timer = now + 0.5;
-                return;
-            }
-            let k = ((sim.rand() * pool.len() as f32) as usize).min(pool.len() - 1);
-            rt.target = Some(pool[k]);
-            rt.phase = 1;
-            rt.asked = now;
-            sim.frozen = true;
-        }
-        1 => {
-            let Some(t) = rt.target else { return };
-            if !mouse.just_pressed(MouseButton::Left) {
-                return;
-            }
-            let Some(p) = window
-                .cursor_position()
-                .and_then(|c| cam.viewport_to_world(cam_tf, c).ok())
-                .and_then(|ray| ray.intersect_plane(Vec3::Y, InfinitePlane3d::new(Vec3::Y)).map(|d| ray.get_point(d)))
-            else {
-                return;
-            };
-            let clicked = (0..sim.actors.len())
-                .filter(|&j| sim.actors[j].alive())
-                .map(|j| (j, shown_at(&sim, j, &tune).xz().distance(p.xz())))
-                .filter(|(_, d)| *d < 0.9)
-                .min_by(|x, y| x.1.total_cmp(&y.1))
-                .map(|(j, _)| j);
-            let tgt = &sim.actors[t];
-            let (right, at) = match tgt.role {
-                Role::Leader => (clicked == Some(t), shown_at(&sim, t, &tune)),
-                Role::Buddy(o) => (clicked == Some(o), shown_at(&sim, o, &tune)),
-                Role::Hauler => {
-                    let pad = PADS[tgt.team];
-                    (clicked.is_none() && pad_contains(pad, p.with_y(0.0)), pad.extend(0.0).xzy())
-                }
-            };
-            let took = now - rt.asked;
-            rt.answers.push((right, took));
-            rt.right = right;
-            rt.answer_at = at;
-            rt.phase = 2;
-            rt.timer = now + 1.2;
-            let what = sim.describe(t);
-            sim.say(format!("{} in {took:.2} s: it was {what}", if right { "RIGHT" } else { "WRONG" }));
-        }
-        _ => {
-            if now < rt.timer {
-                return;
-            }
-            sim.frozen = false;
-            if rt.answers.len() < READ_QUESTIONS {
-                rt.phase = 0;
-                rt.timer = now + 1.5;
-                return;
-            }
-            let n = rt.answers.len();
-            let right = rt.answers.iter().filter(|a| a.0).count();
-            let fast = rt.answers.iter().filter(|a| a.0 && a.1 < 1.0).count();
-            let mut times: Vec<f32> = rt.answers.iter().map(|a| a.1).collect();
-            times.sort_by(f32::total_cmp);
-            let median = times[n / 2];
-            let bodies = sim.actors.iter().filter(|a| !a.dead.is_infinite()).count();
-            let line = format!(
-                "readability: {right}/{n} right, {fast}/{n} right in under 1 s, median {median:.2} s | {} | {} ({bodies} bodies)",
-                looks_desc(&tune),
-                roster_desc(&tune),
-            );
-            println!("{line}");
-            sim.log.push(line);
-            sim.say(format!("readability: {right}/{n} right, {fast} under 1 s, median {median:.2} s"));
-            *rt = ReadTest { auto_started: true, ..default() };
         }
     }
 }
@@ -2451,11 +1582,8 @@ struct Looks {
     body: Handle<Mesh>,
     nose: Handle<Mesh>,
     band: Handle<Mesh>,
-    halo: Handle<Mesh>,
     team: [Handle<StandardMaterial>; 2],
-    hauler: [Handle<StandardMaterial>; 2],
-    owner: [Handle<StandardMaterial>; 4],
-    halo_mat: Handle<StandardMaterial>,
+    player: [Handle<StandardMaterial>; 8],
 }
 
 #[derive(Component)]
@@ -2489,10 +1617,6 @@ fn setup(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, mut mats: Res
             Transform::from_xyz(pad.x, 0.01, pad.y),
         ));
     }
-    let dark = |c: Color| {
-        let l = c.to_linear();
-        Color::linear_rgb(l.red * 0.35, l.green * 0.35, l.blue * 0.35)
-    };
     commands.insert_resource(Looks {
         crate_mesh: meshes.add(Cuboid::from_length(CRATE)),
         normal: mats.add(Color::srgb(0.75, 0.6, 0.35)),
@@ -2507,11 +1631,8 @@ fn setup(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, mut mats: Res
         body: meshes.add(Capsule3d::new(ACTOR_R, 1.0)),
         nose: meshes.add(Cuboid::new(0.25, 0.25, 0.4)),
         band: meshes.add(Cylinder::new(ACTOR_R + 0.06, 0.22)),
-        halo: meshes.add(Torus::new(0.3, 0.42)),
         team: TEAM_COLOR.map(|c| mats.add(c)),
-        hauler: TEAM_COLOR.map(|c| mats.add(dark(c))),
-        owner: OWNER_COLOR.map(|c| mats.add(StandardMaterial { base_color: c, emissive: c.to_linear() * 0.4, ..default() })),
-        halo_mat: mats.add(StandardMaterial { base_color: Color::WHITE, emissive: LinearRgba::rgb(2.0, 2.0, 2.0), ..default() }),
+        player: PLAYER_COLOR.map(|c| mats.add(StandardMaterial { base_color: c, emissive: c.to_linear() * 0.4, ..default() })),
     });
     commands.spawn((
         Hud,
@@ -2553,19 +1674,6 @@ fn sync_views(
     for e in sim.despawn.drain(..) {
         commands.entity(e).despawn();
     }
-    // Rebuild every unit's body when the look changes.
-    let band = tune.c(P::OwnerBand) == 1;
-    let halo = tune.c(P::HumanHalo) == 1;
-    let scale = tune.f(P::BuddyScale);
-    let key = band as u64 | (halo as u64) << 1 | ((scale * 100.0) as u64) << 2;
-    if key != sim.view_key {
-        sim.view_key = key;
-        for a in &mut sim.actors {
-            if let Some(e) = a.ent.take() {
-                commands.entity(e).despawn();
-            }
-        }
-    }
     let shown_pos: Vec<Vec3> = (0..sim.actors.len()).map(|i| shown_at(&sim, i, &tune)).collect();
     for (i, a) in sim.actors.iter_mut().enumerate() {
         let rot = Transform::IDENTITY.looking_to(a.facing, Vec3::Y).rotation;
@@ -2578,28 +1686,19 @@ fn sync_views(
                 }
             }
             None => {
-                let s = if a.is_ai() { scale } else { 1.0 };
-                let body = if a.role == Role::Hauler { looks.hauler[a.team].clone() } else { looks.team[a.team].clone() };
-                let owner = looks.owner[a.slot % 4].clone();
-                let (bm, nm, band_m, halo_m, halo_mat) =
-                    (looks.body.clone(), looks.nose.clone(), looks.band.clone(), looks.halo.clone(), looks.halo_mat.clone());
-                let with_band = band && a.role != Role::Hauler;
-                let with_halo = halo && a.role == Role::Leader;
+                let body = looks.team[a.team].clone();
+                let band = looks.player[a.slot % PLAYER_COLOR.len()].clone();
+                let (bm, nm, band_m) = (looks.body.clone(), looks.nose.clone(), looks.band.clone());
                 a.ent = Some(
                     commands
                         .spawn((
-                            Transform::from_translation(shown_pos[i]).with_rotation(rot).with_scale(Vec3::splat(s)),
+                            Transform::from_translation(shown_pos[i]).with_rotation(rot),
                             Visibility::default(),
                         ))
                         .with_children(|p| {
                             p.spawn((Mesh3d(bm), MeshMaterial3d(body.clone()), Transform::from_xyz(0.0, 0.95, 0.0)));
                             p.spawn((Mesh3d(nm), MeshMaterial3d(body), Transform::from_xyz(0.0, 1.3, -0.5)));
-                            if with_band {
-                                p.spawn((Mesh3d(band_m), MeshMaterial3d(owner), Transform::from_xyz(0.0, 1.0, 0.0)));
-                            }
-                            if with_halo {
-                                p.spawn((Mesh3d(halo_m), MeshMaterial3d(halo_mat), Transform::from_xyz(0.0, 2.95, 0.0)));
-                            }
+                            p.spawn((Mesh3d(band_m), MeshMaterial3d(band), Transform::from_xyz(0.0, 1.0, 0.0)));
                         })
                         .id(),
                 );
@@ -2682,7 +1781,7 @@ fn ground_circle(p: Vec3) -> Isometry3d {
     Isometry3d::new(p, Quat::from_rotation_x(FRAC_PI_2))
 }
 
-fn draw_gizmos(mut g: Gizmos, sim: Res<Sim>, tune: Res<Tune>, controls: Res<Controls>, rt: Res<ReadTest>, time: Res<Time>) {
+fn draw_gizmos(mut g: Gizmos, sim: Res<Sim>, tune: Res<Tune>, controls: Res<Controls>) {
     let you_play = tune.c(P::Seat) == 0;
     let a = &sim.actors[YOU];
     let pos_of = |i: usize| shown_at(&sim, i, &tune);
@@ -2735,14 +1834,6 @@ fn draw_gizmos(mut g: Gizmos, sim: Res<Sim>, tune: Res<Tune>, controls: Res<Cont
             let color = if plan.short { Color::srgb(1.0, 0.4, 0.2) } else { Color::srgb(0.4, 1.0, 0.4) };
             g.linestrip(plan.path.iter().copied(), color);
         }
-        // Context order: a ring at the reticle that fills while held (full = whole squad).
-        if tune.c(P::Orders) == 1
-            && let (Some(t0), Some(p)) = (controls.order_down, controls.aim_point)
-        {
-            let held = ((time.elapsed_secs() - t0) / 0.3).min(1.0);
-            let color = if held >= 1.0 { OWNER_COLOR[0] } else { Color::WHITE };
-            g.circle(ground_circle(p.with_y(0.05)), 0.4 + 0.6 * held, color);
-        }
     }
     let kt = KICK_TIME;
     for c in sim.crates.iter().filter(|c| c.kind == Kind::Loot && c.kick > 0.0) {
@@ -2755,58 +1846,10 @@ fn draw_gizmos(mut g: Gizmos, sim: Res<Sim>, tune: Res<Tune>, controls: Res<Cont
             Color::WHITE,
         );
     }
-    let tethers = tune.c(P::Tethers);
-    let lines = tune.c(P::OrderLines) == 1;
-    for (i, b) in sim.actors.iter().enumerate().filter(|(_, b)| b.alive()) {
-        let at = pos_of(i);
-        let owner_c = OWNER_COLOR[b.slot % 4];
-        // Damage shows as a bar over the head.
-        if b.hp < b.max_hp {
-            let s = if b.is_ai() { tune.f(P::BuddyScale) } else { 1.0 };
-            let top = at + Vec3::Y * (2.2 * s + 0.3) - Vec3::X * 0.4;
-            g.line(top, top + Vec3::X * 0.8 * (b.hp / b.max_hp).max(0.0), Color::srgb(0.2, 1.0, 0.2));
-        }
-        // Order tell, seen by everyone: a pip pops over the head when an order lands.
-        if b.told > 0.0 {
-            let s = if b.is_ai() { tune.f(P::BuddyScale) } else { 1.0 };
-            g.sphere(Isometry3d::from_translation(at + Vec3::Y * (2.4 * s + 0.4)), 0.12 + 0.2 * b.told, owner_c);
-        }
-        let Role::Buddy(o) = b.role else { continue };
-        if tethers == 2 || (tethers == 1 && o == YOU) {
-            g.line(pos_of(o) + Vec3::Y * 0.2, at + Vec3::Y * 0.2, owner_c.with_alpha(0.45));
-        }
-        if lines && o == YOU && you_play {
-            let to = match b.job {
-                Job::HaulThis(id) => sim.crates.iter().find(|c| c.id == id).map(|c| c.pos),
-                Job::Attack(e) => Some(pos_of(e) + Vec3::Y),
-                Job::Hold(p) => {
-                    g.circle(ground_circle(p.with_y(0.05)), 0.5, owner_c);
-                    Some(p)
-                }
-                Job::GuardPad => Some(PADS[b.team].extend(0.0).xzy()),
-                _ => None,
-            };
-            if let Some(to) = to {
-                g.line(at + Vec3::Y, to, owner_c.with_alpha(0.7));
-            }
-        }
-    }
-    // Readability test: the highlighted unit, then the right answer.
-    if rt.on
-        && let Some(t) = rt.target
-        && rt.phase > 0
-    {
-        let at = pos_of(t);
-        let pulse = 0.9 + 0.15 * (time.elapsed_secs() * 8.0).sin();
-        let y = Color::srgb(1.0, 1.0, 0.0);
-        g.circle(ground_circle(at.with_y(0.05)), pulse, y);
-        g.circle(ground_circle(at.with_y(0.05)), pulse + 0.15, y);
-        g.line(at + Vec3::Y * 2.6, at + Vec3::Y * 5.0, y);
-        if rt.phase == 2 {
-            let c = if rt.right { Color::srgb(0.2, 1.0, 0.2) } else { Color::srgb(1.0, 0.2, 0.2) };
-            g.line(at + Vec3::Y, rt.answer_at + Vec3::Y, c);
-            g.circle(ground_circle(rt.answer_at.with_y(0.06)), 1.0, c);
-        }
+    // Damage shows as a bar over the head.
+    for (i, b) in sim.actors.iter().enumerate().filter(|(_, b)| b.alive() && b.hp < 100.0) {
+        let top = pos_of(i) + Vec3::Y * 2.5 - Vec3::X * 0.4;
+        g.line(top, top + Vec3::X * 0.8 * (b.hp / 100.0).max(0.0), Color::srgb(0.2, 1.0, 0.2));
     }
 }
 
@@ -2839,64 +1882,22 @@ fn hud(sim: Res<Sim>, tune: Res<Tune>, controls: Res<Controls>, mut hud: Single<
             s += &format!("throw reach: {:.1} m  (jump x{boost:.2})\n", THROW_DIST * boost);
         }
     }
-    let mine: Vec<String> = sim
-        .squad(YOU)
-        .map(|j| {
-            let b = &sim.actors[j];
-            if b.dead.is_infinite() {
-                "gone (build another)".to_string()
-            } else if !b.alive() {
-                "down".to_string()
-            } else {
-                let job = effective_job(&sim, j, &tune);
-                let label = if b.job == Job::Default { format!("{} (default)", job.label()) } else { job.label().to_string() };
-                if b.carrying.is_some() { format!("{label}, carrying") } else { label }
-            }
-        })
-        .collect();
-    let cap = sim.roster[2];
-    if sim.built_squads && cap > 0 {
-        let alive = sim.squad(YOU).filter(|&j| sim.actors[j].alive()).count();
-        s += &format!("squad {alive}/{cap}: set a crate on top of another on your pad (2-high stack) to build a buddy\n");
-    }
-    if mine.iter().any(|m| !m.starts_with("gone")) {
-        s += &format!("your squad: {}\n", mine.join(" | "));
-    }
-    let bodies = sim.actors.iter().filter(|a| !a.dead.is_infinite()).count();
+    let bodies = sim.actors.len();
     let moving = sim.crates.iter().filter(|c| c.state != CrateState::Free || c.vel.length() > 0.05).count();
     s += &format!(
-        "netcode: {bodies} networked bodies (budget ~32), {moving} moving crates (~20-30), predicted here: you + crates near you\n"
+        "netcode: {bodies} networked characters (budget ~32), {moving} moving crates (~20-30), predicted here: you + crates near you\n"
     );
     let acc = if sim.fired > 0 { 100.0 * sim.hits as f32 / sim.fired as f32 } else { 0.0 };
-    s += &format!("your shots {} hits {} ({acc:.0}%)   orders given {}\n", sim.fired, sim.hits, sim.orders_given);
+    s += &format!("your shots {} hits {} ({acc:.0}%)\n", sim.fired, sim.hits);
     for (m, _) in &sim.msgs {
         s += &format!("> {m}\n");
     }
     s += "\nWASD move  mouse aim  Space jump  E grab/place  RMB throw  LMB shoot  F kick\n";
-    s += match tune.c(P::Orders) {
-        0 => "orders: off",
-        1 => "orders: Q / LB at the reticle (enemy = attack, crate = haul, your pad = guard, ground = hold); tap = 1 buddy, hold = all.  G recall",
-        _ => "orders: Z follow  X haul  C guard pad  V attack/hold at reticle (pad: LB + D-pad).  G recall",
-    };
-    s += "\nT readability test  R reset  P print  H panel  N next comparison";
+    s += "R reset  P print  H panel  N next comparison";
     hud.0 = s;
 }
 
-fn guide_text(tune: Res<Tune>, rt: Res<ReadTest>, mut text: Single<&mut Text, (With<GuideText>, Without<Hud>, Without<Panel>)>) {
-    if rt.on {
-        let k = rt.answers.len();
-        text.0 = match rt.phase {
-            1 => format!(
-                "READABILITY {}/{READ_QUESTIONS}: who owns the YELLOW-ringed unit?\n\
-                 Click the unit itself if it's a human (leader), its leader if it's a buddy, \
-                 its pad if it's a hauler. Be quick: the clock is running.",
-                k + 1
-            ),
-            2 => format!("{} ({}/{READ_QUESTIONS})", if rt.right { "RIGHT" } else { "WRONG: the line shows the owner" }, k),
-            _ => format!("READABILITY test: playing a moment, then the next freeze-frame ({k}/{READ_QUESTIONS}). T stops."),
-        };
-        return;
-    }
+fn guide_text(tune: Res<Tune>, mut text: Single<&mut Text, (With<GuideText>, Without<Hud>, Without<Panel>)>) {
     let done = tune.settled.iter().filter(|s| **s).count();
     let total = COMPARISONS.len();
     text.0 = match &tune.guide {
@@ -2985,12 +1986,11 @@ fn main() {
         .insert_resource(tune)
         .insert_resource(sim)
         .init_resource::<Controls>()
-        .init_resource::<ReadTest>()
         .init_resource::<Smoke>()
         .add_systems(Startup, (setup, guide_from_env).chain())
         .add_systems(
             Update,
-            (read_controls, tune_input, read_test, step, sync_views, follow_camera, draw_gizmos, hud, guide_text, panel, smoke_exit)
+            (read_controls, tune_input, step, sync_views, follow_camera, draw_gizmos, hud, guide_text, panel, smoke_exit)
                 .chain(),
         )
         .run();
