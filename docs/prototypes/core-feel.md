@@ -91,5 +91,17 @@ each contested parameter below and picked a baseline.
 
 ## Verdict
 
-_To be filled in after play: the picked baseline (paste the P output) and one line per
-comparison._
+**Decided (2026-10-18), played by the human:**
+
+- **6e landing: curling** (slide + snap), not stick. Reading the slide is the skill: aim
+  short, lob vs. line drive, knock crates into place or off a pad. Played at slide keep 0.6,
+  friction 6 m/s², snap radius 0.3 m.
+- **6d jump throw power: peaks at jump apex**, not off or flat. Timing the throw at the top
+  of the jump adds reach, up to 1.5× at the apex.
+- Both build on what came before: aiming while carrying = the ghost, throws solved to the
+  touchdown, honest collision-aware preview, gamepad stick tilt = distance.
+- Verdict: "this is fun".
+
+**Still open:** every other comparison (1–5, 6, 6b, 6c, 6f, 7–13), including carry
+disarm, hit drops crate, hitscan vs. projectile, the fire rate/TTK target, kick-open time,
+grab latency masks and reach. The slide numbers (6f) are where they were played, not tuned.
