@@ -16,6 +16,13 @@ each contested parameter below and picked a baseline.
   grab or place a crate, RMB/RB to throw, LMB/RT to shoot, F/B to kick (tap a tan crate to
   punt it, hold on an orange crate to open it). Stack crates on the **blue pad**; the bot's
   pad is red.
+- **Placing:** while carrying, a cyan ghost cube shows where E/X will set the crate down,
+  about one step in front of you, in your aim direction. It snaps onto any crate or stack
+  under it (to build up) and otherwise onto a crate-sized grid that lines up with the pads
+  (to build out). The HUD shows your pad's crate count and tallest stack.
+- **No crafting here.** Stacks don't turn into anything yet. What stacking builds is the open
+  "crate economy grammar" question on the map, not part of #9. This prototype only tests
+  how carrying, placing and throwing feel.
 - **Tune live:** Up/Down (D-pad) picks a parameter, Left/Right changes it (Shift ×5).
 - **A/B:** there are two full parameter slots. Tab/Select swaps between them. The panel marks
   every parameter that differs between the slots with `*`. Set A to one variant, swap, set B

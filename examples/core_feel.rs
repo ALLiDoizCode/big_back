@@ -325,6 +325,35 @@ impl Sim {
         }
     }
 
+    /// Where a placed crate lands: snapped onto the nearest stack in front, otherwise onto
+    /// the crate-sized grid (which lines up with the pads). Returns the landing centre.
+    fn place_target(&self, who: usize) -> Vec3 {
+        let a = &self.actors[who];
+        let want = (a.pos + a.facing * 1.1).xz();
+        let free = || self.crates.iter().filter(|c| c.state == CrateState::Free);
+        let xz = free()
+            .map(|c| c.pos.xz())
+            .filter(|p| p.distance(want) < CRATE)
+            .min_by(|x, y| x.distance(want).total_cmp(&y.distance(want)))
+            .unwrap_or_else(|| (want / CRATE).round() * CRATE);
+        let top = free()
+            .filter(|c| (c.pos.x - xz.x).abs() < CRATE * 0.9 && (c.pos.z - xz.y).abs() < CRATE * 0.9)
+            .map(|c| c.pos.y + HALF)
+            .fold(0.0, f32::max);
+        Vec3::new(xz.x, top + HALF, xz.y)
+    }
+
+    fn place(&mut self, who: usize) {
+        let at = self.place_target(who);
+        let Some(id) = self.actors[who].carrying.take() else { return };
+        if let Some(c) = self.crate_mut(id) {
+            c.state = CrateState::Free;
+            c.pos = at;
+            c.vel = Vec3::ZERO;
+            c.thrown_by = None;
+        }
+    }
+
     fn take(&mut self, who: usize, id: u32) {
         let from = self.crate_mut(id).map(|c| c.pos).unwrap_or_default();
         if let Some(c) = self.crate_mut(id) {
@@ -480,10 +509,22 @@ fn autoplay(sim: &Sim, c: &mut Controls) {
         .crates
         .iter()
         .filter(|cr| cr.state == CrateState::Free && !pad_contains(PLAYER_PAD, cr.pos))
+        .filter(|cr| cr.kind == Kind::Normal || std::env::var("CORE_FEEL_AUTOPLAY").as_deref() != Ok("stack"))
         .min_by(|x, y| x.pos.distance(a.pos).total_cmp(&y.pos.distance(a.pos)));
     let to_bot = (sim.actors[BOT].pos - a.pos).with_y(0.0).normalize_or_zero();
     *c = Controls::default();
-    if a.carrying.is_some() {
+    if a.carrying.is_some() && std::env::var("CORE_FEEL_AUTOPLAY").as_deref() == Ok("stack") {
+        // Walk to a spot beside the pad centre, face it, and place.
+        let pad = Vec3::new(PLAYER_PAD.x, 0.0, PLAYER_PAD.y);
+        let stand = pad + Vec3::X * 1.1;
+        let to = (stand - a.pos).with_y(0.0);
+        c.aim = Some(-Vec3::X);
+        if to.length() > 0.2 {
+            c.mv = Vec2::new(to.x, -to.z).normalize_or_zero();
+        } else {
+            c.grab = edge;
+        }
+    } else if a.carrying.is_some() {
         c.aim = Some(to_bot);
         c.throw = edge && phase % 4 == 0;
         c.jump = edge && phase % 4 == 3;
@@ -491,8 +532,8 @@ fn autoplay(sim: &Sim, c: &mut Controls) {
         let to = (cr.pos - a.pos).with_y(0.0);
         c.mv = Vec2::new(to.x, -to.z).normalize_or_zero();
         c.aim = Some(to_bot);
-        c.grab = edge;
-        c.fire = true;
+        c.grab = edge && to.length() < 1.5;
+        c.fire = std::env::var("CORE_FEEL_AUTOPLAY").as_deref() != Ok("stack");
         c.kick_held = to.length() < 1.6;
         c.kick = c.kick_held && edge;
     }
@@ -638,8 +679,8 @@ fn player_step(s: &mut Sim, c: &Controls, tune: &Tune, dt: f32) {
 
     if c.grab {
         if carrying {
-            // Place: let go just in front, at head height, so it drops onto a stack.
-            s.release(PLAYER, Vec3::ZERO, facing * 0.9);
+            // Place: set it down on the ghost shown in front (snaps onto stacks).
+            s.place(PLAYER);
         } else if s.pending.is_none()
             && let Some((id, _)) = s.nearest_free(PLAYER, tune.f(P::GrabReach), Kind::Normal)
         {
@@ -1156,6 +1197,12 @@ fn draw_gizmos(mut g: Gizmos, sim: Res<Sim>, tune: Res<Tune>, controls: Res<Cont
             }
         }
     }
+    // Placement ghost: where E / X will set the carried crate down.
+    if a.carrying.is_some() {
+        let at = sim.place_target(PLAYER);
+        g.cube(Transform::from_translation(at).with_scale(Vec3::splat(CRATE)), Color::srgb(0.6, 1.0, 1.0));
+        g.line(a.pos + Vec3::Y * HEAD, at, Color::srgba(0.6, 1.0, 1.0, 0.4));
+    }
     // Throw arc preview.
     if a.carrying.is_some() && tune.c(P::ArcPreview) == 0 {
         let short = tune.c(P::ThrowStyle) == 1 && a.grounded;
@@ -1225,7 +1272,20 @@ fn hud(sim: Res<Sim>, tune: Res<Tune>, mut hud: Single<&mut Text, (With<Hud>, Wi
             None => String::new(),
         }
     );
-    s += &format!("your pad: {}   bot pad: {}\n", pad_count(PLAYER_PAD), pad_count(BOT_PAD));
+    let tallest = |pad: Vec2| {
+        sim.crates
+            .iter()
+            .filter(|c| c.state == CrateState::Free && pad_contains(pad, c.pos))
+            .map(|c| ((c.pos.y + HALF) / CRATE).round() as u32)
+            .max()
+            .unwrap_or(0)
+    };
+    s += &format!(
+        "your pad: {} crates, tallest stack {}   bot pad: {} crates\n",
+        pad_count(PLAYER_PAD),
+        tallest(PLAYER_PAD),
+        pad_count(BOT_PAD)
+    );
     s += &format!(
         "bot: {} hp {:.0}{}   last TTK: {}\n",
         ["dummy", "strafer", "hauler", "duelist"][tune.c(P::BotMode)],
@@ -1241,7 +1301,7 @@ fn hud(sim: Res<Sim>, tune: Res<Tune>, mut hud: Single<&mut Text, (With<Hud>, Wi
     for (m, _) in &sim.msgs {
         s += &format!("> {m}\n");
     }
-    s += "\nWASD/stick move  mouse/RS aim  Space/A jump  E/X grab-place  RMB/RB throw\n";
+    s += "\nWASD/stick move  mouse/RS aim  Space/A jump  E/X grab / place on ghost  RMB/RB throw\n";
     s += "LMB/RT shoot  F/B kick (hold on orange)  R/Start reset  P print slot  H panel";
     hud.0 = s;
 }
