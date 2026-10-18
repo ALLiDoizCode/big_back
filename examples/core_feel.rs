@@ -36,6 +36,8 @@ const BOT_PAD: Vec2 = Vec2::new(12.0, 0.0);
 const PAD_HALF: f32 = 2.0;
 const CAM_OFFSET: Vec3 = Vec3::new(0.0, 21.0, 14.0);
 const TURRET_H: f32 = 1.1;
+/// How far E / X can set a crate down on the aimed ghost.
+const PLACE_REACH: f32 = 1.6;
 const BOT_SPAWN: Vec3 = Vec3::new(5.0, 0.0, 0.0);
 const PLAYER_SPAWN: Vec3 = Vec3::new(-6.0, 0.0, 0.0);
 
@@ -351,9 +353,14 @@ impl Sim {
     /// Where a placed crate lands: the crate-sized grid cell in front (the grid lines up with
     /// the pads), on top of whatever is already in it. A loose, off-grid crate right under the
     /// target is stacked on instead. Returns the landing centre.
+    /// Where E / X sets a crate down: the cell about a step in front.
     fn place_target(&self, who: usize) -> Vec3 {
         let a = &self.actors[who];
-        let want = (a.pos + a.facing * 1.1).xz();
+        self.target_at((a.pos + a.facing * 1.1).xz())
+    }
+
+    /// The landing centre for a crate aimed at `want`: its grid cell, on top of whatever is in it.
+    fn target_at(&self, want: Vec2) -> Vec3 {
         let free = || self.crates.iter().filter(|c| c.state == CrateState::Free);
         let cell = (want / CRATE).round() * CRATE;
         let xz = free()
@@ -369,8 +376,7 @@ impl Sim {
         Vec3::new(xz.x, top + HALF, xz.y)
     }
 
-    fn place(&mut self, who: usize) {
-        let at = self.place_target(who);
+    fn place(&mut self, who: usize, at: Vec3) {
         let Some(id) = self.actors[who].carrying.take() else { return };
         if let Some(c) = self.crate_mut(id) {
             c.state = CrateState::Free;
@@ -436,24 +442,90 @@ fn pad_contains(pad: Vec2, p: Vec3) -> bool {
     (p.x - pad.x).abs() < PAD_HALF && (p.z - pad.y).abs() < PAD_HALF
 }
 
-/// Horizontal throw distance: to the reticle (capped at "throw distance") in aimed mode,
-/// otherwise always "throw distance". The release point sits 0.3 m in front of you.
-fn throw_dist(tune: &Tune, aim_dist: Option<f32>) -> f32 {
-    let max = tune.f(P::ThrowDist);
-    match (tune.c(P::ThrowAim), aim_dist) {
-        (0, Some(d)) => (d - 0.3).clamp(1.0, max),
-        _ => max,
-    }
+/// Launch velocity at `angle` that brings a crate's centre from `from` down to `to`:
+/// v^2 = g d^2 / (2 cos^2 θ (d tan θ + drop)).
+fn velocity_to(from: Vec3, to: Vec3, angle: f32) -> Vec3 {
+    let flat = (to - from).xz();
+    let d = flat.length().max(0.05);
+    let dir = (flat / d).extend(0.0).xzy();
+    let drop = from.y - to.y;
+    let denom = (d * angle.tan() + drop).max(0.05);
+    let speed = (G * d * d / (2.0 * angle.cos().powi(2) * denom)).sqrt();
+    dir * speed * angle.cos() + Vec3::Y * speed * angle.sin()
 }
 
-fn throw_velocity(dir: Vec3, tune: &Tune, aim_dist: Option<f32>) -> Vec3 {
+/// What a throw right now would do: release point, velocity, and (when aimed) the ghost it
+/// lands on. Used by both the throw and the arc preview so they always agree.
+struct ThrowPlan {
+    from: Vec3,
+    vel: Vec3,
+    target: Option<Vec3>,
+    short: bool,
+    /// The predicted flight, with the same collisions as the crate physics.
+    path: Vec<Vec3>,
+    /// Where the crate will really settle (it can clip a nearer stack and land on it).
+    landing: Vec3,
+}
+
+/// Flies a crate from `from` at `vel` against the resting crates and turrets, exactly like
+/// `crates_physics`, and returns its path and where it settles (snapped like a real landing).
+fn predict(s: &Sim, from: Vec3, vel: Vec3) -> (Vec<Vec3>, Vec3) {
+    let (mut p, mut v) = (from, vel);
+    let mut path = vec![p];
+    for _ in 0..240 {
+        let dt = 1.0 / 60.0;
+        v.y -= G * dt;
+        p += v * dt;
+        p.x = p.x.clamp(-ARENA.x + HALF, ARENA.x - HALF);
+        p.z = p.z.clamp(-ARENA.y + HALF, ARENA.y - HALF);
+        path.push(p);
+        let mut floor: f32 = 0.0;
+        if s.turrets.iter().any(|t| t.pos.xz().distance(p.xz()) < 1.1) && p.y > TURRET_H {
+            floor = TURRET_H;
+        }
+        for c in s.crates.iter().filter(|c| c.state == CrateState::Free) {
+            let overlap = (c.pos.x - p.x).abs() < CRATE * 0.9 && (c.pos.z - p.z).abs() < CRATE * 0.9;
+            if overlap && c.pos.y < p.y {
+                floor = floor.max(c.pos.y + HALF);
+            }
+        }
+        if p.y - HALF <= floor {
+            let cell = (p.xz() / CRATE).round() * CRATE;
+            let xz = if cell.distance(p.xz()) < 0.4 { cell } else { p.xz() };
+            return (path, Vec3::new(xz.x, floor + HALF, xz.y));
+        }
+    }
+    (path, p)
+}
+
+fn throw_plan(s: &Sim, tune: &Tune, aim_dist: Option<f32>) -> ThrowPlan {
+    let a = &s.actors[PLAYER];
+    if tune.c(P::ThrowStyle) == 1 && a.grounded {
+        // Jump-throw: on the ground you can only toss it a short way.
+        let from = a.pos + Vec3::Y * HEAD + a.facing * 0.5;
+        let vel = a.facing * 3.0 + Vec3::Y * 3.0;
+        let (path, landing) = predict(s, from, vel);
+        return ThrowPlan { from, vel, target: None, short: true, path, landing };
+    }
+    let from = a.pos + Vec3::Y * HEAD + a.facing * 0.3;
     let angle = tune.f(P::ThrowAngle).to_radians();
-    let d = throw_dist(tune, aim_dist);
-    // Lands a crate (centre at HALF) d metres out from head height, at the given angle:
-    // v^2 = g d^2 / (2 cos^2 θ (d tan θ + drop)).
-    let drop = HEAD - HALF;
-    let speed = (G * d * d / (2.0 * angle.cos().powi(2) * (d * angle.tan() + drop))).sqrt();
-    dir * speed * angle.cos() + Vec3::Y * speed * angle.sin()
+    let max = tune.f(P::ThrowDist);
+    match (tune.c(P::ThrowAim), aim_dist) {
+        (0, Some(d)) => {
+            // Aimed: the reticle is the ghost, snapped to a cell or stack; the throw lands on it.
+            let target = s.target_at((a.pos + a.facing * d.clamp(1.0, max)).xz());
+            let vel = velocity_to(from, target, angle);
+            let (path, landing) = predict(s, from, vel);
+            ThrowPlan { from, vel, target: Some(target), short: false, path, landing }
+        }
+        _ => {
+            // Fixed: always the full distance, and your run speed carries over.
+            let land = (from + a.facing * max).with_y(HALF);
+            let vel = velocity_to(from, land, angle) + a.vel.with_y(0.0);
+            let (path, landing) = predict(s, from, vel);
+            ThrowPlan { from, vel, target: None, short: false, path, landing }
+        }
+    }
 }
 
 /// Shot range: to the reticle in "to reticle" mode (mouse only), otherwise 30 m.
@@ -479,9 +551,9 @@ struct Controls {
     kick_held: bool,
     kick: bool,
     use_mouse: bool,
-    /// Where the mouse aims, for the reticle.
+    /// Where the mouse or stick aims, for the reticle.
     aim_point: Option<Vec3>,
-    /// Horizontal distance from the player to the reticle (mouse only).
+    /// Horizontal distance from the player to the reticle (mouse, or right-stick tilt).
     aim_dist: Option<f32>,
     source: &'static str,
 }
@@ -498,6 +570,7 @@ fn read_controls(
     window: Single<&Window>,
     camera: Single<(&Camera, &GlobalTransform), With<MainCamera>>,
     sim: Res<Sim>,
+    tune: Res<Tune>,
     mut c: ResMut<Controls>,
 ) {
     let mut mv = Vec2::ZERO;
@@ -515,12 +588,14 @@ fn read_controls(
         c.use_mouse = true;
     }
     let mut stick_aim = None;
+    let mut tilt = 0.0;
     for pad in &gamepads {
         let ls = pad.left_stick();
         if ls.length() > 0.15 { mv = ls; }
         let rs = pad.right_stick();
         if rs.length() > 0.3 {
             stick_aim = Some(Vec3::new(rs.x, 0.0, -rs.y).normalize());
+            tilt = ((rs.length() - 0.3) / 0.65).clamp(0.0, 1.0);
             c.use_mouse = false;
         }
         c.jump |= pad.just_pressed(GamepadButton::South);
@@ -538,7 +613,14 @@ fn read_controls(
     c.aim = stick_aim;
     c.aim_point = None;
     c.aim_dist = None;
-    c.source = if stick_aim.is_some() { "right stick" } else { "move direction (no aim input yet)" };
+    c.source = if stick_aim.is_some() { "right stick (tilt = distance)" } else { "move direction (no aim input yet)" };
+    if let Some(dir) = stick_aim {
+        // Tilt maps onto the reach of what you'd do: a throw while carrying, else a shot.
+        let max = if sim.actors[PLAYER].carrying.is_some() { tune.f(P::ThrowDist) } else { 30.0 };
+        let d = 1.0 + tilt * (max - 1.0);
+        c.aim_dist = Some(d);
+        c.aim_point = Some((sim.actors[PLAYER].pos + dir * d).with_y(CHEST));
+    }
     if c.use_mouse && stick_aim.is_none() {
         let (cam, cam_tf) = *camera;
         if let Some(cursor) = window.cursor_position()
@@ -566,8 +648,8 @@ fn autoplay(sim: &Sim, c: &mut Controls) {
     let target = sim
         .crates
         .iter()
-        .filter(|cr| cr.state == CrateState::Free && !pad_contains(PLAYER_PAD, cr.pos))
-        .filter(|cr| cr.kind == Kind::Normal || std::env::var("CORE_FEEL_AUTOPLAY").as_deref() != Ok("stack"))
+        .filter(|cr| cr.state == CrateState::Free && !pad_contains(PLAYER_PAD, cr.pos) && cr.vel.length() < 0.5)
+        .filter(|cr| cr.kind == Kind::Normal || !matches!(std::env::var("CORE_FEEL_AUTOPLAY").as_deref(), Ok("stack" | "throw")))
         .min_by(|x, y| x.pos.distance(a.pos).total_cmp(&y.pos.distance(a.pos)));
     let to_bot = (sim.actors[BOT].pos - a.pos).with_y(0.0).normalize_or_zero();
     *c = Controls::default();
@@ -588,6 +670,25 @@ fn autoplay(sim: &Sim, c: &mut Controls) {
         } else {
             c.grab = edge;
         }
+    } else if a.carrying.is_some() && std::env::var("CORE_FEEL_AUTOPLAY").as_deref() == Ok("throw") {
+        // Throw-place into the 2x2 cells from 6 m out, aiming exactly like a mouse would.
+        let placed = sim
+            .crates
+            .iter()
+            .filter(|cr| cr.state == CrateState::Free && pad_contains(PLAYER_PAD, cr.pos))
+            .count();
+        let cells = [(-12.8, 0.0), (-12.8, 0.8), (-12.0, 0.0), (-12.0, 0.8)];
+        let (x, z) = cells[placed % 4];
+        let stand = Vec3::new(-6.0, 0.0, 0.4);
+        let to = (stand - a.pos).with_y(0.0);
+        if to.length() > 0.2 {
+            c.mv = Vec2::new(to.x, -to.z).normalize_or_zero();
+        } else {
+            let at = Vec3::new(x, 0.0, z) - a.pos.with_y(0.0);
+            c.aim = Some(at.normalize());
+            c.aim_dist = Some(at.length());
+            c.throw = edge && phase % 2 == 0;
+        }
     } else if a.carrying.is_some() {
         c.aim = Some(to_bot);
         c.throw = edge && phase % 4 == 0;
@@ -597,7 +698,7 @@ fn autoplay(sim: &Sim, c: &mut Controls) {
         c.mv = Vec2::new(to.x, -to.z).normalize_or_zero();
         c.aim = Some(to_bot);
         c.grab = edge && to.length() < 1.5;
-        c.fire = std::env::var("CORE_FEEL_AUTOPLAY").as_deref() != Ok("stack");
+        c.fire = !matches!(std::env::var("CORE_FEEL_AUTOPLAY").as_deref(), Ok("stack" | "throw"));
         c.kick_held = to.length() < 1.6;
         c.kick = c.kick_held && edge;
     }
@@ -744,8 +845,14 @@ fn player_step(s: &mut Sim, c: &Controls, tune: &Tune, dt: f32) {
 
     if c.grab {
         if carrying {
-            // Place: set it down on the ghost shown in front (snaps onto stacks).
-            s.place(PLAYER);
+            // Place on the aimed ghost if it's within arm's length, else on the cell in front.
+            let plan = throw_plan(s, tune, c.aim_dist);
+            let pos = s.actors[PLAYER].pos;
+            let at = match plan.target {
+                Some(t) if t.xz().distance(pos.xz()) <= PLACE_REACH => t,
+                _ => s.place_target(PLAYER),
+            };
+            s.place(PLAYER, at);
         } else if s.pending.is_none()
             && let Some((id, _)) = s.nearest_free(PLAYER, tune.f(P::GrabReach), Kind::Normal)
         {
@@ -760,16 +867,9 @@ fn player_step(s: &mut Sim, c: &Controls, tune: &Tune, dt: f32) {
     }
 
     if c.throw && carrying {
-        let a = &s.actors[PLAYER];
-        let jump_mode = tune.c(P::ThrowStyle) == 1;
-        if jump_mode && a.grounded {
-            // Jump-throw: on the ground you can only toss it a short way.
-            s.release(PLAYER, facing * 3.0 + Vec3::Y * 3.0, facing * 0.5);
-        } else {
-            let aimed = tune.c(P::ThrowAim) == 0 && c.aim_dist.is_some();
-            let inherit = if aimed { Vec3::ZERO } else { a.vel.with_y(0.0) };
-            s.release(PLAYER, throw_velocity(facing, tune, c.aim_dist) + inherit, facing * 0.3);
-        }
+        let plan = throw_plan(s, tune, c.aim_dist);
+        let head = s.actors[PLAYER].pos + Vec3::Y * HEAD;
+        s.release(PLAYER, plan.vel, plan.from - head);
     }
 
     if c.fire && s.actors[PLAYER].fire_cd <= 0.0 {
@@ -999,6 +1099,14 @@ fn crates_physics(s: &mut Sim, tune: &Tune, dt: f32) {
                         // A heavy box lands with a thud, not a skid, so throws stop near the reticle.
                         c.vel.x *= 0.15;
                         c.vel.z *= 0.15;
+                        // Close enough to a cell? Settle into it, so throws can build stacks.
+                        let cell = (c.pos.xz() / CRATE).round() * CRATE;
+                        if cell.distance(c.pos.xz()) < 0.4 {
+                            c.pos.x = cell.x;
+                            c.pos.z = cell.y;
+                            c.vel.x = 0.0;
+                            c.vel.z = 0.0;
+                        }
                     }
                     c.vel.y = if c.vel.y < -6.0 { -c.vel.y * 0.25 } else { 0.0 };
                     let f = (-dt * 8.0).exp();
@@ -1337,7 +1445,11 @@ fn draw_gizmos(mut g: Gizmos, sim: Res<Sim>, tune: Res<Tune>, controls: Res<Cont
     let chest = a.pos + Vec3::Y * CHEST;
     // Aim line, plus a reticle where the mouse points (at chest height, where shots fly).
     g.line(chest, chest + a.facing * 8.0, Color::srgba(1.0, 1.0, 1.0, 0.5));
-    if let Some(p) = controls.aim_point {
+    let plan = a.carrying.map(|_| throw_plan(&sim, &tune, controls.aim_dist));
+    let ghost_is_aim = plan.as_ref().is_some_and(|p| p.target.is_some());
+    if let Some(p) = controls.aim_point
+        && !ghost_is_aim
+    {
         g.circle(ground_circle(p), 0.35, Color::srgb(1.0, 0.3, 0.3));
         g.circle(ground_circle(p.with_y(0.03)), 0.35, Color::srgba(1.0, 0.3, 0.3, 0.4));
         g.line(p.with_y(0.03), p, Color::srgba(1.0, 0.3, 0.3, 0.4));
@@ -1368,35 +1480,36 @@ fn draw_gizmos(mut g: Gizmos, sim: Res<Sim>, tune: Res<Tune>, controls: Res<Cont
             }
         }
     }
-    // Placement ghost: where E / X will set the carried crate down.
-    if a.carrying.is_some() {
-        let at = sim.place_target(PLAYER);
-        g.cube(Transform::from_translation(at).with_scale(Vec3::splat(CRATE)), Color::srgb(0.6, 1.0, 1.0));
-        g.line(a.pos + Vec3::Y * HEAD, at, Color::srgba(0.6, 1.0, 1.0, 0.4));
+    // Ghosts. Aimed: the bright ghost is where a throw lands (and where E places, if in
+    // reach). A faint ghost shows the cell in front that E uses when the aim is farther.
+    if let Some(plan) = &plan {
+        let ghost = |g: &mut Gizmos, at: Vec3, color: Color| {
+            g.cube(Transform::from_translation(at).with_scale(Vec3::splat(CRATE)), color);
+        };
+        let near = sim.place_target(PLAYER);
+        match plan.target {
+            Some(t) => {
+                let land = plan.landing;
+                ghost(&mut g, land, Color::srgb(0.6, 1.0, 1.0));
+                g.circle(ground_circle(land.with_y(0.03)), 0.55, Color::srgb(0.6, 1.0, 1.0));
+                if land.distance(t) > 0.1 {
+                    // Blocked: the arc clips something first. Raise the angle or move.
+                    ghost(&mut g, t, Color::srgba(1.0, 0.55, 0.1, 0.7));
+                }
+                if t.xz().distance(a.pos.xz()) > PLACE_REACH {
+                    ghost(&mut g, near, Color::srgba(0.6, 1.0, 1.0, 0.25));
+                }
+            }
+            None => ghost(&mut g, near, Color::srgb(0.6, 1.0, 1.0)),
+        }
     }
     // Throw arc preview.
-    if a.carrying.is_some() && tune.c(P::ArcPreview) == 0 {
-        let short = tune.c(P::ThrowStyle) == 1 && a.grounded;
-        let (mut p, mut v) = if short {
-            (a.pos + Vec3::Y * HEAD + a.facing * 0.5, a.facing * 3.0 + Vec3::Y * 3.0)
-        } else {
-            let aimed = tune.c(P::ThrowAim) == 0 && controls.aim_dist.is_some();
-            let inherit = if aimed { Vec3::ZERO } else { a.vel.with_y(0.0) };
-            (a.pos + Vec3::Y * HEAD + a.facing * 0.3, throw_velocity(a.facing, &tune, controls.aim_dist) + inherit)
-        };
-        let color = if short { Color::srgb(1.0, 0.4, 0.2) } else { Color::srgb(0.4, 1.0, 0.4) };
-        for _ in 0..80 {
-            let dt = 1.0 / 60.0;
-            let nv = v - Vec3::Y * G * dt;
-            let np = p + nv * dt;
-            g.line(p, np, color);
-            p = np;
-            v = nv;
-            if p.y < HALF {
-                g.circle(ground_circle(p.with_y(0.03)), HALF, color);
-                break;
-            }
-        }
+    if let Some(plan) = &plan
+        && tune.c(P::ArcPreview) == 0
+    {
+        let color = if plan.short { Color::srgb(1.0, 0.4, 0.2) } else { Color::srgb(0.4, 1.0, 0.4) };
+        g.linestrip(plan.path.iter().copied(), color);
+        g.circle(ground_circle(plan.landing.with_y(plan.landing.y - HALF + 0.03)), HALF, color);
     }
     // Kick-open progress on loot crates.
     let kt = tune.f(P::KickTime).max(0.01);

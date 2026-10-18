@@ -16,10 +16,19 @@ each contested parameter below and picked a baseline.
   grab or place a crate, RMB/RB to throw, LMB/RT to shoot, F/B to kick (tap a tan crate to
   punt it, hold on an orange crate to open it). Stack crates on the **blue pad**; the bot's
   pad is red.
-- **Placing:** while carrying, a cyan ghost cube shows where E/X will set the crate down,
-  about one step in front of you, in your aim direction. It snaps onto any crate or stack
-  under it (to build up) and otherwise onto a crate-sized grid that lines up with the pads
-  (to build out). The HUD shows your pad's crate count and tallest stack.
+- **Aiming while carrying = the ghost.** With "throw aim: to reticle", the reticle becomes a
+  cyan ghost cube, snapped to a crate-sized grid cell (the grid lines up with the pads) or on
+  top of the stack in that cell. The throw is solved to land exactly on it, and a crate that
+  lands near a cell settles into it, so you can **build stacks and 2×2s by throwing**. The
+  ghost is honest: the arc preview runs the same collisions as the game, so if the arc would
+  clip a nearer stack, the cyan ghost moves to where the crate will really land and the cell
+  you aimed at turns **orange**. Raise the throw angle, move, or fill the far cells first.
+  That's the skill.
+- **Placing by hand:** E/X sets the crate on the ghost if it's within arm's length (1.6 m),
+  otherwise on the cell a step in front, shown as a faint ghost.
+- **Gamepad aim distance:** right-stick tilt sets the reticle distance. Full tilt reaches
+  "throw distance" while carrying and 30 m otherwise.
+- The HUD shows your pad's crate count and tallest stack.
 - **Placeholder craft:** four crates on your pad in a 2×2 block, on the same level, merge into
   a **turret**. It shoots the bot within 14 m (so it guards your pad against the hauler) and
   expires after 40 s. Build it by placing crates side by side: aim at the empty cell next to
@@ -45,7 +54,8 @@ each contested parameter below and picked a baseline.
 | 4 | **hit drops crate**: yes vs no | bot: duelist, then hauler | Is one hit enough to knock a crate loose? With "yes", shoot the hauler to steal back. Chaotic or readable? |
 | 5 | **throw style**: ground throw vs jump-throw | anything | Jump-throw (Team Buddies) means a grounded throw is only a short toss, so a full throw takes a jump first. Is that extra input skill expression or friction? |
 | 6 | **throw angle / distance**: 25°/7 m vs 45°/12 m | arc preview on, then off | Lob vs. line drive. Can you land a crate on your pad from mid-field? Should a throw reach across the map? Try with the preview off to see whether it's needed. |
-| 6b | **throw aim**: to reticle vs fixed distance | mouse, arc preview on | To reticle: the crate lands where the mouse points, up to "throw distance" (the max). Fixed: every throw flies the full distance in the aimed direction (Team Buddies style), and your run speed carries over. Precision vs. a learnable fixed arc. On a gamepad the stick only gives direction, so throws are always fixed. Does that gap matter? |
+| 6b | **throw aim**: to reticle vs fixed distance | mouse, arc preview on | To reticle: the crate lands where the mouse points, up to "throw distance" (the max). Fixed: every throw flies the full distance in the aimed direction (Team Buddies style), and your run speed carries over. Precision vs. a learnable fixed arc. On a gamepad, stick tilt sets the distance. Is tilt precise enough to hit a cell? |
+| 6c | **throw-building**: build a 2×2 by throwing from 6+ m, at throw angle 35° vs 60° | bot: hauler, placeholder craft on | Does throwing into cells feel like a skill worth learning (watch for orange "blocked" ghosts and the fill order), or is it fiddly? Does a high lob make it too easy? |
 | 7 | **weapon**: hitscan vs projectile (30 m/s, then 14 m/s) | bot: strafer | Lag compensation covers ray casts only. Do slow, visible projectiles that can be dodged feel good enough to give up hitscan? Compare the TTK and accuracy readouts. |
 | 8 | **fire rate / shots to kill**: 5/s and 8 vs 3/s and 4 | bot: strafer | Spray vs. deliberate. Target TTK around 1.5–3 s? |
 | 8b | **shot range**: to reticle vs full 30 m | bot: strafer, both weapons | To reticle: shots stop at the mouse, so you must put the reticle on or past the target. Range becomes a skill, and you can avoid hitting things beyond. Full: shots fly 30 m whatever the distance. Gamepad aim is always full range. |
