@@ -49,9 +49,15 @@ Others join from the pad, Team Buddies style:
 
 The other recipe results (turret, health) are placeholders for #17.
 
-## Still open: team size
+## Verdict on team size
 
-It's resolved when you pick the team-size range.
+**3v3, for now** (2026-10-18; human: "lets stick with 3v3 for now"): up to 3 players a team,
+in a 36 × 22 m arena. It's easy to change. Keys 1–4 still switch sizes below.
+
+**#10 is resolved.** The decisions are on main in [#19](https://github.com/ALLiDoizCode/big_back/pull/19)
+(ADRs 0004 and 0005).
+
+## Playing it
 
 - You are blue player 1. The other players are bots standing in for people. The core feel is
   fixed at the #9 baseline.
