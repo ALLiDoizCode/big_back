@@ -137,6 +137,135 @@ struct Tune {
     active: usize,
     selected: usize,
     panel: bool,
+    /// The loaded comparison preset, if any (index into `PRESETS`).
+    comparison: Option<usize>,
+    /// One line per comparison settled with K, printed with P.
+    verdicts: Vec<String>,
+}
+
+// ---------------------------------------------------------------------------------------
+// Comparison presets: the sheet's "what to try" rows, one key each
+// ---------------------------------------------------------------------------------------
+
+struct Preset {
+    key: &'static str,
+    row: &'static str,
+    title: &'static str,
+    question: &'static str,
+    bot: usize,
+    both: &'static [(P, f32)],
+    a: &'static [(P, f32)],
+    b: &'static [(P, f32)],
+}
+
+const PRESETS: &[Preset] = &[
+    Preset {
+        key: "1", row: "3", title: "carrying disarms: full lock vs sidearm",
+        question: "Can a carrier defend themself? Carry a crate under fire. For the third option, set B to 'melee only' in the panel.",
+        bot: 3, both: &[], a: &[(P::CarryDisarm, 0.0)], b: &[(P::CarryDisarm, 1.0)],
+    },
+    Preset {
+        key: "2", row: "7", title: "weapon: hitscan vs projectile (18 m/s)",
+        question: "Lag compensation covers ray casts only. Are visible, dodgeable shots good enough to give up hitscan? Watch TTK and accuracy.",
+        bot: 1, both: &[(P::ProjSpeed, 18.0)], a: &[(P::Weapon, 0.0)], b: &[(P::Weapon, 1.0)],
+    },
+    Preset {
+        key: "3", row: "4", title: "hit drops crate: yes vs no",
+        question: "Is one hit enough to knock a crate loose? Chaotic or readable? Also shoot the hauler (switch the bot) to steal back.",
+        bot: 3, both: &[], a: &[(P::HitDropsCrate, 0.0)], b: &[(P::HitDropsCrate, 1.0)],
+    },
+    Preset {
+        key: "4", row: "8", title: "fire rate / shots to kill: 5/s, 8 vs 3/s, 4",
+        question: "Spray vs deliberate. Is a TTK of roughly 1.5-3 s right?",
+        bot: 1, both: &[], a: &[(P::FireRate, 5.0), (P::ShotsToKill, 8.0)], b: &[(P::FireRate, 3.0), (P::ShotsToKill, 4.0)],
+    },
+    Preset {
+        key: "5", row: "2", title: "carry speed: 0.6x vs 0.85x",
+        question: "How much of a sitting duck is a carrier? Can you catch the hauler, and can it catch you?",
+        bot: 2, both: &[], a: &[(P::CarrySpeed, 0.6)], b: &[(P::CarrySpeed, 0.85)],
+    },
+    Preset {
+        key: "6", row: "1", title: "move speed: 6 vs 8 m/s",
+        question: "Base pace. Does crossing the arena (~24 m pad to pad) feel snappy or frantic?",
+        bot: 1, both: &[], a: &[(P::MoveSpeed, 6.0)], b: &[(P::MoveSpeed, 8.0)],
+    },
+    Preset {
+        key: "7", row: "10/11", title: "grab latency 100 ms: no mask vs reach",
+        question: "Online grabs cost about one round trip. Do you notice it? Which mask hides it? Set B to 'lunge' to try the third.",
+        bot: 2, both: &[(P::GrabLatency, 100.0)], a: &[(P::GrabMask, 0.0)], b: &[(P::GrabMask, 1.0)],
+    },
+    Preset {
+        key: "8", row: "12", title: "grab reach at 120 ms: 1.2 vs 2.0 m",
+        question: "Does a longer reach also hide latency, and does it make stealing too easy?",
+        bot: 2, both: &[(P::GrabLatency, 120.0)], a: &[(P::GrabReach, 1.2)], b: &[(P::GrabReach, 2.0)],
+    },
+    Preset {
+        key: "9", row: "9", title: "kick-open time: 0.5 vs 1.5 s",
+        question: "How long are you exposed opening loot (orange crates)? Long = a risky, contestable moment.",
+        bot: 3, both: &[], a: &[(P::KickTime, 0.5)], b: &[(P::KickTime, 1.5)],
+    },
+    Preset {
+        key: "0", row: "5", title: "throw style: ground throw vs jump-throw",
+        question: "Jump-throw: on the ground you only toss a crate a short way. With the apex boost, is forcing a jump skill or friction?",
+        bot: 1, both: &[], a: &[(P::ThrowStyle, 0.0)], b: &[(P::ThrowStyle, 1.0)],
+    },
+    Preset {
+        key: "Shift+1", row: "6f", title: "slide: short + tight snap vs long + loose snap",
+        question: "How much slide is fun? A: keep 0.4, friction 10, snap 0.15. B: keep 0.8, friction 4, snap 0.35.",
+        bot: 2, both: &[],
+        a: &[(P::SlideKeep, 0.4), (P::SlideFriction, 10.0), (P::SnapRadius, 0.15)],
+        b: &[(P::SlideKeep, 0.8), (P::SlideFriction, 4.0), (P::SnapRadius, 0.35)],
+    },
+    Preset {
+        key: "Shift+2", row: "6", title: "throw angle / distance: 25 deg, 7 m vs 45 deg, 12 m",
+        question: "Line drive vs lob. Can you curl a crate onto your pad from mid-field? Should a throw reach across the map?",
+        bot: 1, both: &[], a: &[(P::ThrowAngle, 25.0), (P::ThrowDist, 7.0)], b: &[(P::ThrowAngle, 45.0), (P::ThrowDist, 12.0)],
+    },
+    Preset {
+        key: "Shift+3", row: "6c", title: "throw-building under pressure: 35 vs 60 deg",
+        question: "Build a 2x2 by throwing from 6+ m while the hauler steals. Does a high lob make it too easy?",
+        bot: 2, both: &[], a: &[(P::ThrowAngle, 35.0)], b: &[(P::ThrowAngle, 60.0)],
+    },
+];
+
+/// Loads comparison `idx` into A and B. Both start from the active slot (your baseline so
+/// far), then get the comparison's values and its bot.
+fn load_preset(tune: &mut Tune, sim: &mut Sim, idx: usize) {
+    let Some(pr) = PRESETS.get(idx) else { return };
+    let base = tune.slots[tune.active].clone();
+    let mut a = base.clone();
+    let mut b = base;
+    for slot in [&mut a, &mut b] {
+        set(slot, P::BotMode, pr.bot as f32);
+        for (p, x) in pr.both {
+            set(slot, *p, *x);
+        }
+    }
+    for (p, x) in pr.a {
+        set(&mut a, *p, *x);
+    }
+    for (p, x) in pr.b {
+        set(&mut b, *p, *x);
+    }
+    tune.slots = [a, b];
+    tune.active = 0;
+    tune.comparison = Some(idx);
+    sim.reset();
+    sim.say(format!("comparison {}: {} (Tab swaps A/B, K keeps the active slot)", pr.key, pr.title));
+}
+
+/// `CORE_FEEL_PRESET=<index>` loads a comparison at startup (smoke tests).
+fn preset_from_env(mut tune: ResMut<Tune>, mut sim: ResMut<Sim>) {
+    if let Some(i) = std::env::var("CORE_FEEL_PRESET").ok().and_then(|v| v.parse().ok()) {
+        load_preset(&mut tune, &mut sim, i);
+    }
+}
+
+fn set(slot: &mut [Param], p: P, x: f32) {
+    match &mut slot[p as usize].value {
+        Value::Num { v, min, max, .. } => *v = x.clamp(*min, *max),
+        Value::Choice { i, opts } => *i = (x as usize).min(opts.len() - 1),
+    }
 }
 
 impl Tune {
@@ -884,13 +1013,54 @@ fn tune_input(
         sim.reset();
         sim.say("arena reset");
     }
+    // Comparison presets: both slots start from the active slot (your baseline so far),
+    // then get the comparison's values and its bot.
+    let shift = keys.pressed(KeyCode::ShiftLeft) || keys.pressed(KeyCode::ShiftRight);
+    let digits = [
+        KeyCode::Digit1, KeyCode::Digit2, KeyCode::Digit3, KeyCode::Digit4, KeyCode::Digit5,
+        KeyCode::Digit6, KeyCode::Digit7, KeyCode::Digit8, KeyCode::Digit9, KeyCode::Digit0,
+    ];
+    for (n, key) in digits.iter().enumerate() {
+        if !keys.just_pressed(*key) {
+            continue;
+        }
+        load_preset(&mut tune, &mut sim, if shift { 10 + n } else { n });
+    }
+    // K: the active slot wins. It becomes the baseline in both slots, and the verdict is logged.
+    if keys.just_pressed(KeyCode::KeyK) {
+        let (act, other) = (tune.active, 1 - tune.active);
+        let slot = if act == 0 { "A" } else { "B" };
+        let kept: Vec<String> = tune.slots[act]
+            .iter()
+            .zip(&tune.slots[other])
+            .filter(|(x, y)| !same(&x.value, &y.value))
+            .map(|(x, _)| format!("{} = {}", x.name, fmt_value(&x.value)))
+            .collect();
+        let what = match tune.comparison.and_then(|i| PRESETS.get(i)) {
+            Some(pr) => format!("row {} ({})", pr.row, pr.title),
+            None => "manual comparison".to_string(),
+        };
+        let kept = if kept.is_empty() { "slots were identical".to_string() } else { kept.join(", ") };
+        let line = format!("{what}: kept {slot}: {kept}");
+        println!("verdict: {line}");
+        tune.verdicts.push(line);
+        tune.slots[other] = tune.slots[act].clone();
+        tune.comparison = None;
+        sim.say(format!("kept slot {slot} as the baseline"));
+    }
     if keys.just_pressed(KeyCode::KeyP) {
         let slot = if tune.active == 0 { "A" } else { "B" };
         println!("# core_feel baseline, slot {slot}");
         for p in &tune.slots[tune.active] {
             println!("{:<20} = {}", p.name, fmt_value(&p.value));
         }
-        sim.say("printed active slot to the terminal");
+        if !tune.verdicts.is_empty() {
+            println!("# verdicts (K)");
+            for v in &tune.verdicts {
+                println!("- {v}");
+            }
+        }
+        sim.say("printed active slot and verdicts to the terminal");
     }
 }
 
@@ -1703,7 +1873,18 @@ fn hud(sim: Res<Sim>, tune: Res<Tune>, controls: Res<Controls>, mut hud: Single<
             .count()
     };
     let slot = if tune.active == 0 { "A" } else { "B" };
-    let mut s = format!("SLOT {slot}  (Tab / Select swaps)\n");
+    let mut s = String::new();
+    match tune.comparison.and_then(|i| PRESETS.get(i)) {
+        Some(pr) => {
+            let a: Vec<String> = pr.a.iter().map(|(p, _)| fmt_value(&tune.slots[0][*p as usize].value)).collect();
+            let b: Vec<String> = pr.b.iter().map(|(p, _)| fmt_value(&tune.slots[1][*p as usize].value)).collect();
+            s += &format!("COMPARISON {} (sheet row {}): {}\n", pr.key, pr.row, pr.title);
+            s += &format!("  {}\n", pr.question);
+            s += &format!("  A = {}   B = {}   -> Tab swaps, K keeps the slot you're on\n", a.join(", "), b.join(", "));
+        }
+        None => s += &format!("Comparisons: 1-9, 0, Shift+1-3 load one into A/B   ({} settled)\n", tune.verdicts.len()),
+    }
+    s += &format!("SLOT {slot}  (Tab / Select swaps)\n");
     s += &format!(
         "you: {}{}{}\n",
         if a.carrying.is_some() { "CARRYING" } else { "empty-handed" },
@@ -1816,11 +1997,18 @@ fn main() {
         }))
         .insert_resource(GlobalAmbientLight { color: Color::WHITE, brightness: 500.0, ..default() })
         .insert_resource(ClearColor(Color::srgb(0.12, 0.13, 0.16)))
-        .insert_resource(Tune { slots: [defaults(), defaults()], active: 0, selected: 0, panel: true })
+        .insert_resource(Tune {
+            slots: [defaults(), defaults()],
+            active: 0,
+            selected: 0,
+            panel: true,
+            comparison: None,
+            verdicts: Vec::new(),
+        })
         .insert_resource(Sim::new())
         .init_resource::<Controls>()
         .init_resource::<Smoke>()
-        .add_systems(Startup, setup)
+        .add_systems(Startup, (setup, preset_from_env))
         .add_systems(
             Update,
             (read_controls, tune_input, step, sync_views, follow_camera, draw_gizmos, hud, panel, smoke_exit).chain(),

@@ -57,6 +57,35 @@ each contested parameter below and picked a baseline.
 - The HUD shows your state (carrying, airborne, grab in flight), pad counts, bot HP, the last
   time-to-kill, accuracy, times hit, and grabs vs. denied grabs.
 
+## Running the comparisons (one key each)
+
+Press a key to load a comparison into slots A and B. Both start from your current baseline
+(curling and the apex jump stay on), then get the two variants and the right bot. The HUD
+shows the question and what A and B are. Play, use **Tab** to swap between A and B, and when
+you've decided, **stay on the slot you want and press K**. That slot becomes the baseline in
+both slots, so the next comparison builds on it, and a verdict line is printed to the
+terminal. **P** prints the baseline plus every verdict so far. Paste that output into the
+issue at the end.
+
+| Key | Row | Comparison | Bot |
+|---|---|---|---|
+| 1 | 3 | carrying disarms: full lock vs sidearm (set B to melee only for the third) | duelist |
+| 2 | 7 | weapon: hitscan vs projectile at 18 m/s | strafer |
+| 3 | 4 | hit drops crate: yes vs no | duelist |
+| 4 | 8 | fire rate / shots to kill: 5/s, 8 vs 3/s, 4 | strafer |
+| 5 | 2 | carry speed: 0.6× vs 0.85× | hauler |
+| 6 | 1 | move speed: 6 vs 8 m/s | strafer |
+| 7 | 10/11 | grab latency 100 ms: no mask vs reach (set B to lunge for the third) | hauler |
+| 8 | 12 | grab reach at 120 ms: 1.2 vs 2.0 m | hauler |
+| 9 | 9 | kick-open time: 0.5 vs 1.5 s | duelist |
+| 0 | 5 | throw style: ground throw vs jump-throw | strafer |
+| Shift+1 | 6f | slide: short + tight snap vs long + loose snap | hauler |
+| Shift+2 | 6 | throw angle / distance: 25°, 7 m vs 45°, 12 m | strafer |
+| Shift+3 | 6c | throw-building under pressure: 35° vs 60° | hauler |
+
+Grab latency comparisons (7, 8) leave latency on in the slot you keep. That's deliberate,
+since online play has it, but you can set it back to 0 in the panel.
+
 ## What to try
 
 | # | Compare (A vs B) | Setup | What it answers |
