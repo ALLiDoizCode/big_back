@@ -44,4 +44,4 @@ In bot matches (8 per row, ADR 0013's rules, one open seat per team):
   ([#37](https://github.com/ALLiDoizCode/big_back/issues/37)).
 - **Open:** mercy-rule tuning; whether matches end on a fight once humans play; who a player
   recipe brings in first.
-- **Settled by [0017](0017-leavers-take-a-loss-and-their-seats-reopen.md):** a player recipe brings in whoever has waited longest.
+- **Settled by [0024](0024-leavers-take-a-loss-and-their-seats-reopen.md):** a player recipe brings in whoever has waited longest.

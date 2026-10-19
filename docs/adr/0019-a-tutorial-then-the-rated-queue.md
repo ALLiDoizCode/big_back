@@ -60,7 +60,7 @@ recommendation. The tutorial's length and steps are tuning, not decisions.
   count. At 60 players at the busiest hour, about 28% of matches are unrated, so placements
   take about 7 matches there instead of 5.
 - **Leaving a placement still counts** under
-  [0017](0017-leavers-take-a-loss-and-their-seats-reopen.md): the rating takes the loss and the
+  [0024](0024-leavers-take-a-loss-and-their-seats-reopen.md): the rating takes the loss and the
   match uses up a placement. Otherwise leaving would be a free way to dodge a loss.
 
 ## Nothing marks a player as new

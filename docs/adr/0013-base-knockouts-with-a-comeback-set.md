@@ -96,5 +96,5 @@ the map's width, and the mercy gap with its typical score.
   mercy rule's interaction with the rating (a mercy end counts as a normal win or loss
   unless decided otherwise); exact tuning of base hp and the down time once humans play
   against humans.
-- **Settled by [0017](0017-leavers-take-a-loss-and-their-seats-reopen.md):** a mercy end counts as a normal win and loss.
+- **Settled by [0024](0024-leavers-take-a-loss-and-their-seats-reopen.md):** a mercy end counts as a normal win and loss.
 - **Settled by [#52](https://github.com/ALLiDoizCode/big_back/issues/52):** the set's numbers on the launch map (above).
