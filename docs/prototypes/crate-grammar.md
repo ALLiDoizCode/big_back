@@ -16,19 +16,21 @@ vulnerability, and picked a grammar (press **Enter** on the rules you like).
 ## Verdict
 
 **Picked 2026-10-18.** The human played the rules on the 5v5 lanes + jungle map. On class
-loadout + hold to choose: "it feels good". Then: "by shape, instant, steal only".
+loadout + hold to choose: "it feels good". Then: "by shape, instant, steal only". Then: "yes the pad shows what it will make, super crates
+upgrade whats created with it".
 
 | Rule | Pick | Rejected |
 |---|---|---|
 | 1 what stacks build | **class loadout**: the kicker's class decides; 1×2 makes its left-click item, 2×2 flat its right-click item | mix, weapons, base upgrades, a recipe book per class |
 | 2 recipe shape | **by shape** (Team Buddies) | by count only |
+| 3 pad readout | **the pad shows what it makes** | secret |
+| 4 super crates | **upgrade** what the recipe makes | off, branch |
 | 5 build time | **instant** | 1 s and 2 s per crate, with a breakable build |
 | 6 vulnerability | **steal only** | a hit splits the stack, a hit spills the pad, locks once placed |
 | 7 kick | **hold longer to use more crates** | the kick uses the whole pad |
 
-**Not picked:** the pad readout (rule 3) and super crates (rule 4). Also open: the items
-themselves (the table under "Class loadout" is placeholder tuning), and what 1 crate and all 8
-make (placeholders: full health and a tank).
+**Still open:** the items themselves (the table under "Class loadout" is placeholder tuning),
+and what 1 crate and all 8 make (placeholders: full health and a tank).
 
 **Netcode note:** steal only rejects "locks once placed", which the netcode-budget research
 asked for. Crates resting on a pad can still sleep and stop replicating; stealing one wakes it.
