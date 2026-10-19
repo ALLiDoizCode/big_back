@@ -34,7 +34,7 @@ of comeback knobs (press **Enter** on the rules you like; **P** prints your pick
 Rejected: permanent destruction (it ended 3-5 of 8 bot matches early by elimination: the
 Siege pattern), rounds (bot rounds drew often and dragged to 9-10 min), and theft only (a
 2-player head start won 8 of 8 with the knobs off). The numbers are tuning, not decisions.
-Recorded in ADR 0012.
+Recorded in ADR 0013 (PR #32).
 
 ## What's new: the base
 
