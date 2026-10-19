@@ -17,7 +17,24 @@ of comeback knobs (press **Enter** on the rules you like; **P** prints your pick
 
 ## Verdict
 
-_Not yet played._
+**Picked 2026-10-19: knockout, with all five comeback knobs on.** The human, after playing it:
+"knockout with all comeback knobs on feels good". As played, with the defaults below:
+
+- **Knockout:** a base has 750 hp. At 0 its pad is down for 20 s (it makes nothing and scores
+  nothing new), the attackers get +3, and then the base rebuilds at full hp.
+- **Lock-in:** a crate scores and can no longer be stolen once it has rested on its pad for 8 s.
+- **Spill:** a knocked-out pad throws at most 3 of its crates that aren't locked in onto the
+  map. The rest stay on the pad.
+- **Megacrates nearer the trailing team:** worth 3, one every 45 s while none is out, pulled
+  up to 22 m toward the trailing team's base at a 10-point gap.
+- **Overtime:** play goes on past the buzzer while the trailing team carries a crate or stands
+  at the leader's pad, for at most 60 s.
+- **Mercy:** a 15-point gap held for 20 s ends the match.
+
+Rejected: permanent destruction (it ended 3-5 of 8 bot matches early by elimination: the
+Siege pattern), rounds (bot rounds drew often and dragged to 9-10 min), and theft only (a
+2-player head start won 8 of 8 with the knobs off). The numbers are tuning, not decisions.
+Recorded in ADR 0012.
 
 ## What's new: the base
 
