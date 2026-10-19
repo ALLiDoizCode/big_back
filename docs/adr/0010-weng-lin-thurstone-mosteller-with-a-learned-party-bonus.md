@@ -62,3 +62,5 @@ both Gaussian systems.
 - **Open:** tuning β (luck) and τ (drift) from real data, whether a quit counts as a loss,
   per-size party bonuses, and win-trading detection (handed to #11 by
   [0009](0009-progression-buys-identity-only.md)).
+- **Settled by [0017](0017-leavers-take-a-loss-and-their-seats-reopen.md):** a quit counts as a loss for the leaver, and every player is rated by
+  their share of the match played (partial play).

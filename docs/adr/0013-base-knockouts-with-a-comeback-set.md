@@ -67,3 +67,4 @@ are that setup as it stood in the sheet. The numbers are tuning, not decisions.
   mercy rule's interaction with the rating (a mercy end counts as a normal win or loss
   unless decided otherwise); exact tuning of base hp and the down time once humans play
   against humans.
+- **Settled by [0017](0017-leavers-take-a-loss-and-their-seats-reopen.md):** a mercy end counts as a normal win and loss.

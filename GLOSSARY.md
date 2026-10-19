@@ -125,7 +125,7 @@ The most players a team can have in a match. Every team starts with one player a
 _Avoid_: squad size, roster size
 
 **Starting player**:
-A team's first player, the only one who respawns when knocked out.
+A team's first player, the only one who respawns when knocked out. If they go away, the role passes to the teammate who has been in the match longest.
 _Avoid_: leader, captain, commander
 
 **Joined player**:
@@ -301,9 +301,31 @@ Starting a match once every team has its starting player, before every seat is f
 _Avoid_: early start, partial lobby, backfill
 
 **Open seat**:
-A place on a team that a player still in the queue can take as a joined player, until the seat closes partway through the match. A seat nobody takes goes to a bot, and that match is unrated.
+A place on a team that a player still in the queue can take as a joined player, until the seat closes partway through the match. A short-start seat nobody takes goes to a bot, and that match is unrated. A leaver's seat also reopens, but never unrates the match.
 _Avoid_: slot, backfill, empty spot
 
 **Late joiner**:
 A player who takes an open seat after the match has started, and enters when their team next opens a player recipe.
 _Avoid_: backfill, reinforcement, latecomer
+
+### Leavers
+
+**Away**:
+Said of a player who is disconnected, idle with no input, or not yet loaded in. An away player's character leaves the map, and their seat counts as empty.
+_Avoid_: AFK, disconnected, DC
+
+**Rejoin**:
+An away player coming back into the match, possible until the buzzer unless their seat has been taken.
+_Avoid_: reconnect, return
+
+**Leaver**:
+A player who quit a match on purpose, or was away too long in total. Decided at the buzzer. A leaver takes a loss and a lockout, and their teammates lose no points.
+_Avoid_: quitter, abandoner, deserter
+
+**Lockout**:
+The time a leaver can't queue. It steps up with each leave and steps down with matches finished.
+_Avoid_: ban, low-priority queue, cooldown
+
+**Partial play**:
+Counting each player in the rating by the share of the match they were on the map.
+_Avoid_: time weighting, participation

@@ -70,3 +70,5 @@ stood in the sheet.
 - **Open:** whether a quit counts as a loss, and win-trading detection (both still open from
   [0010](0010-weng-lin-thurstone-mosteller-with-a-learned-party-bonus.md)); timed ranked
   events (handed here by 0009, not prototyped); per-region ladders.
+- **Settled by [0017](0017-leavers-take-a-loss-and-their-seats-reopen.md):** a quit counts as a loss for the leaver, at the most points; the
+  leaver's teammates lose none.
