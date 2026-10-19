@@ -176,6 +176,10 @@ _Avoid_: drop, scatter, loot
 A rare crate worth several points of score, which drops on the trailing team's side. Unlike a super crate, it doesn't change what a recipe makes.
 _Avoid_: gold crate, bonus crate, super crate
 
+**Timer**:
+How long a Crate Race match is played before the buzzer: 8 minutes. Overtime can run past it.
+_Avoid_: clock, round, match length
+
 **Overtime**:
 Play past the buzzer that lasts while the trailing team carries a crate or contests the leader's pad.
 _Avoid_: sudden death, extra time, golden goal
@@ -287,3 +291,7 @@ _Avoid_: early start, partial lobby, backfill
 **Open seat**:
 A place on a team that a player still in the queue can take as a joined player, until the seat closes partway through the match. A seat nobody takes goes to a bot, and that match is unrated.
 _Avoid_: slot, backfill, empty spot
+
+**Late joiner**:
+A player who takes an open seat after the match has started, and enters when their team next opens a player recipe.
+_Avoid_: backfill, reinforcement, latecomer
