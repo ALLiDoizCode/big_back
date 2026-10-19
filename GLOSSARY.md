@@ -240,6 +240,14 @@ _Avoid_: MMR, Elo, score, rank
 Players who queue together and are put on the same team.
 _Avoid_: premade, stack, squad, group
 
+**Party cap**:
+How far apart in skill a party may be and still queue. It is shown in tiers and divisions, and enforced on whichever is wider, rank or rating. A full 5-stack is exempt but plays for fewer points.
+_Avoid_: party restriction, rank restriction, duo limit
+
+**Wide 5-stack**:
+A full five-player party over the party cap. It may queue, but its rank points are cut by its spread, and its wins don't count toward ranked-win rewards.
+_Avoid_: wide group, stack penalty
+
 **Party bonus**:
 How much stronger a party plays than its players' ratings add up to, per extra member. It is learned from match results, not set by hand.
 _Avoid_: squad offset, premade penalty, synergy
@@ -329,3 +337,29 @@ _Avoid_: ban, low-priority queue, cooldown
 **Partial play**:
 Counting each player in the rating by the share of the match they were on the map.
 _Avoid_: time weighting, participation
+
+### Ladder integrity
+
+**Win-trading**:
+Two parties queuing together to meet as opponents and take turns losing.
+_Avoid_: queue sniping, match fixing
+
+**Boosting**:
+A strong player carrying a weaker account up the ladder, usually in a party.
+_Avoid_: carrying, elo boosting
+
+**Throwing**:
+Losing on purpose while on the map, to drop rank.
+_Avoid_: deranking, tanking, inting
+
+**Flag**:
+A mark the server raises automatically on accounts whose matches look like win-trading, boosting or throwing. Only a reviewer acts on it.
+_Avoid_: report, strike, ban
+
+**Hold**:
+Rank points from flagged matches, kept back from the rank until a review or until 7 days pass. The player sees them as held, without a reason.
+_Avoid_: freeze, pending points, suspension
+
+**Offence**:
+Abuse a reviewer has confirmed. Each one steps up the penalty, and offences never step down.
+_Avoid_: strike, violation
