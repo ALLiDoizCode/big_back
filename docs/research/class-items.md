@@ -11,7 +11,7 @@ Research notes for [#21](https://github.com/ALLiDoizCode/big_back/issues/21). Re
 - the pad shows what each step makes;
 - a super crate upgrades the result into a stronger version of the same thing.
 
-The prototype's items are placeholders ([crate-grammar sheet, "Class loadout"](../prototypes/crate-grammar.md#class-loadout-rule-1-class-loadout-lmbrmb)). 1 crate gives full health and all 8 gives a tank, for every class.
+The prototype's items are placeholders ([crate-grammar sheet, "Class loadout"](https://github.com/ALLiDoizCode/big_back/blob/prototype/arena-map/docs/prototypes/crate-grammar.md#class-loadout-rule-1-class-loadout-lmbrmb)). 1 crate gives full health and all 8 gives a tank, for every class.
 
 This file compares how class-based competitive games split a character into a main fire, a secondary and a rare big payoff. It then rules on deployables against [ADR 0004](https://github.com/ALLiDoizCode/big_back/blob/docs/crate-grammar-verdict/docs/adr/0004-one-character-per-player-no-ai-units.md) and ends with three candidate item sets.
 
@@ -119,7 +119,7 @@ Sources:
 Two gaps to close:
 
 - **No lockout after all 8.** A team that kicks open all 8 can start hauling the next 8 at once. A Splatoon-style lockout fits: the team can't open another all 8 until its current one has ended. It also stops two tanks at once, which echoes Battlefield's team budget.
-- **Supers double the charges.** The prototype's super gives "double the charges, and 1.5× damage or healing" ([sheet](../prototypes/crate-grammar.md#class-loadout-rule-1-class-loadout-lmbrmb)). Doubling charges doubles how long the spike lasts, which is the axis Halo had to cut. A super should change **strength or behaviour, not duration**.
+- **Supers double the charges.** The prototype's super gives "double the charges, and 1.5× damage or healing" ([sheet](https://github.com/ALLiDoizCode/big_back/blob/prototype/arena-map/docs/prototypes/crate-grammar.md#class-loadout-rule-1-class-loadout-lmbrmb)). Doubling charges doubles how long the spike lasts, which is the axis Halo had to cut. A super should change **strength or behaviour, not duration**.
 
 ## 4. What 1 crate and all 8 should make
 
@@ -127,10 +127,10 @@ Two gaps to close:
 
 **[Synthesis]** These follow from the grammar, not from a source:
 
-- **It is made often, and often by accident.** It is the first step of every held kick: after 0.75 s, "the smallest recipe inside the pad is ready" ([sheet, hold to choose](../prototypes/crate-grammar.md#hold-to-choose-rule-7-hold-longer-to-use-more-crates)). Letting go early opens it, so it will be made on purpose and by mistake.
+- **It is made often, and often by accident.** It is the first step of every held kick: after 0.75 s, "the smallest recipe inside the pad is ready" ([sheet, hold to choose](https://github.com/ALLiDoizCode/big_back/blob/prototype/arena-map/docs/prototypes/crate-grammar.md#hold-to-choose-rule-7-hold-longer-to-use-more-crates)). Letting go early opens it, so it will be made on purpose and by mistake.
 - **It is the "spend it before it's stolen" valve.** A lone crate on a pad is the easiest steal. The 1-crate result lets a defender cash it in.
 - **It must not compete with the class items.** If 1 crate gives as much as a left-click item, nobody builds the pair.
-- **Full health is the wrong result.** It turns every crate into a med kit, which undercuts the medic's whole loadout and the heal camps (+60 hp, 40 s respawn; [arena-map sheet](../prototypes/arena-map.md#pve-camps)). It is also the opposite of what Team Buddies did: its single crate gave a light weapon on the pad, and only a small amount of health or ammo off it.
+- **Full health is the wrong result.** It turns every crate into a med kit, which undercuts the medic's whole loadout and the heal camps (+60 hp, 40 s respawn; [arena-map sheet](https://github.com/ALLiDoizCode/big_back/blob/prototype/arena-map/docs/prototypes/arena-map.md#pve-camps)). It is also the opposite of what Team Buddies did: its single crate gave a light weapon on the pad, and only a small amount of health or ammo off it.
 
 Two families fit, and the candidate sets below try both:
 
@@ -141,12 +141,12 @@ Two families fit, and the candidate sets below try both:
 
 **[Synthesis]**
 
-- **Cost.** All 8 is about 8 hauls of roughly 12 s each, through a pad the enemy can watch and raid. It should be worth a team fight, like the river objective (320 hp, drops crates; [arena-map sheet](../prototypes/arena-map.md#pve-camps)).
+- **Cost.** All 8 is about 8 hauls of roughly 12 s each, through a pad the enemy can watch and raid. It should be worth a team fight, like the river objective (320 hp, drops crates; [arena-map sheet](https://github.com/ALLiDoizCode/big_back/blob/prototype/arena-map/docs/prototypes/arena-map.md#pve-camps)).
 - **Tradition.** Team Buddies' answer is always a vehicle ([disc data](team-buddies-core-loops.md#stack-shape-to-output-category)). A vehicle fits our rules well: it is one character per player, driven by the kicker, so ADR 0004 is satisfied. The prototype's tank already obeys ADR 0003 ("can't carry").
 - **Why one tank for every class is wrong.** It flattens the class decision at the top recipe, which is the moment it matters most. ADR 0007's consequence, "Who kicks is a decision", should hold here too.
 - **What a capstone is, per class**: the soldier gets a vehicle, the engineer reshapes the map around the pad, and the medic gets a team-wide moment. A team-wide moment follows TF2's ÜberCharge (invulnerability as the medic's "great goal"; [Gravel Pit](https://wiki.teamfortress.com/wiki/Gravel_Pit_developer_commentary) **[Lower confidence]**) and League's Baron.
 - **Readability.** A capstone must be loud (§2 rule 5), visible, and capped by time and hp.
-- **Watch the 5-crate case.** The hold steps go 1, 2 stacked, 1 × 2, 2 wide × 2 high, 4 flat, all 8 ([sheet](../prototypes/crate-grammar.md#hold-to-choose-rule-7-hold-longer-to-use-more-crates)). Nothing sits between 4 and 8, so crates 5 to 7 are stuck on the pad as targets. That is good tension, as long as all 8 is worth the wait.
+- **Watch the 5-crate case.** The hold steps go 1, 2 stacked, 1 × 2, 2 wide × 2 high, 4 flat, all 8 ([sheet](https://github.com/ALLiDoizCode/big_back/blob/prototype/arena-map/docs/prototypes/crate-grammar.md#hold-to-choose-rule-7-hold-longer-to-use-more-crates)). Nothing sits between 4 and 8, so crates 5 to 7 are stuck on the pad as targets. That is good tension, as long as all 8 is worth the wait.
 
 ## 5. Keeping support classes fun at 5v5
 
