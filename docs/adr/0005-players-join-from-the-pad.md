@@ -22,5 +22,6 @@ by itself. Both made players appear without the team earning them.
 - **A match's head count depends on the crate economy.** Stealing crates off a pad breaks a
   team's next recipe.
 - **What other shapes build is #17.**
-- **Open:** where a team's other players are before they join, whether waiting in the match
-  or matched in mid-game. Matchmaking has to decide this.
+- **Settled by [0012](0012-one-rated-queue-with-short-starts.md):** a match may start short, and
+  players still in the queue are matched in mid-game to its open seats. A seat nobody takes
+  goes to a bot.
