@@ -74,3 +74,5 @@ stood in the sheet.
   leaver's teammates lose none.
 - **Settled by [0018](0018-a-party-cap-and-flags-held-for-review.md):** win-trading detection, and a "held points" state on the rank. A
   wide 5-stack plays for fewer points, and its wins don't count toward ranked-win rewards.
+- **Settled by [0019](0019-a-tutorial-then-the-rated-queue.md):** only rated matches count as
+  placements, and a leave during placements still uses one up.

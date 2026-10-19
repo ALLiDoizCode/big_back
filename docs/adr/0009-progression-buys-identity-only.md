@@ -38,7 +38,7 @@ its hero locks; we start where it ended.
 
 - **Only matchmade games**, casual or ranked. Custom lobbies, practice and the tutorial earn
   nothing.
-- **Bots:** in casual games filled with bots, a player still earns XP for the match, but
+- **Bots:** in unrated matches with a bot seat ([0012](0012-one-rated-queue-with-short-starts.md)), a player still earns XP for the match, but
   nothing done to a bot counts toward a stat (no knockouts, steals or crates taken from bots).
 - **Challenges** may count outcomes (matches, wins, grades), awards, contested acts (a steal
   from an enemy pad that the thief's team then kicks open, kicking open a capstone, knocking
@@ -80,6 +80,8 @@ in-match HUD shows names alone, so mastery doesn't tell the enemy who to focus.
 
 - **Nothing to unlock that matters**, so new players need no gate beyond whatever ranked
   onboarding decides.
+- **Settled by [0019](0019-a-tutorial-then-the-rated-queue.md):** ranked onboarding. The only gate
+  is a required tutorial, once per account.
 - **Mastery needs per-class performance stats** recorded on the server for every matchmade
   match, including time alive as each class.
 - **Art has a hard list** of things a skin can't touch, from day one, so it never has to be
