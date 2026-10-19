@@ -3,7 +3,7 @@
 The one **bot** ([0019](0019-a-tutorial-then-the-rated-queue.md)) plays **like an average
 player, through a player's inputs and a player's view**. It fills a short-start seat nobody took
 ([0012](0012-one-rated-queue-with-short-starts.md)) and a leaver's seat after seats close
-([0017](0017-leavers-take-a-loss-and-their-seats-reopen.md)). It also runs scripted in the
+([0024](0024-leavers-take-a-loss-and-their-seats-reopen.md)). It also runs scripted in the
 tutorial and at easy or normal in practice. It does every job a player does, picks a class and
 a role by what its team lacks, never takes anything a human could have, and is always shown as a
 bot. This fills in 0012's "well enough not to break the match". We chose this in
@@ -12,7 +12,7 @@ recommendation. The numbers are tuning, not decisions.
 
 ## Strength
 
-- **About average.** 0017 rates a bot as an average player (25) for its time on the map, so the
+- **About average.** 0024 rates a bot as an average player (25) for its time on the map, so the
   bot is built to play like one. That keeps the 25 honest. If it falls short, its rated value
   moves; the bot isn't made stronger to match.
 - **Rated seats always run at normal.** One fixed strength everywhere, with no hard setting at
@@ -67,14 +67,14 @@ All of these are required at launch, at easy as well as normal:
 - **It enters, and waits, like a joined player:** through the pad on a player recipe, and out
   until the next one when knocked out.
 - **Humans first on a player recipe.** Any waiting human comes in before any bot. Bots line up
-  by wait among themselves. This adds to 0017's "whoever has waited longest".
-- **Never the starting player,** and it never counts as "somebody" for 0017's "a team with
+  by wait among themselves. This adds to 0024's "whoever has waited longest".
+- **Never the starting player,** and it never counts as "somebody" for 0024's "a team with
   nobody left loses". Otherwise a team that all quit would play on with bots.
 - **Only once seats close.** A bot never holds a seat a queued player could take. A short-start
   seat nobody took gets its bot when seats close, not before.
 - **A rejoiner displaces it.** A player more than 90 s away can still come back to a seat a bot
   took: the bot leaves, and the human returns at the pad if the bot was on the map, or waits for
-  a player recipe if not. They are still a leaver, decided at the buzzer (0017).
+  a player recipe if not. They are still a leaver, decided at the buzzer (0024).
 - **In practice,** the bots a host adds are seated from the start. Seats don't close and nobody
   joins from the queue, but bots still enter through player recipes.
 

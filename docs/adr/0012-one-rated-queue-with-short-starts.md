@@ -78,7 +78,7 @@ these were the waits at the 4 quietest hours (median / 90% matched within):
   party skill cap, the leaver and rejoin policy, and showing players an estimated wait. The
   estimated wait can also show a region's busiest hours, which
   [0023](0023-no-scheduled-ranked-events-in-season-1.md) uses in place of scheduled events.
-- **Settled by [0017](0017-leavers-take-a-loss-and-their-seats-reopen.md):** the leaver and rejoin policy. A leaver's seat reopens like a
+- **Settled by [0024](0024-leavers-take-a-loss-and-their-seats-reopen.md):** the leaver and rejoin policy. A leaver's seat reopens like a
   short-start seat, and a leaver never makes a match unrated.
 - **Settled by [0018](0018-a-party-cap-and-flags-held-for-review.md):** the party cap's shape: shown in rank, enforced on the wider of rank
   and rating, with a full 5-stack exempt for fewer points. Its widths, set by

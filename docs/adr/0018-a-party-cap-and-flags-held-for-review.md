@@ -84,7 +84,7 @@ Signals raise flags on their own. A flag only matters once a reviewer looks at i
   - repeated losses in which the player was on the map but contributed nearly nothing,
   - a steep drop in rank right before partying with a much higher player.
 
-  Players who are away are already handled by [0017](0017-leavers-take-a-loss-and-their-seats-reopen.md).
+  Players who are away are already handled by [0024](0024-leavers-take-a-loss-and-their-seats-reopen.md).
   These signals are for players who are present and playing to lose.
 - **Player reports:** each player can make one "suspected throwing or match fixing" report per
   match, from the results screen. A report only adds weight to a flag the signals have already
@@ -112,7 +112,7 @@ Once a reviewer confirms abuse:
 2. **Second offence:** the season's rank and ranked-win rewards are removed.
 3. **Third offence:** the account is banned from ranked play.
 
-Offences never step back down. Unlike a leaver's lockout (0017), finishing matches doesn't
+Offences never step back down. Unlike a leaver's lockout (0024), finishing matches doesn't
 wipe out confirmed abuse.
 
 ## Considered options
