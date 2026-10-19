@@ -16,7 +16,8 @@ by itself. Both made players appear without the team earning them.
 
 ## Consequences
 
-- **Team size is a cap, not a starting count.** It's 3 for now, in a 36 × 22 m arena. That's
+- **Team size is a cap, not a starting count.** It's 3 for now, in a 36 × 22 m arena
+  (superseded by [0006](0006-five-v-five-on-a-lanes-and-jungle-map.md): 5v5 on a 90 × 50 m map). That's
   easy to change: the prototype grows the arena to keep about 130 m² of floor per player.
 - **A match's head count depends on the crate economy.** Stealing crates off a pad breaks a
   team's next recipe.
