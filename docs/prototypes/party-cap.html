@@ -1,0 +1,1101 @@
+<title>Party Cap Lab</title>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700&family=Source+Sans+3:wght@400;600&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Layout: the Queue Lab (#14) with a party cap (#47). The same lab bench as the Rating Lab (#11) and Ladder Lab (#12). The queue setup
+   on top, walkthroughs, then one simulated day: the verdict table, the day charts, how long
+   people waited, how fair the matches were, the queues and regions, and runs kept side by side. */
+:root {
+  --bg: #eef2f3; --surface: #ffffff; --sunk: #e3e9eb; --ink: #13212a; --muted: #566873;
+  --line: #cfd8dc; --accent: #0a6680; --accent-ink: #ffffff; --good: #2f7d32; --bad: #b3261e; --warn: #a15c00;
+  --s1: #2a78d6; --s2: #eb6834; --s3: #1baf7a; --peak: #6250d6; --off: #c98500; --band: rgba(98, 80, 214, .07); --band2: rgba(201, 133, 0, .09);
+  --display: "Barlow Condensed", "Arial Narrow", sans-serif;
+  --body: "Source Sans 3", "Segoe UI", system-ui, sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #0f171b; --surface: #16222a; --sunk: #1c2b34; --ink: #e3ecef; --muted: #93a7b1;
+  --line: #2a3c46; --accent: #4fb3cf; --accent-ink: #06222b; --good: #7bc77e; --bad: #f2867e; --warn: #f0b35a;
+  --s1: #3987e5; --s2: #d95926; --s3: #199e70; --peak: #9085e9; --off: #c98500; --band: rgba(144, 133, 233, .10); --band2: rgba(201, 133, 0, .12); color-scheme: dark } }
+:root[data-theme="dark"] {
+  --bg: #0f171b; --surface: #16222a; --sunk: #1c2b34; --ink: #e3ecef; --muted: #93a7b1;
+  --line: #2a3c46; --accent: #4fb3cf; --accent-ink: #06222b; --good: #7bc77e; --bad: #f2867e; --warn: #f0b35a;
+  --s1: #3987e5; --s2: #d95926; --s3: #199e70; --peak: #9085e9; --off: #c98500; --band: rgba(144, 133, 233, .10); --band2: rgba(201, 133, 0, .12); color-scheme: dark }
+
+* { box-sizing: border-box }
+body { background: var(--bg); color: var(--ink); font: 16px/1.5 var(--body); margin: 0 }
+.wrap { max-width: 1180px; margin: 0 auto; padding-inline: 16px; padding-block: 24px 64px; display: grid; gap: 28px }
+h1, h2, h3 { font-family: var(--display); font-weight: 700; letter-spacing: .01em; text-wrap: balance; margin: 0; line-height: 1.1 }
+h1 { font-size: 2.6rem } h2 { font-size: 1.6rem } h3 { font-size: 1.15rem }
+p { margin: 0; max-width: 72ch }
+.eyebrow { font: 600 .75rem/1 var(--mono); letter-spacing: .12em; text-transform: uppercase; color: var(--accent) }
+.muted { color: var(--muted) } .small { font-size: .9rem }
+header { display: grid; gap: 10px }
+.note { border-left: 3px solid var(--line); padding-left: 12px; color: var(--muted); font-size: .92rem; max-width: 80ch }
+.note.flag { border-left-color: var(--warn) }
+section { display: grid; gap: 14px; min-width: 0 }
+.panel { background: var(--surface); border: 1px solid var(--line); border-radius: 6px; padding: 16px; min-width: 0; position: relative }
+.grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 440px), 1fr)); gap: 16px }
+.groups { display: grid; gap: 18px }
+.group { display: grid; gap: 8px }
+.group h3 { font-size: 1rem; color: var(--muted); text-transform: uppercase; letter-spacing: .06em }
+.settings { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 220px), 1fr)); gap: 12px 18px }
+.field { display: grid; gap: 4px; font-size: .9rem; align-content: start }
+.field label { font-weight: 600 }
+.field.off { opacity: .45 }
+select, input[type=range] { width: 100%; font: inherit }
+select { padding: 6px 8px; border: 1px solid var(--line); border-radius: 4px; background: var(--surface); color: var(--ink) }
+.row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center }
+button { font: 600 .92rem var(--body); border: 1px solid var(--accent); background: var(--surface); color: var(--accent); border-radius: 4px; padding: 7px 12px; cursor: pointer }
+button.primary { background: var(--accent); color: var(--accent-ink) }
+button:hover { filter: brightness(1.08) }
+button:focus-visible, select:focus-visible, input:focus-visible, [role=tab]:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px }
+button:disabled { opacity: .45; cursor: default }
+.chips { display: flex; flex-wrap: wrap; gap: 6px }
+.chip { border: 1px solid var(--line); color: var(--ink); background: var(--surface); font-weight: 400; text-align: left }
+.chip[aria-pressed=true] { border-color: var(--accent); background: var(--accent); color: var(--accent-ink); font-weight: 600 }
+.chip small { display: block; font-size: .75rem; opacity: .8; font-weight: 400 }
+.tabs { display: flex; flex-wrap: wrap; border-bottom: 1px solid var(--line) }
+[role=tab] { border: 0; border-bottom: 3px solid transparent; border-radius: 0; background: none; color: var(--muted); padding: 8px 12px }
+[role=tab][aria-selected=true] { color: var(--ink); border-bottom-color: var(--accent) }
+.steps { display: grid; gap: 8px; counter-reset: step }
+.step { display: flex; gap: 10px; align-items: center }
+.step::before { counter-increment: step; content: counter(step); font: 600 .8rem var(--mono); width: 1.6rem; height: 1.6rem; border-radius: 50%; display: grid; place-items: center; background: var(--sunk); color: var(--muted); flex: none }
+.step.done::before { content: "✓"; background: var(--good); color: var(--surface) }
+.step.next::before { background: var(--accent); color: var(--accent-ink) }
+.watch { background: var(--sunk); border-radius: 4px; padding: 10px 12px; font-size: .92rem }
+.status { font: .85rem var(--mono); color: var(--muted) }
+.status b { color: var(--ink) }
+.scroll { overflow-x: auto }
+table { border-collapse: collapse; width: 100%; font-size: .9rem }
+th, td { text-align: right; padding: 6px 10px; border-bottom: 1px solid var(--line); white-space: nowrap; font-variant-numeric: tabular-nums }
+th { font: 600 .72rem/1.2 var(--mono); letter-spacing: .06em; text-transform: uppercase; color: var(--muted); vertical-align: bottom; white-space: normal }
+th:first-child, td:first-child { text-align: left }
+td.l { text-align: left; white-space: normal }
+td.sub { color: var(--muted); font-size: .85rem }
+tr.head td { font-weight: 600; background: var(--sunk) }
+.pill { display: inline-block; font: 600 .75rem var(--mono); padding: 2px 8px; border-radius: 3px; border: 1px solid currentColor }
+.pill.ok { color: var(--good) } .pill.tight { color: var(--warn) } .pill.bad { color: var(--bad) } .pill.none { color: var(--muted) }
+.pill.ok::before { content: "● " } .pill.tight::before { content: "▲ " } .pill.bad::before { content: "✕ " }
+.up { color: var(--good) } .down { color: var(--bad) } .warn { color: var(--warn) }
+svg { display: block; width: 100%; height: auto; overflow: visible }
+svg text { fill: var(--muted); font: 11px var(--mono) }
+.grid line { stroke: var(--line); stroke-width: 1 }
+.legend { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: .85rem }
+.sw { display: inline-block; width: 14px; height: 10px; margin-right: 6px; vertical-align: -1px; border-radius: 2px }
+.sw.ln { height: 3px; vertical-align: 3px }
+.tip { position: absolute; pointer-events: none; background: var(--surface); border: 1px solid var(--line); border-radius: 4px; padding: 8px 10px; font-size: .82rem; box-shadow: 0 2px 8px rgba(0,0,0,.12); max-width: 260px; z-index: 5 }
+.tip b { font-family: var(--mono) }
+.kv { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 14px; font-size: .92rem }
+.kv dt { color: var(--muted) } .kv dd { margin: 0; font-family: var(--mono); text-align: right }
+.big { font: 700 1.9rem/1 var(--display) }
+details summary { cursor: pointer; font-weight: 600 }
+dl.gloss { display: grid; grid-template-columns: minmax(0, 18ch) minmax(0, 1fr); gap: 6px 14px; margin: 10px 0 0; font-size: .92rem }
+dl.gloss dt { font-weight: 600 } dl.gloss dd { margin: 0; color: var(--muted) }
+@media (max-width: 520px) { dl.gloss { grid-template-columns: 1fr } h1 { font-size: 2.1rem } }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important } }
+</style>
+
+<div class="wrap">
+<header>
+  <span class="eyebrow">Prototype · issue #47 · throwaway</span>
+  <h1>Party Cap Lab</h1>
+  <p><b>How far apart in skill may a party be in the one rated queue?</b>
+  <a href="https://github.com/ALLiDoizCode/big_back/blob/main/docs/adr/0018-a-party-cap-and-flags-held-for-review.md">ADR 0018</a> fixed the cap's shape:
+  shown in tiers and divisions, enforced on whichever is wider, rank or hidden rating, wider for bigger parties, and a full 5-stack may be any
+  width for fewer points. This sheet sets the numbers. Each run is one simulated day of
+  <a href="https://github.com/ALLiDoizCode/big_back/blob/main/docs/adr/0012-one-rated-queue-with-short-starts.md">ADR 0012</a>'s queue
+  (built on the <a href="https://github.com/ALLiDoizCode/big_back/blob/prototype/queue-structure/docs/prototypes/queue-structure.md">queue-structure sheet</a>),
+  now with each party member's own skill, rank and rating.</p>
+  <p class="note">What's new here. <b>Friends' skills are correlated</b>: each member's skill is √ρ of a shared draw plus √(1−ρ) of their own.
+  <b>Rank lags rating</b>: each player's shown rank sits a random number of divisions off their rating. The cap reads the wider of the two spreads.
+  <b>A party over the cap drops a member</b> (ADR 0018's "the fix is always plain"): the member furthest out queues solo, until the rest fit the cap
+  for their new size. The settings also offer splitting everyone up, or turning the party away.
+  <b>Carry</b>: ADR 0010 rates a team as the sum of its players plus a party bonus, so a party's spread on its own changes nothing. If a strong player lifts
+  weaker friends (each plays some share of the way up toward the best), a wide party is stronger than its sum. The matchmaker can't see that; it only
+  knows the party bonus it learned, which here is the real average over all parties queuing.
+  <b>Sessions end</b>: after each match a player logs off with chance 1 in 4 (default) and a new one arrives, so a day has a few hundred parties, not a few dozen.</p>
+  <p class="note flag"><b>A fix to the queue-structure sheet.</b> It only let a party log off when the region would stay at or above its curve without
+  all of them, which almost never fit, so parties piled up: its "25% of players in parties" ran at about 48% of matched players, and ADR 0012's
+  "68% close" was measured at about half the players in parties. Fixed here, 25% in parties gives about 83% close at 200 (no cap, full lobbies).</p>
+</header>
+
+<section aria-labelledby="setup-h">
+  <h2 id="setup-h">The cap and the queue</h2>
+  <div class="panel" style="display:grid;gap:16px">
+    <div class="field"><label>Start from a cap (widths for duos / trios / 4-stacks, in tiers)</label><div class="chips" id="presets"></div></div>
+    <div class="groups" id="rules"></div>
+    <div class="row"><button id="bReset">Reset every setting</button><span class="status" id="runStatus"></span></div>
+  </div>
+</section>
+
+<section aria-labelledby="walk-h">
+  <h2 id="walk-h">Guided walkthroughs</h2>
+  <p class="small muted">Step 1 of each walkthrough resets every setting to a known start. Each later step changes one thing and runs the day again.</p>
+  <div class="tabs" role="tablist" id="tabs"></div>
+  <div class="panel" id="walk"></div>
+</section>
+
+<section aria-labelledby="day-h">
+  <h2 id="day-h">One simulated day</h2>
+  <p class="small muted" id="dayNote"></p>
+  <div class="panel scroll"><table id="summary"></table></div>
+  <p class="small muted">Verdict: <span class="pill ok">Acceptable</span> half of players matched within 90 s, 90% within 3 min, under 2% gave up.
+  <span class="pill tight">Tight</span> within 2:30 and 5 min, under 5% gave up. <span class="pill bad">Too long</span> anything worse.
+  Peak and off-peak are the 4 busiest and the 4 quietest hours of the day. Waits are counted per player.</p>
+  <div class="grid2">
+    <div class="panel" style="display:grid;gap:8px"><h3>Players online, by region</h3><div class="legend" id="lgOnline"></div><div id="chOnline"></div></div>
+    <div class="panel" style="display:grid;gap:8px"><h3>Wait by hour</h3><div class="legend" id="lgWait"></div><div id="chWait"></div></div>
+  </div>
+  <div class="grid2">
+    <div class="panel" style="display:grid;gap:8px"><h3>How long players waited</h3><div class="legend" id="lgHist"></div><div id="chHist"></div></div>
+    <div class="panel" style="display:grid;gap:8px"><h3>How fair the matches were</h3><p class="small muted">The favourite's chance to win, as the matchmaker predicts it. 50% (or 33% / 25% with three or four teams) is a coin flip.</p><div class="legend" id="lgQual"></div><div id="chQual"></div></div>
+  </div>
+  <div class="grid2">
+    <div class="panel scroll" style="display:grid;gap:8px"><h3>Parties today, by size</h3><table id="parties"></table><p class="small muted" id="partyNote"></p></div>
+    <div class="panel scroll" style="display:grid;gap:8px"><h3>A full 5-stack's point cut</h3><p class="small muted">5-stacks sampled by spread. "Wins" is a stack's real chance in a match the matchmaker predicts at 50%, when its carry is above the learned party bonus.
+      "Cut that cancels it" is the cut on points won that makes the stack's expected points zero: c = (2p − 1) / p. "Suggested" is the sheet's schedule.</p><table id="stacks"></table></div>
+  </div>
+  <div class="grid2">
+    <div class="panel" style="display:grid;gap:8px"><h3>Seats taken by bots, by hour</h3><div id="chBots"></div></div>
+    <div class="panel" style="display:grid;gap:10px">
+      <h3>The queue at a moment</h3>
+      <div class="field"><label for="snapH">Time (UTC): <span id="snapLbl"></span></label><input type="range" id="snapH" min="0" max="23" value="4"></div>
+      <div id="snap"></div>
+    </div>
+  </div>
+  <div class="grid2">
+    <div class="panel scroll" style="display:grid;gap:8px"><h3>Each queue</h3><table id="queues"></table></div>
+    <div class="panel scroll" style="display:grid;gap:8px"><h3>Each region</h3><table id="regions"></table></div>
+  </div>
+  <p class="small muted" id="thumb"></p>
+</section>
+
+<section aria-labelledby="cmp-h">
+  <h2 id="cmp-h">Compare</h2>
+  <div class="panel" style="display:grid;gap:12px">
+    <div class="row">
+      <button class="primary" id="bKeep">Keep this run</button>
+      <button id="bCaps">Try every cap with these settings</button>
+      <button id="bCcu">Every cap at 200, 100 and 60</button>
+      <button id="bClear">Clear</button>
+      <span class="status" id="sweepStatus"></span>
+    </div>
+    <div class="scroll"><table id="compare"></table></div>
+  </div>
+</section>
+
+<section>
+  <details class="panel">
+    <summary>Words used on this page</summary>
+    <dl class="gloss">
+      <dt>Queue</dt><dd>One pool of players the matchmaker can put in a match together. Ranked and casual are separate queues only if the structure splits them; each mode picked separately is another queue.</dd>
+      <dt>Rating</dt><dd>A player's hidden skill estimate. Every structure here matches on it; only rated matches move a player's rank.</dd>
+      <dt>Rank</dt><dd>The tier, division and points a player is shown (ADR 0011). It moves only in rated matches.</dd>
+      <dt>Party</dt><dd>Players who queue together and are put on the same team.</dd>
+      <dt>Spread</dt><dd>How far apart a party's highest and lowest members are, in divisions (3 per tier). The cap reads the wider of the rank spread and the hidden-rating spread.</dd>
+      <dt>Blocked</dt><dd>A party wider than its cap when it tries to queue. Here it drops its furthest-out member (who queues solo) until it fits, unless the settings say otherwise.</dd>
+      <dt>Carry</dt><dd>How much a party's best player lifts the rest: each weaker member plays that share of the way up toward the best. 0 is ADR 0010's model, where only the sum counts.</dd>
+      <dt>Out of depth</dt><dd>A player whose own skill is more than 25 percentile points from the average of the lobby they were put in.</dd>
+      <dt>Close (real)</dt><dd>The favourite's real chance, carry included, is at most 55%. "As predicted" uses what the matchmaker knows.</dd>
+      <dt>Bot</dt><dd>An AI stand-in for a missing player, shown as a bot. A match with a bot in it is never rated.</dd>
+      <dt>Team size</dt><dd>The most players a team can have. Every team starts with one player.</dd>
+      <dt>Starting player</dt><dd>A team's first player. With “once every team has a starting player”, a match can begin with only these.</dd>
+      <dt>Joined player</dt><dd>A player who comes in when the team opens a player recipe. Here, a player in the queue can take that seat in a match already being played.</dd>
+      <dt>Skill band</dt><dd>How far apart in skill the matchmaker lets players be. It starts narrow and doubles at a set interval while a player waits.</dd>
+      <dt>Peak and off-peak</dt><dd>The 4 busiest and the 4 quietest hours of the simulated day, by players online.</dd>
+    </dl>
+  </details>
+</section>
+</div>
+
+<script>
+/* ---------------------------------------------------------------------------------------------
+   QueueSim: the logic. Pure: no DOM. run(cfg) simulates one day of matchmaking and returns
+   records; summarize / hourly / byQueue / byRegion turn them into numbers.
+--------------------------------------------------------------------------------------------- */
+const QueueSim = (() => {
+  const REGIONS = [
+    { id: 'NA', name: 'Americas', utc: -5 },
+    { id: 'EU', name: 'Europe', utc: 1 },
+    { id: 'AP', name: 'Asia-Pacific', utc: 8 },
+  ];
+  // Round-trip ms from a player in one region to a server in another.
+  const PING = { NA: { NA: 35, EU: 95, AP: 165 }, EU: { NA: 95, EU: 30, AP: 230 }, AP: { NA: 165, EU: 230, AP: 40 } };
+  const FORMATS = {
+    '2v2': { teams: 2, size: 2 }, '3v3': { teams: 2, size: 3 }, '4v4': { teams: 2, size: 4 }, '5v5': { teams: 2, size: 5 },
+    '2v2v2': { teams: 3, size: 2 }, '2v2v2v2': { teams: 4, size: 2 },
+  };
+  // A region's evening-peaked day by local hour, before rescaling so the quietest hour is cfg.offPeak of the busiest.
+  const SHAPE = [.55, .42, .32, .27, .25, .26, .30, .38, .45, .50, .55, .60, .65, .68, .70, .73, .78, .85, .92, .98, 1, .97, .85, .70];
+  const MODE_POP = [.45, .25, .18, .12];
+  const PARTY_W = { 2: .6, 3: .3, 4: .07, 5: .03 };
+  const BETA = 25 / 6, SKILL_MEAN = 25, SKILL_SD = 5, PARTY_BONUS = 1, TICK = 5, DAY = 86400, WARM = 6 * 3600;
+  // ADR 0011's tiers, cut by share of players. Bronze to Diamond have divisions III, II, I; Master and
+  // Champion count here as 3 divisions wide each, so a spread can be read in tiers (3 divisions).
+  const TIERS = ['Bronze', 'Silver', 'Gold', 'Platinum', 'Diamond', 'Master', 'Champion'];
+  const TIER_CUTS = [0, .15, .40, .67, .85, .95, .99, 1];
+  function divOf(p) {
+    let t = 0; while (t < 6 && p >= TIER_CUTS[t + 1]) t++;
+    return 3 * t + 3 * Math.min(.999, (p - TIER_CUTS[t]) / (TIER_CUTS[t + 1] - TIER_CUTS[t]));
+  }
+  const spreadOf = xs => Math.max(...xs) - Math.min(...xs);
+  // The cap in divisions for a party of `size`; Infinity means no cap.
+  function capFor(cfg, size) {
+    if (size === 2) return cfg.capDuo; if (size === 3) return cfg.capTrio; if (size === 4) return cfg.capFour;
+    return cfg.five === 'exempt' ? Infinity : cfg.capFour;
+  }
+  // A party's spread as the cap sees it: the wider of rank and hidden rating, in divisions.
+  function partySpread(ms) { return Math.max(spreadOf(ms.map(x => x.rank)), spreadOf(ms.map(x => x.rdiv))); }
+  // What a party really adds to its team beyond its members' sum: ADR 0010's party bonus, plus a carry:
+  // each weaker member plays `carry` of the way up toward the party's best.
+  function carryOf(cfg, ms) { const top = Math.max(...ms.map(x => x.s)); let c = 0; for (const x of ms) c += cfg.carry * (top - x.s); return c; }
+
+  function rngOf(seed) { let a = seed >>> 0 || 1; return () => { a = a + 0x6D2B79F5 | 0; let t = Math.imul(a ^ a >>> 15, 1 | a); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
+  function gauss(rng) { let u = 0; while (!u) u = rng(); return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * rng()); }
+  function Phi(x) { const z = Math.abs(x) / Math.SQRT2, t = 1 / (1 + 0.3275911 * z); const y = 1 - (((((1.061405429 * t - 1.453152027) * t) + 1.421413741) * t - 0.284496736) * t + 0.254829592) * t * Math.exp(-z * z); return x >= 0 ? (1 + y) / 2 : (1 - y) / 2; }
+  const mod24 = h => ((h % 24) + 24) % 24;
+
+  function share(cfg) { const [a, b, c] = cfg.split.split('/').map(Number); const s = a + b + c; return { NA: a / s, EU: b / s, AP: c / s }; }
+  function regionShape(localH, off) {
+    const h = mod24(localH), h0 = Math.floor(h), fr = h - h0, s = SHAPE[h0] * (1 - fr) + SHAPE[(h0 + 1) % 24] * fr;
+    return off + (1 - off) * (s - .25) / .75;
+  }
+  function inEvent(cfg, t) {
+    if (cfg.structure !== 'events') return false;
+    const h = mod24(t / 3600), s = cfg.eventStart, e = s + cfg.eventHours;
+    return (h >= s && h < e) || (h + 24 >= s && h + 24 < e);
+  }
+  function baseCurve(cfg, t) { const sh = share(cfg); let s = 0; for (const r of REGIONS) s += sh[r.id] * regionShape(t / 3600 + r.utc, cfg.offPeak); return s; }
+  function curveScale(cfg) { let mx = 0; for (let i = 0; i < 288; i++) mx = Math.max(mx, baseCurve(cfg, i * 300)); return cfg.peakCCU / mx; }
+
+  function band(cfg, w) { if (w >= cfg.bandOpenSec) return 1; return Math.min(1, cfg.bandStart / 2 * Math.pow(2, Math.floor(w / cfg.bandDoubleSec))); }
+  function pingCap(cfg, w) {
+    if (cfg.crossSec < 0) return 60;
+    if (w < cfg.crossSec) return 60;
+    if (w < cfg.crossSec * 2 + 30) return 170; // neighbouring regions first, Europe–Asia-Pacific later
+    return 999;
+  }
+  function botsAllowed(cfg, bucket) { return cfg.bots === 'any' || (cfg.bots === 'casual' && bucket === 'casual'); }
+  function minHumans(cfg, F) {
+    const m = F.teams * F.size;
+    return { two: 2, team: F.teams, half: Math.ceil(m / 2), most: m - F.teams }[cfg.minHumans];
+  }
+  function bucketFor(cfg, u, t) {
+    if (cfg.structure === 'one') return 'ranked';
+    if (cfg.structure === 'split') return u.prefRanked ? 'ranked' : 'casual';
+    if (!inEvent(cfg, t)) return 'casual';
+    if (!cfg.casualInEvents) return 'ranked';
+    return u.prefRanked ? 'ranked' : 'casual';
+  }
+  function modeCount(cfg) { return cfg.modePolicy === 'rotate' ? 1 : cfg.modes; }
+  function pickModes(cfg, rng) {
+    const M = modeCount(cfg); if (M === 1) return 1;
+    const w = MODE_POP.slice(0, M), tot = w.reduce((a, b) => a + b, 0);
+    const draw = (avail) => { const t = avail.reduce((a, i) => a + w[i], 0); let x = rng() * t; for (const i of avail) { x -= w[i]; if (x <= 0) return i; } return avail[avail.length - 1]; };
+    if (cfg.modePolicy === 'choose') return 1 << draw([...Array(M).keys()]);
+    const kMin = Math.min(cfg.pickMin, M), k = kMin + Math.floor(rng() * (M - kMin + 1));
+    let avail = [...Array(M).keys()], mask = 0;
+    for (let j = 0; j < k; j++) { const i = draw(avail); mask |= 1 << i; avail = avail.filter(x => x !== i); }
+    return mask;
+  }
+  function partyDist(cap) {
+    const w = {}; let tot = 0;
+    for (const k in PARTY_W) { const s = Math.min(+k, cap); w[s] = (w[s] || 0) + PARTY_W[k]; tot += PARTY_W[k]; }
+    let E = 0; for (const s in w) { w[s] /= tot; E += s * w[s]; }
+    return { w, E };
+  }
+  function favChance(teams, rng) {
+    if (teams.length === 2) {
+      const n = teams[0].n + teams[1].n, p = Phi((teams[0].str - teams[1].str) / Math.sqrt(n * BETA * BETA));
+      return Math.max(p, 1 - p);
+    }
+    // P(team i scores highest) = ∫ pdf_i(x) · Π_j≠i cdf_j(x) dx, on a fixed grid
+    const sd = teams.map(t => BETA * Math.sqrt(t.n)), lo = Math.min(...teams.map((t, i) => t.str - 5 * sd[i])), hi = Math.max(...teams.map((t, i) => t.str + 5 * sd[i]));
+    const N = 160, dx = (hi - lo) / N, p = teams.map(() => 0);
+    for (let s = 0; s < N; s++) {
+      const x = lo + (s + .5) * dx, cd = teams.map((t, i) => Phi((x - t.str) / sd[i]));
+      teams.forEach((t, i) => { const z = (x - t.str) / sd[i]; let v = Math.exp(-z * z / 2) / (sd[i] * Math.sqrt(2 * Math.PI)) * dx; cd.forEach((c, j) => { if (j !== i) v *= c; }); p[i] += v; });
+    }
+    return Math.max(...p) / p.reduce((a, b) => a + b, 0);
+  }
+  // Split units (solos and parties) into teams as evenly as possible. An empty seat counts as fill
+  // (the bot or joined player expected to take it). Two teams: try every split; more teams: greedy, then swaps.
+  function assignTeams(F, units, fill, needAll) {
+    const teams = Array.from({ length: F.teams }, () => ({ free: F.size, units: [], str: 0, tstr: 0, n: 0, bots: 0 }));
+    if (F.teams === 2 && units.length <= 14) {
+      let best = -1, bestD = Infinity;
+      for (let mask = 0; mask < 1 << units.length; mask++) {
+        if (mask & 1) continue; // unit 0 always on team B; halves the search
+        let nA = 0, sA = 0, nB = 0, sB = 0, cA = 0, cB = 0;
+        units.forEach((u, i) => { if (mask >> i & 1) { nA += u.size; sA += u.str; cA++; } else { nB += u.size; sB += u.str; cB++; } });
+        if (nA > F.size || nB > F.size || (needAll && (!cA || !cB))) continue;
+        const d = Math.abs(sA + (F.size - nA) * fill - sB - (F.size - nB) * fill);
+        if (d < bestD) { bestD = d; best = mask; }
+      }
+      if (best < 0) return null;
+      units.forEach((u, i) => { const tm = teams[best >> i & 1 ? 0 : 1]; tm.free -= u.size; tm.units.push(u); tm.str += u.str; tm.tstr += u.tstr; tm.n += u.size; });
+      return teams;
+    }
+    const sorted = [...units].sort((a, b) => b.size - a.size || b.str - a.str);
+    for (const u of sorted) {
+      let best = null;
+      for (const tm of teams) if (tm.free >= u.size && (!best || tm.str < best.str || (tm.str === best.str && tm.free > best.free))) best = tm;
+      if (!best) return null;
+      best.free -= u.size; best.units.push(u); best.str += u.str; best.tstr += u.tstr; best.n += u.size;
+    }
+    // swap same-size units between teams while it narrows the strength gap
+    for (let it = 0; it < 12; it++) {
+      let improved = false;
+      for (let i = 0; i < teams.length; i++) for (let j = i + 1; j < teams.length; j++) {
+        const A = teams[i], B = teams[j];
+        for (const a of A.units) for (const b of B.units) {
+          if (a.size !== b.size) continue;
+          const before = Math.abs(A.str - B.str), after = Math.abs((A.str - a.str + b.str) - (B.str - b.str + a.str));
+          if (after + 1e-9 < before) {
+            A.units[A.units.indexOf(a)] = b; B.units[B.units.indexOf(b)] = a;
+            A.str += b.str - a.str; B.str += a.str - b.str; A.tstr += b.tstr - a.tstr; B.tstr += a.tstr - b.tstr; improved = true;
+          }
+        }
+      }
+      if (!improved) break;
+    }
+    return teams;
+  }
+
+  function run(cfg) {
+    const rng = rngOf(cfg.seed), F = FORMATS[cfg.format], m = F.teams * F.size, scale = curveScale(cfg), sh = share(cfg);
+    const pd = partyDist(F.size);
+    const unitPartyP = cfg.partyShare > 0 ? cfg.partyShare / (pd.E - cfg.partyShare * (pd.E - 1)) : 0;
+    const M = modeCount(cfg);
+    const S = { t: -WARM, queue: [], menus: [], matches: [], open: [], online: { NA: 0, EU: 0, AP: 0 }, nextId: 1, carrySum: 0, extraSum: 0 };
+    const R = { cfg, F, m, waits: [], gave: [], matches: [], hourly: [], snaps: [], peakHours: [], offHours: [], keys: [], parties: [], turnedAway: 0 };
+    for (let h = 0; h < 24; h++) R.hourly.push({ online: { NA: 0, EU: 0, AP: 0 }, q: 0, play: 0, menu: 0, samples: 0, target: scale * baseCurve(cfg, h * 3600 + 1800) });
+    const order = [...Array(24).keys()].sort((a, b) => R.hourly[b].target - R.hourly[a].target);
+    R.peakHours = order.slice(0, 4).sort((a, b) => a - b); R.offHours = order.slice(-4).sort((a, b) => a - b);
+    const buckets = cfg.structure === 'one' ? ['ranked'] : ['ranked', 'casual'];
+    for (const b of buckets) for (let i = 0; i < M; i++) R.keys.push(b + ':' + i);
+
+    const target = (r, t) => scale * sh[r.id] * regionShape(t / 3600 + r.utc, cfg.offPeak) * (inEvent(cfg, t) ? cfg.eventBoost : 1);
+    const inDay = t => t >= 0 && t < DAY;
+    const hourOf = t => Math.floor(t / 3600);
+
+    // A member: skill s, its percentile p, its hidden rating and its shown rank in divisions. The rank lags the
+    // rating by a random number of divisions (cfg.rankLag is the spread of that gap).
+    function member(z) {
+      const s = SKILL_MEAN + SKILL_SD * z, p = Phi(z), rdiv = divOf(p);
+      return { s, p, rdiv, rank: Math.max(0, Math.min(20.99, rdiv + cfg.rankLag * gauss(rng))) };
+    }
+    function makeUnit(r, ms, origSize) {
+      const size = ms.length; let sum = 0; for (const x of ms) sum += x.s;
+      const carry = size > 1 ? carryOf(cfg, ms) : 0;
+      if (size > 1) { S.carrySum += carry; S.extraSum += size - 1; }
+      return { id: S.nextId++, size, origSize, region: r.id, ms, skillSum: sum, carry, tstr: sum + PARTY_BONUS * (size - 1) + carry, spread: size > 1 ? partySpread(ms) : 0,
+        pct: Phi((sum / size - SKILL_MEAN) / SKILL_SD), prefRanked: rng() < cfg.rankedShare, modes: pickModes(cfg, rng) };
+    }
+    function spawn(r) {
+      let size = 1;
+      if (rng() < unitPartyP) { let x = rng(); for (const s in pd.w) { x -= pd.w[s]; if (x <= 0) { size = +s; break; } } if (size === 1) size = 2; }
+      // Friends' skills are correlated: each member is √ρ of a shared draw plus √(1−ρ) of their own.
+      const z0 = gauss(rng), a = Math.sqrt(cfg.friendCorr), b = Math.sqrt(1 - cfg.friendCorr);
+      let ms = []; for (let i = 0; i < size; i++) ms.push(member(size > 1 ? a * z0 + b * gauss(rng) : gauss(rng)));
+      const units = [];
+      if (size > 1) {
+        const cap = capFor(cfg, size), sp = partySpread(ms), blocked = sp > cap + 1e-9;
+        if (inDay(S.t)) R.parties.push({ size, spread: sp, blocked });
+        if (blocked && cfg.overCap === 'away') { if (inDay(S.t)) R.turnedAway += size; return; }
+        if (blocked && cfg.overCap === 'split') { for (const x of ms) units.push(makeUnit(r, [x], size)); ms = []; }
+        // 'drop': the member furthest out leaves and queues solo, until the rest fit the cap for their new size
+        while (ms.length > 1 && partySpread(ms) > capFor(cfg, ms.length) + 1e-9) {
+          let bi = 0, bs = Infinity;
+          for (let i = 0; i < ms.length; i++) { const rest = ms.filter((_, j) => j !== i), s2 = rest.length > 1 ? partySpread(rest) : 0; if (s2 < bs) { bs = s2; bi = i; } }
+          units.push(makeUnit(r, [ms[bi]], size)); ms = ms.filter((_, j) => j !== bi);
+        }
+      }
+      if (ms.length) units.push(makeUnit(r, ms, size));
+      for (const u of units) { S.online[r.id] += u.size; enqueue(u); }
+    }
+    // The matchmaker predicts with ADR 0010's model: the sum plus a party bonus learned from results. Here the
+    // bonus it has learned is the real average of bonus plus carry per extra member, over the parties queuing.
+    function learnedBonus() { return S.extraSum ? PARTY_BONUS + S.carrySum / S.extraSum : PARTY_BONUS; }
+    function enqueue(u) { u.enq = S.t; u.bucket = bucketFor(cfg, u, S.t); u.taken = false; u.str = u.skillSum + learnedBonus() * (u.size - 1); S.queue.push(u); }
+    function recordWait(u, key, via) { if (inDay(S.t)) R.waits.push({ w: S.t - u.enq, h: hourOf(S.t), key, reg: u.region, via, n: u.size }); }
+
+    function finalize(Mt) {
+      for (const tm of Mt.teams) {
+        if (tm.free > 0) {
+          if (botsAllowed(cfg, Mt.bucket)) { const b = tm.free * (Mt.avgSkill - cfg.botPenalty); tm.str += b; tm.tstr += b; tm.n += tm.free; tm.bots += tm.free; Mt.bots += tm.free; }
+          else Mt.short += tm.free;
+          tm.free = 0;
+        }
+      }
+      Mt.locked = true;
+      const k = Mt.teams.length;
+      // fav: the favourite's real chance (with carry); pfav: as the matchmaker predicts it
+      Mt.fav = Mt.short > 0 ? null : favChance(Mt.teams.map(tm => ({ n: tm.n, str: tm.tstr })), rng);
+      const pfav = Mt.short > 0 ? null : favChance(Mt.teams, rng);
+      // Players out of their depth: own skill more than 25 percentile points from the lobby's average.
+      let sk = 0, nh = 0; for (const tm of Mt.teams) for (const u of tm.units) for (const x of u.ms) { sk += x.s; nh++; }
+      const lobbyP = Phi((sk / nh - SKILL_MEAN) / SKILL_SD); let deep = 0;
+      for (const tm of Mt.teams) for (const u of tm.units) for (const x of u.ms) if (Math.abs(x.p - lobbyP) > .25) deep++;
+      if (inDay(Mt.start)) {
+        R.matches.push({
+          h: hourOf(Mt.start), key: Mt.key, bucket: Mt.bucket, humans: Mt.humans, bots: Mt.bots, short: Mt.short, seats: m, fav: Mt.fav, pfav, k,
+          cross: Mt.regs.size > 1, worst: Mt.worst, rated: Mt.bucket === 'ranked' && Mt.bots === 0, kind: Mt.kind, joined: Mt.joined, deep, nh,
+        });
+      }
+    }
+    function formMatch(units, kind, bucket, mode) {
+      let skill0 = 0, n0 = 0; for (const u of units) { skill0 += u.skillSum; n0 += u.size; }
+      const teams = assignTeams(F, units, skill0 / n0 - (kind === 'bots' ? cfg.botPenalty : 0), kind === 'pad'); if (!teams) return false;
+      if (kind === 'pad' && teams.some(tm => tm.n === 0)) return false;
+      const regs = new Set(units.map(u => u.region));
+      let server = 'NA', worst = 1e9;
+      for (const r of REGIONS) { let w = 0; for (const x of regs) w = Math.max(w, PING[x][r.id]); if (w < worst) { worst = w; server = r.id; } }
+      const dur = cfg.matchMin * 60 * (0.85 + 0.3 * rng());
+      let skill = 0, humans = 0; for (const u of units) { skill += u.skillSum; humans += u.size; }
+      const key = bucket + ':' + mode;
+      const Mt = { key, bucket, mode, teams, start: S.t, end: S.t + dur, server, worst, regs, kind, bots: 0, short: 0, joined: 0, humans, avgSkill: skill / humans, avgPct: Phi((skill / humans - SKILL_MEAN) / SKILL_SD), free: m - humans };
+      for (const u of units) { u.taken = true; u.match = Mt; recordWait(u, key, kind); }
+      if (kind === 'pad' && Mt.free > 0) { Mt.padUntil = S.t + cfg.padWindow * dur; S.open.push(Mt); }
+      else finalize(Mt);
+      S.matches.push(Mt);
+      return true;
+    }
+    function tryAnchor(a, pool, bucket, mode) {
+      const w = S.t - a.enq, h = band(cfg, w), cap = pingCap(cfg, w);
+      const cands = [];
+      for (const u of pool) if (u !== a && !u.taken && Math.abs(u.pct - a.pct) <= h && PING[u.region][a.region] <= cap) cands.push(u);
+      cands.sort((x, y) => (Math.abs(x.pct - a.pct) + PING[x.region][a.region] / 2000) - (Math.abs(y.pct - a.pct) + PING[y.region][a.region] / 2000));
+      const free = Array(F.teams).fill(F.size);
+      const place = u => { let bi = -1; for (let i = 0; i < free.length; i++) if (free[i] >= u.size && (bi < 0 || free[i] > free[bi])) bi = i; if (bi < 0) return false; free[bi] -= u.size; return true; };
+      if (!place(a)) return false;
+      const chosen = [a]; let humans = a.size;
+      for (const u of cands) {
+        if (humans === m) break;
+        let ok = true; for (const c of chosen) if (PING[c.region][u.region] > cap) { ok = false; break; }
+        if (ok && place(u)) { chosen.push(u); humans += u.size; }
+      }
+      if (humans === m) return formMatch(chosen, 'full', bucket, mode);
+      if (botsAllowed(cfg, bucket) && w >= cfg.botAfterSec && humans >= minHumans(cfg, F) && cfg.start !== 'pad') return formMatch(chosen, 'bots', bucket, mode);
+      if (cfg.start === 'pad' && w >= cfg.padStartSec && chosen.length >= F.teams) return formMatch(chosen, 'pad', bucket, mode);
+      return false;
+    }
+    function fillSeats() {
+      for (const Mt of S.open) {
+        if (Mt.free === 0) continue;
+        for (const u of S.queue) {
+          if (Mt.free === 0) break;
+          if (u.taken || u.bucket !== Mt.bucket || !(u.modes >> Mt.mode & 1)) continue;
+          const w = S.t - u.enq;
+          if (Math.abs(u.pct - Mt.avgPct) > band(cfg, w) || PING[u.region][Mt.server] > pingCap(cfg, w)) continue;
+          let best = null; for (const tm of Mt.teams) if (tm.free >= u.size && (!best || tm.str < best.str)) best = tm;
+          if (!best) continue;
+          best.free -= u.size; best.units.push(u); best.str += u.str; best.tstr += u.tstr; best.n += u.size;
+          Mt.free -= u.size; Mt.joined += u.size; Mt.humans += u.size;
+          Mt.regs.add(u.region); Mt.worst = Math.max(Mt.worst, PING[u.region][Mt.server]);
+          u.taken = true; u.match = Mt; recordWait(u, Mt.key, 'seat');
+        }
+      }
+    }
+    function matchmake() {
+      if (cfg.start === 'pad' && S.open.length) fillSeats();
+      for (const b of buckets) for (let i = 0; i < M; i++) {
+        const pool = S.queue.filter(u => !u.taken && u.bucket === b && (u.modes >> i & 1));
+        let tries = 0;
+        for (const a of pool) { if (a.taken) continue; if (tries++ >= 4) break; tryAnchor(a, pool, b, i); }
+      }
+      S.queue = S.queue.filter(u => !u.taken);
+    }
+    function release(Mt) {
+      for (const tm of Mt.teams) for (const u of tm.units) {
+        const r = REGIONS.find(x => x.id === u.region);
+        // Log off whenever the region is over its curve, whatever the unit's size. (The queue-structure sheet only let a
+        // unit log off if the region stayed at or above the curve without it, which almost never fit a party, so parties
+        // piled up: its "25% in parties" ran at about 48% of matched players.)
+        // A unit also ends its session after a match with chance 1 / cfg.sessionMatches; a new arrival replaces it.
+        if (S.online[u.region] - target(r, S.t) >= 0.5 || rng() < 1 / cfg.sessionMatches) { S.online[u.region] -= u.size; }
+        else S.menus.push({ u, at: S.t + cfg.overheadMin * 60 * (0.6 + 0.8 * rng()) });
+      }
+    }
+
+    // a full lobby of starting players at the warm-up start
+    while (S.t < DAY) {
+      S.t += TICK;
+      if (S.open.length) { for (const Mt of S.open) if (S.t >= Mt.padUntil) finalize(Mt); S.open = S.open.filter(Mt => !Mt.locked); }
+      if (S.matches.length) {
+        const keep = [];
+        for (const Mt of S.matches) { if (S.t >= Mt.end) { if (!Mt.locked) finalize(Mt); release(Mt); } else keep.push(Mt); }
+        S.matches = keep; S.open = S.open.filter(Mt => !Mt.locked);
+      }
+      if (S.menus.length) { const keep = []; for (const x of S.menus) { if (S.t >= x.at) enqueue(x.u); else keep.push(x); } S.menus = keep; }
+      if (S.queue.length) {
+        const keep = [];
+        for (const u of S.queue) {
+          if (S.t - u.enq >= cfg.giveUpSec) { S.online[u.region] -= u.size; if (inDay(S.t)) R.gave.push({ h: hourOf(S.t), key: u.bucket + ':' + Math.max(0, Math.log2(u.modes & -u.modes)), reg: u.region, n: u.size }); }
+          else keep.push(u);
+        }
+        S.queue = keep;
+      }
+      for (const r of REGIONS) { const tg = target(r, S.t); let guard = 0; while (S.online[r.id] + 0.5 < tg && guard++ < 50) spawn(r); }
+      matchmake();
+      if (inDay(S.t) && S.t % 60 === 0) {
+        const H = R.hourly[hourOf(S.t)];
+        H.samples++; for (const r of REGIONS) H.online[r.id] += S.online[r.id];
+        let q = 0; for (const u of S.queue) q += u.size; H.q += q;
+        let p = 0; for (const Mt of S.matches) p += Mt.humans; H.play += p;
+        let mn = 0; for (const x of S.menus) mn += x.u.size; H.menu += mn;
+      }
+      if (inDay(S.t) && S.t % 3600 === 1800) {
+        const byKey = {}; let longest = 0;
+        for (const u of S.queue) { const k = u.bucket; byKey[k] = (byKey[k] || 0) + u.size; longest = Math.max(longest, S.t - u.enq); }
+        const waiting = S.queue.map(u => ({ size: u.size, region: u.region, bucket: u.bucket, wait: S.t - u.enq, pct: u.pct, spread: u.spread })).sort((a, b) => b.wait - a.wait).slice(0, 8);
+        let p = 0, openSeats = 0; for (const Mt of S.matches) p += Mt.humans; for (const Mt of S.open) openSeats += Mt.free;
+        let mn = 0; for (const x of S.menus) mn += x.u.size;
+        R.snaps[hourOf(S.t)] = { online: { ...S.online }, byKey, longest, waiting, playing: p, matches: S.matches.length, openSeats, menus: mn, event: inEvent(cfg, S.t) };
+      }
+    }
+    for (const H of R.hourly) { if (H.samples) { for (const r of REGIONS) H.online[r.id] /= H.samples; H.q /= H.samples; H.play /= H.samples; H.menu /= H.samples; } }
+    return R;
+  }
+
+  function quant(sorted, q) { if (!sorted.length) return null; const i = Math.min(sorted.length - 1, Math.floor(q * sorted.length)); return sorted[i]; }
+  function summarize(R, hours, f = {}) {
+    const hs = new Set(hours), ws = [];
+    let joinedMid = 0;
+    for (const x of R.waits) if (hs.has(x.h) && (!f.key || x.key === f.key) && (!f.reg || x.reg === f.reg) && (!f.bucket || x.key.startsWith(f.bucket + ':'))) {
+      for (let i = 0; i < x.n; i++) ws.push(x.w);
+      if (x.via === 'seat') joinedMid += x.n;
+    }
+    let gave = 0;
+    for (const x of R.gave) if (hs.has(x.h) && (!f.key || x.key === f.key) && (!f.reg || x.reg === f.reg) && (!f.bucket || x.key.startsWith(f.bucket + ':'))) gave += x.n;
+    ws.sort((a, b) => a - b);
+    let mt = 0, seats = 0, bots = 0, withBot = 0, short = 0, withShort = 0, q = 0, close = 0, lop = 0, pclose = 0, cross = 0, ranked = 0, unrated = 0, deep = 0, nh = 0; const worst = [];
+    for (const x of R.matches) if (hs.has(x.h) && (!f.key || x.key === f.key) && (!f.bucket || x.bucket === f.bucket)) {
+      mt++; seats += x.seats; bots += x.bots; short += x.short; if (x.bots) withBot++; if (x.short) withShort++;
+      if (x.fav != null) { q++; if (x.fav <= 1 / x.k + .05) close++; if (x.fav > 1 / x.k + .15) lop++; if (x.pfav <= 1 / x.k + .05) pclose++; }
+      deep += x.deep; nh += x.nh;
+      if (x.cross) cross++; worst.push(x.worst);
+      if (x.bucket === 'ranked') { ranked++; if (!x.rated) unrated++; }
+    }
+    worst.sort((a, b) => a - b);
+    let online = 0; for (const h of hours) { const H = R.hourly[h]; online += H.online.NA + H.online.EU + H.online.AP; }
+    const n = ws.length;
+    return {
+      n, online: online / hours.length, median: quant(ws, .5), p90: quant(ws, .9), over3: n ? ws.filter(w => w > 180).length / n : 0,
+      gaveUp: (n + gave) ? gave / (n + gave) : 0, joinedMid: n ? joinedMid / n : 0,
+      matches: mt, botSeats: seats ? bots / seats : 0, withBot: mt ? withBot / mt : 0, shortSeats: seats ? short / seats : 0, withShort: mt ? withShort / mt : 0,
+      close: q ? close / q : null, lopsided: q ? lop / q : null, pclose: q ? pclose / q : null, deep: nh ? deep / nh : null, cross: mt ? cross / mt : 0, worstPing: quant(worst, .5),
+      unrated: ranked ? unrated / ranked : 0, rankedMatches: ranked,
+    };
+  }
+  function verdict(s) {
+    if (!s || !s.n) return 'none';
+    if (s.median <= 90 && s.p90 <= 180 && s.gaveUp < .02) return 'ok';
+    if (s.median <= 150 && s.p90 <= 300 && s.gaveUp < .05) return 'tight';
+    return 'bad';
+  }
+  function hourly(R) {
+    return R.hourly.map((H, h) => {
+      const s = summarize(R, [h]);
+      return { h, online: H.online, total: H.online.NA + H.online.EU + H.online.AP, q: H.q, play: H.play, menu: H.menu, median: s.median, p90: s.p90, botSeats: s.botSeats, gaveUp: s.gaveUp, n: s.n, matches: s.matches };
+    });
+  }
+  // Rough fill time for one queue holding everyone, from the research's rule of thumb T ≈ (m − 1) / (r · f).
+  function ruleOfThumb(cfg, ccu) {
+    const F = FORMATS[cfg.format], m = F.teams * F.size, L = cfg.matchMin + cfg.overheadMin, f = Math.min(1, cfg.bandStart);
+    return 60 * (m - 1) / ((ccu / L) * f);
+  }
+  // Parties over the day: how many were blocked, by size, and the spread of those that formed.
+  function partyStats(R) {
+    const by = {}; let n = 0, blocked = 0, pl = 0, plBlocked = 0;
+    for (const x of R.parties) {
+      const b = by[x.size] || (by[x.size] = { n: 0, blocked: 0, spreads: [] });
+      b.n++; b.spreads.push(x.spread); n++; pl += x.size;
+      if (x.blocked) { b.blocked++; blocked++; plBlocked += x.size; }
+    }
+    for (const k in by) by[k].spreads.sort((a, b) => a - b);
+    // Of all matched players, how many queued in a party
+    let inParty = 0, all = 0; for (const x of R.waits) { all += x.n; if (x.n > 1) inParty += x.n; }
+    return { by, n, blocked: n ? blocked / n : 0, players: pl, playersBlocked: pl ? plBlocked / pl : 0, partyShareAfter: all ? inParty / all : 0 };
+  }
+  // Full 5-stacks by spread band (in divisions), sampled directly (a day holds too few). The matchmaker knows only the
+  // learned party bonus, the average over every party that queues (after the cap); a 5-stack carrying more than that
+  // average wins more than predicted. The win-only point cut that cancels the edge: a win pays (1 − c) and a loss
+  // costs 1, so c = (2p − 1) / p for a real chance p in a match predicted at 50%.
+  function stackBands(cfg, bands, N = 40000) {
+    const rng = rngOf(cfg.seed * 7919), a = Math.sqrt(cfg.friendCorr), b = Math.sqrt(1 - cfg.friendCorr), pd = partyDist(5);
+    const mem = z => { const p = Phi(z), rdiv = divOf(p); return { s: SKILL_MEAN + SKILL_SD * z, p, rdiv, rank: Math.max(0, Math.min(20.99, rdiv + cfg.rankLag * gauss(rng))) }; };
+    const draw = size => { const z0 = gauss(rng), ms = []; for (let i = 0; i < size; i++) ms.push(mem(a * z0 + b * gauss(rng))); return ms; };
+    // the learned bonus: the average carry per extra member over the parties that get to queue (members dropped as in the day)
+    let cs = 0, ex = 0;
+    for (let i = 0; i < N; i++) {
+      let x = rng(), size = 2; for (const k in pd.w) { x -= pd.w[k]; if (x <= 0) { size = +k; break; } }
+      if (size < 2) size = 2;
+      let ms = draw(size);
+      if (partySpread(ms) > capFor(cfg, size) + 1e-9) {
+        if (cfg.overCap !== 'drop') continue;
+        while (ms.length > 1 && partySpread(ms) > capFor(cfg, ms.length) + 1e-9) {
+          let bi = 0, bs = Infinity; for (let k = 0; k < ms.length; k++) { const rest = ms.filter((_, j) => j !== k), s2 = rest.length > 1 ? partySpread(rest) : 0; if (s2 < bs) { bs = s2; bi = k; } }
+          ms = ms.filter((_, j) => j !== bi);
+        }
+        if (ms.length < 2) continue;
+      }
+      cs += carryOf(cfg, ms); ex += ms.length - 1;
+    }
+    const perExtra = ex ? cs / ex : 0, sd = Math.sqrt(10) * BETA, rows = bands.map(([lo, hi]) => ({ lo, hi, n: 0, edge: 0 }));
+    for (let i = 0; i < N; i++) {
+      const ms = draw(5), sp = partySpread(ms), row = rows.find(r => sp >= r.lo && sp < r.hi); if (!row) continue;
+      row.n++; row.edge += carryOf(cfg, ms) - 4 * perExtra;
+    }
+    return rows.map(r => {
+      const p = r.n ? Phi(r.edge / r.n / sd) : null;
+      return { lo: r.lo, hi: r.hi, share: r.n / N, p, cut: p == null ? null : Math.max(0, (2 * p - 1) / p) };
+    });
+  }
+  return { REGIONS, FORMATS, TIERS, TIER_CUTS, divOf, run, summarize, verdict, hourly, ruleOfThumb, inEvent, partyStats, stackBands };
+})();
+</script>
+
+<script>
+/* ---------------------------------------------------------------------------------------------
+   The page: a thin shell over QueueSim.
+--------------------------------------------------------------------------------------------- */
+const DEFAULTS = {
+  seed: 7, peakCCU: 200, offPeak: .33, split: '45/40/15',
+  format: '5v5', matchMin: 12, overheadMin: 1.5, start: 'full', padStartSec: 60, padWindow: .4,
+  structure: 'one', rankedShare: .6, modes: 3, modePolicy: 'rotate', pickMin: 2,
+  eventStart: 19, eventHours: 3, eventBoost: 1.25, casualInEvents: false,
+  bandStart: .16, bandDoubleSec: 20, bandOpenSec: 120, crossSec: 30, giveUpSec: 480,
+  partyShare: .25, bots: 'off', botAfterSec: 90, minHumans: 'half', botPenalty: 3,
+  friendCorr: .5, rankLag: 1, carry: .25, sessionMatches: 4,
+  capDuo: Infinity, capTrio: Infinity, capFour: Infinity, five: 'exempt', overCap: 'drop',
+};
+let cfg = { ...DEFAULTS };
+
+const fmtS = s => s == null ? '—' : s < 60 ? Math.round(s) + ' s' : Math.floor(s / 60) + ':' + String(Math.round(s % 60)).padStart(2, '0');
+const pct = x => x == null ? '—' : (x * 100 < 1 && x > 0 ? '<1' : Math.round(x * 100)) + '%';
+const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const VLBL = { ok: 'Acceptable', tight: 'Tight', bad: 'Too long', none: 'No matches' };
+const pill = v => `<span class="pill ${v}">${VLBL[v]}</span>`;
+const REG = QueueSim.REGIONS;
+const REGCOL = { NA: 'var(--s1)', EU: 'var(--s2)', AP: 'var(--s3)' };
+
+const STRUCTS = {
+  one: 'One queue, ranked on top', events: 'One queue + timed ranked events', split: 'Separate ranked and casual queues',
+};
+const I = Infinity;
+const PRESETS = [
+  { id: 'none', name: 'No cap', sub: 'any width queues', set: { capDuo: I, capTrio: I, capFour: I } },
+  { id: '1t', name: '1 / 1 / 1', sub: '1 tier for every size', set: { capDuo: 3, capTrio: 3, capFour: 3 } },
+  { id: '2t', name: '2 / 2 / 2', sub: '2 tiers for every size', set: { capDuo: 6, capTrio: 6, capFour: 6 } },
+  { id: '3t', name: '3 / 3 / 3', sub: '3 tiers for every size', set: { capDuo: 9, capTrio: 9, capFour: 9 } },
+  { id: '123', name: '1 / 2 / 3', sub: 'a tier wider per size', set: { capDuo: 3, capTrio: 6, capFour: 9 } },
+  { id: '223', name: '2 / 2 / 3', sub: 'the sheet\'s pick: 4-stacks a tier wider', set: { capDuo: 6, capTrio: 6, capFour: 9 } },
+  { id: '234', name: '2 / 3 / 4', sub: 'a tier wider per size, from 2', set: { capDuo: 6, capTrio: 9, capFour: 12 } },
+];
+
+const CAPS_O = [[I, 'no cap'], [2, '2 divisions'], [3, '1 tier'], [4, '1 tier 1 division'], [6, '2 tiers'], [9, '3 tiers'], [12, '4 tiers']];
+const GROUPS = [
+  { name: 'Party cap', fields: [
+    { k: 'capDuo', l: 'A duo may be', o: CAPS_O },
+    { k: 'capTrio', l: 'A party of 3 may be', o: CAPS_O },
+    { k: 'capFour', l: 'A party of 4 may be', o: CAPS_O },
+    { k: 'five', l: 'A full 5-stack', o: [['exempt', 'any width, for fewer points (ADR 0018)'], ['capped', 'same cap as a party of 4']] },
+    { k: 'overCap', l: 'A party over its cap', o: [['drop', 'drops its furthest member (solo) until it fits'], ['split', 'splits, everyone queues solo'], ['away', 'is turned away (logs off)']] },
+  ] },
+  { name: 'Parties', fields: [
+    { k: 'partyShare', l: 'Players arriving in a party', o: [[0, 'none'], [.1, '10%'], [.25, '25%'], [.4, '40%'], [.6, '60%']] },
+    { k: 'friendCorr', l: "How alike friends' skills are (ρ)", o: [[0, '0: random strangers'], [.3, '0.3'], [.5, '0.5'], [.7, '0.7'], [.9, '0.9: nearly the same']] },
+    { k: 'rankLag', l: 'Rank sits off the rating by about', o: [[0, '0 (rank = rating)'], [1, '±1 division'], [2, '±2 divisions'], [3, '±1 tier']] },
+    { k: 'carry', l: 'Carry: weaker members play up toward the best by', o: [[0, '0 (only the sum counts, ADR 0010)'], [.1, '10% of the gap'], [.25, '25% of the gap'], [.5, '50% of the gap']] },
+    { k: 'sessionMatches', l: 'A session lasts about', o: [[2, '2 matches'], [4, '4 matches'], [8, '8 matches'], [1e9, 'all day']] },
+  ] },
+  { name: 'Population', fields: [
+    { k: 'peakCCU', l: 'Players online at the busiest hour', o: [[60, '60'], [100, '100'], [150, '150'], [200, '200'], [300, '300'], [500, '500']] },
+    { k: 'offPeak', l: "Each region's quietest hour", o: [[.1, '10% of its busiest'], [.2, '20% of its busiest'], [.33, '33% of its busiest'], [.5, '50% of its busiest']] },
+    { k: 'split', l: 'Where players live (Americas / Europe / Asia-Pacific)', o: [['45/40/15', '45 / 40 / 15%'], ['50/45/5', '50 / 45 / 5%'], ['40/35/25', '40 / 35 / 25%'], ['34/33/33', '34 / 33 / 33%'], ['30/60/10', '30 / 60 / 10%']] },
+  ] },
+  { name: 'Match', fields: [
+    { k: 'format', l: 'Format', o: [['2v2', '2v2'], ['3v3', '3v3'], ['4v4', '4v4'], ['5v5', '5v5 (ADR 0006)'], ['2v2v2', '2v2v2'], ['2v2v2v2', '2v2v2v2']] },
+    { k: 'matchMin', l: 'Match length', o: [[6, '6 min'], [8, '8 min'], [10, '10 min'], [12, '12 min'], [15, '15 min'], [20, '20 min']] },
+    { k: 'overheadMin', l: 'Results and menus between matches', o: [[.5, '30 s'], [1.5, '1:30'], [3, '3 min']] },
+    { k: 'start', l: 'Start a match', o: [['full', 'only with every seat filled'], ['pad', 'once every team has a starting player']] },
+    { k: 'padStartSec', l: 'Starting short after waiting', o: [[15, '15 s'], [30, '30 s'], [60, '1 min'], [90, '1:30']], when: c => c.start === 'pad' },
+    { k: 'padWindow', l: 'Open seats can be taken until', o: [[.25, 'a quarter into the match'], [.4, '40% into the match'], [.6, '60% into the match']], when: c => c.start === 'pad' },
+  ] },
+  { name: 'Queues', fields: [
+    { k: 'structure', l: 'Ranked and casual', o: Object.entries(STRUCTS) },
+    { k: 'rankedShare', l: 'Players who would rather play ranked', o: [[.3, '30%'], [.5, '50%'], [.6, '60%'], [.8, '80%']], when: c => c.structure !== 'one' },
+    { k: 'modePolicy', l: 'Modes', o: [['rotate', 'the server rotates them (one queue)'], ['pick', 'players pick at least some'], ['choose', 'players pick one each']] },
+    { k: 'modes', l: 'Modes on offer', o: [[2, '2'], [3, '3'], [4, '4']], when: c => c.modePolicy !== 'rotate' },
+    { k: 'pickMin', l: 'Fewest modes a player must pick', o: [[1, '1'], [2, '2'], [3, '3']], when: c => c.modePolicy === 'pick' },
+    { k: 'eventStart', l: 'Ranked event starts (UTC)', o: [[19, '19:00 (Europe evening)'], [1, '01:00 (Americas evening)'], [12, '12:00 (Asia-Pacific evening)']], when: c => c.structure === 'events' },
+    { k: 'eventHours', l: 'Event length', o: [[2, '2 h'], [3, '3 h'], [4, '4 h'], [6, '6 h']], when: c => c.structure === 'events' },
+    { k: 'eventBoost', l: 'Extra players an event draws', o: [[1, 'none'], [1.25, '+25%'], [1.5, '+50%']], when: c => c.structure === 'events' },
+    { k: 'casualInEvents', l: 'During an event, casual', o: [[false, 'closes (everyone plays ranked)'], [true, 'stays open']], when: c => c.structure === 'events' },
+  ] },
+  { name: 'Matchmaker', fields: [
+    { k: 'bandStart', l: 'Skill band at first', o: [[.08, '±4% of players'], [.16, '±8% of players'], [.33, '±16% of players'], [.66, '±33% of players'], [2, 'anyone']] },
+    { k: 'bandDoubleSec', l: 'Band doubles every', o: [[10, '10 s'], [20, '20 s'], [40, '40 s'], [1e9, 'never']] },
+    { k: 'bandOpenSec', l: 'Anyone allowed after', o: [[60, '1 min'], [120, '2 min'], [240, '4 min'], [1e9, 'never']] },
+    { k: 'crossSec', l: 'Play across regions', o: [[-1, 'never'], [0, 'from the start'], [15, 'after 15 s'], [30, 'after 30 s'], [60, 'after 1 min']] },
+    { k: 'giveUpSec', l: 'A player gives up after', o: [[300, '5 min'], [480, '8 min'], [900, '15 min']] },
+  ] },
+  { name: 'Bots', fields: [
+    { k: 'bots', l: 'Bots may fill seats in', o: [['off', 'no match'], ['casual', 'casual matches only'], ['any', 'any match (it becomes unrated)']] },
+    { k: 'botAfterSec', l: 'Bots come in after', o: [[30, '30 s'], [60, '1 min'], [90, '1:30'], [120, '2 min'], [240, '4 min']], when: c => c.bots !== 'off' && c.start !== 'pad' },
+    { k: 'minHumans', l: 'Fewest players in a match with bots', o: [['two', '2'], ['team', 'one per team'], ['half', 'half the seats'], ['most', 'all but one per team']], when: c => c.bots !== 'off' && c.start !== 'pad' },
+    { k: 'botPenalty', l: 'A bot plays like', o: [[0, 'a player of the lobby\'s skill'], [3, 'a slightly weaker player'], [6, 'a much weaker player']], when: c => c.bots !== 'off' },
+    { k: 'seed', l: 'Random day', o: [[7, 'Day A'], [11, 'Day B'], [23, 'Day C'], [42, 'Day D']] },
+  ] },
+];
+
+function renderRules() {
+  const el = document.getElementById('rules');
+  el.innerHTML = GROUPS.map(g => `<div class="group"><h3>${g.name}</h3><div class="settings">${g.fields.map(f => {
+    const on = !f.when || f.when(cfg);
+    return `<div class="field${on ? '' : ' off'}"><label for="f_${f.k}">${f.l}</label><select id="f_${f.k}" data-k="${f.k}" ${on ? '' : 'disabled'}>${f.o.map((o, i) => `<option value="${i}" ${o[0] === cfg[f.k] ? 'selected' : ''}>${esc(o[1])}</option>`).join('')}</select></div>`;
+  }).join('')}</div></div>`).join('');
+  if (cfg.start === 'pad' && cfg.bots !== 'off') el.insertAdjacentHTML('beforeend', '<p class="small muted">With matches starting short, bots only take seats nobody in the queue filled before the seats close.</p>');
+  el.querySelectorAll('select').forEach(s => s.addEventListener('change', () => {
+    const f = GROUPS.flatMap(g => g.fields).find(x => x.k === s.dataset.k);
+    cfg[f.k] = f.o[+s.value][0]; walkState = null; refresh();
+  }));
+  const pe = document.getElementById('presets');
+  pe.innerHTML = PRESETS.map(p => {
+    const on = Object.entries(p.set).every(([k, v]) => cfg[k] === v);
+    return `<button class="chip" data-p="${p.id}" aria-pressed="${on}">${esc(p.name)}<small>${esc(p.sub)}</small></button>`;
+  }).join('');
+  pe.querySelectorAll('button').forEach(b => b.addEventListener('click', () => { Object.assign(cfg, PRESETS.find(p => p.id === b.dataset.p).set); walkState = null; refresh(); }));
+}
+
+/* ---------- walkthroughs ---------- */
+const WALKS = [
+  { id: 'where', name: 'Where the close matches went', desc: 'Solo players only, then a quarter of players arriving in parties, then the two things that make a party\'s spread matter: friends with alike skills, and a strong player who lifts the rest.',
+    watch: 'Watch "Close matches (real)" and "as predicted". With carry 0, the two match and a party\'s spread changes nothing; with carry, wide parties win more than the matchmaker expects.',
+    steps: [
+      { l: 'Set up: solo players only, no cap', reset: { partyShare: 0 } },
+      { l: 'A quarter of players arrive in parties (carry 25%)', set: { partyShare: .25 } },
+      { l: 'No carry: only the sum counts (ADR 0010)', set: { carry: 0 } },
+      { l: 'Carry back on, at 50%', set: { carry: .5 } },
+    ] },
+  { id: 'caps', name: 'Caps at 200', desc: 'The same day with each cap. A blocked party drops its furthest-out member until it fits, so most of it still plays.',
+    watch: 'Close matches against "Parties blocked". Waits barely move with any cap.',
+    steps: [
+      { l: 'Set up: no cap', reset: {} },
+      { l: '3 tiers for every size', set: { capDuo: 9, capTrio: 9, capFour: 9 } },
+      { l: '2 tiers, 4-stacks 3 (the sheet\'s pick)', set: { capDuo: 6, capTrio: 6, capFour: 9 } },
+      { l: '2 tiers for every size', set: { capFour: 6 } },
+      { l: '1 tier for every size', set: { capDuo: 3, capTrio: 3, capFour: 3 } },
+    ] },
+  { id: 'fewer', name: 'Narrower, or just fewer?', desc: 'A cap breaks parties up, so it also lowers the share of players in parties. This compares a cap with no cap at the same share in parties.',
+    watch: 'If no cap at the lower share is as close as the cap, the cap only helped by making parties rarer. With carry, narrowness adds some on top.',
+    steps: [
+      { l: 'Set up: 1 tier for every size', reset: { capDuo: 3, capTrio: 3, capFour: 3 } },
+      { l: 'No cap, with only 10% arriving in parties', set: { capDuo: I, capTrio: I, capFour: I, partyShare: .1 } },
+      { l: 'Same, with no carry', set: { carry: 0 } },
+      { l: '1 tier again, no carry, 25% in parties', set: { capDuo: 3, capTrio: 3, capFour: 3, partyShare: .25 } },
+    ] },
+  { id: 'over', name: 'Drop, split or turn away', desc: 'ADR 0018 blocks a wide party and tells it to drop a member. The issue asked which to model: here a party drops its furthest member by default. The others are shown for comparison.',
+    watch: 'Players in parties and close matches. "Turned away" loses those players for the session.',
+    steps: [
+      { l: 'Set up: 2 / 2 / 3, drop a member', reset: { capDuo: 6, capTrio: 6, capFour: 9 } },
+      { l: 'Split: everyone queues solo', set: { overCap: 'split' } },
+      { l: 'Turned away: the party logs off', set: { overCap: 'away' } },
+    ] },
+  { id: 'lag', name: 'Rank and rating', desc: 'The cap reads the wider of rank and rating spreads, because rank lags rating. The more rank lags, the more parties a cap blocks.',
+    watch: '"Parties blocked" and the spreads in the party table.',
+    steps: [
+      { l: 'Set up: 2 / 2 / 3, rank = rating', reset: { capDuo: 6, capTrio: 6, capFour: 9, rankLag: 0 } },
+      { l: 'Rank about ±1 division off', set: { rankLag: 1 } },
+      { l: 'Rank about ±1 tier off', set: { rankLag: 3 } },
+      { l: 'Friends less alike (ρ = 0.3)', set: { rankLag: 1, friendCorr: .3 } },
+      { l: 'Friends more alike (ρ = 0.7)', set: { friendCorr: .7 } },
+    ] },
+  { id: 'quiet', name: 'A quiet launch', desc: 'At 60 players at the busiest hour, with ADR 0012\'s short starts and bots in seats nobody takes.',
+    watch: 'Off-peak waits and give-ups with and without the cap.',
+    steps: [
+      { l: 'Set up: 60 at the busiest hour, no cap, short starts', reset: { peakCCU: 60, start: 'pad', bots: 'any' } },
+      { l: '2 / 2 / 3', set: { capDuo: 6, capTrio: 6, capFour: 9 } },
+      { l: 'Full lobbies only', set: { start: 'full', bots: 'off' } },
+    ] },
+  { id: 'five', name: '5-stacks', desc: 'A full 5-stack is a whole team, so it can\'t drag a stranger into a lopsided team. ADR 0018 lets it queue at any width for fewer points. The table "A full 5-stack\'s point cut" shows how many stacks each cut would hit.',
+    watch: 'The 5-stack table as carry changes: the cut that cancels a wide stack\'s edge grows with carry.',
+    steps: [
+      { l: 'Set up: 2 / 2 / 3, 5-stacks exempt, carry 25%', reset: { capDuo: 6, capTrio: 6, capFour: 9 } },
+      { l: 'Carry 10%', set: { carry: .1 } },
+      { l: 'Carry 50%', set: { carry: .5 } },
+      { l: 'Cap 5-stacks like 4-stacks instead', set: { carry: .25, five: 'capped' } },
+    ] },
+];
+let walkTab = 0, walkState = null;
+function renderTabs() {
+  const tabs = document.getElementById('tabs');
+  tabs.innerHTML = WALKS.map((w, i) => `<button role="tab" id="tab_${w.id}" aria-selected="${i === walkTab}">${esc(w.name)}</button>`).join('');
+  tabs.querySelectorAll('[role=tab]').forEach((b, i) => b.addEventListener('click', () => { walkTab = i; walkState = null; renderTabs(); renderWalk(); }));
+}
+function renderWalk() {
+  const w = WALKS[walkTab], done = walkState && walkState.id === w.id ? walkState.done : -1;
+  document.getElementById('walk').innerHTML = `<div style="display:grid;gap:12px"><p>${esc(w.desc)}</p><div class="steps">${w.steps.map((s, i) =>
+    `<div class="step ${i <= done ? 'done' : i === done + 1 ? 'next' : ''}"><button id="ws_${w.id}_${i}" data-i="${i}" ${i > done + 1 ? 'disabled' : ''}>${esc(s.l)}</button></div>`).join('')}</div>
+    <div class="watch"><b>What to watch:</b> ${esc(w.watch)}</div></div>`;
+  document.querySelectorAll('#walk .step button').forEach(b => b.addEventListener('click', () => {
+    const i = +b.dataset.i, s = w.steps[i];
+    if (s.reset) cfg = { ...DEFAULTS, ...s.reset }; else Object.assign(cfg, s.set);
+    refresh(); walkState = { id: w.id, done: i }; renderWalk();
+  }));
+}
+
+/* ---------- charts ---------- */
+const W = 640, Hh = 220, ML = 46, MR = 12, MT = 10, MB = 28;
+const xH = h => ML + (W - ML - MR) * h / 24;
+function hourBands(R) {
+  const bw = (W - ML - MR) / 24;
+  return R.peakHours.map(h => `<rect x="${xH(h)}" y="${MT}" width="${bw}" height="${Hh - MT - MB}" fill="var(--band)"/>`).join('') +
+    R.offHours.map(h => `<rect x="${xH(h)}" y="${MT}" width="${bw}" height="${Hh - MT - MB}" fill="var(--band2)"/>`).join('');
+}
+function xAxis() { return [0, 6, 12, 18, 24].map(h => `<text x="${xH(h)}" y="${Hh - 8}" text-anchor="middle">${String(h % 24).padStart(2, '0')}:00</text>`).join('') + `<text x="${W - MR}" y="${Hh - 8}" text-anchor="end" style="opacity:0">.</text>`; }
+function yAxis(max, ticks, fmt) {
+  const y = v => MT + (Hh - MT - MB) * (1 - v / max);
+  return { y, svg: `<g class="grid">${ticks.map(t => `<line x1="${ML}" x2="${W - MR}" y1="${y(t)}" y2="${y(t)}"/>`).join('')}</g>` + ticks.map(t => `<text x="${ML - 6}" y="${y(t) + 4}" text-anchor="end">${fmt(t)}</text>`).join('') };
+}
+function niceTicks(max, n = 4) { const raw = max / n, p = Math.pow(10, Math.floor(Math.log10(raw))), s = [1, 2, 2.5, 5, 10].find(m => m * p >= raw) * p; const out = []; for (let v = 0; v <= max + 1e-9; v += s) out.push(+v.toFixed(6)); if (out[out.length - 1] < max) out.push(out[out.length - 1] + s); return out; }
+function hoverRects(id) { const bw = (W - ML - MR) / 24; let s = ''; for (let h = 0; h < 24; h++) s += `<rect class="hv" data-h="${h}" data-c="${id}" x="${xH(h)}" y="${MT}" width="${bw}" height="${Hh - MT - MB}" fill="transparent"/>`; return s; }
+function localTimes(h) { return REG.map(r => `${r.name} ${String(((h + r.utc) % 24 + 24) % 24).padStart(2, '0')}:30`).join(' · '); }
+
+function chartOnline(R, HR) {
+  const max0 = Math.max(...HR.map(x => x.total)) * 1.08, ticks = niceTicks(max0), max = ticks[ticks.length - 1], ax = yAxis(max, ticks, v => v);
+  let base = Array(24).fill(0), paths = '';
+  for (const r of REG) {
+    const top = HR.map((x, i) => base[i] + x.online[r.id]);
+    const pts = top.map((v, i) => `${xH(i + .5)},${ax.y(v)}`), bot = base.map((v, i) => `${xH(i + .5)},${ax.y(v)}`).reverse();
+    paths += `<polygon points="${pts.join(' ')} ${bot.join(' ')}" fill="${REGCOL[r.id]}" stroke="var(--surface)" stroke-width="2" stroke-linejoin="round"/>`;
+    base = top;
+  }
+  document.getElementById('chOnline').innerHTML = `<svg viewBox="0 0 ${W} ${Hh}" role="img" aria-label="Players online by hour, stacked by region">${hourBands(R)}${ax.svg}${paths}${xAxis()}${hoverRects('online')}</svg>`;
+  document.getElementById('lgOnline').innerHTML = REG.map(r => `<span><i class="sw" style="background:${REGCOL[r.id]}"></i>${r.name}</span>`).join('') +
+    `<span><i class="sw" style="background:var(--band);outline:1px solid var(--peak)"></i>peak hours</span><span><i class="sw" style="background:var(--band2);outline:1px solid var(--off)"></i>off-peak hours</span>`;
+}
+function chartWait(R, HR) {
+  const cap = R.cfg.giveUpSec, vals = HR.flatMap(x => [x.median, x.p90]).filter(v => v != null);
+  const max0 = Math.max(60, ...vals) * 1.08, tk = niceTicks(max0 / 60).map(v => v * 60), max = tk[tk.length - 1], ax = yAxis(max, tk, v => fmtS(v));
+  const line = (key, col) => { let d = '', pen = false; HR.forEach((x, i) => { if (x[key] == null) { pen = false; return; } d += `${pen ? 'L' : 'M'}${xH(i + .5)},${ax.y(x[key])}`; pen = true; }); return `<path d="${d}" fill="none" stroke="${col}" stroke-width="2" stroke-linejoin="round"/>` + HR.map((x, i) => x[key] == null ? '' : `<circle cx="${xH(i + .5)}" cy="${ax.y(x[key])}" r="3" fill="${col}" stroke="var(--surface)" stroke-width="1.5"/>`).join(''); };
+  const ref = [90, 180].filter(v => v < max).map(v => `<line x1="${ML}" x2="${W - MR}" y1="${ax.y(v)}" y2="${ax.y(v)}" stroke="var(--muted)" stroke-dasharray="3 4"/><text x="${W - MR}" y="${ax.y(v) - 4}" text-anchor="end">${v === 90 ? 'median target 1:30' : '90% target 3:00'}</text>`).join('');
+  document.getElementById('chWait').innerHTML = `<svg viewBox="0 0 ${W} ${Hh}" role="img" aria-label="Median and 90th percentile wait by hour">${hourBands(R)}${ax.svg}${ref}${line('p90', 'var(--off)')}${line('median', 'var(--peak)')}${xAxis()}${hoverRects('wait')}</svg>`;
+  document.getElementById('lgWait').innerHTML = `<span><i class="sw ln" style="background:var(--peak)"></i>median wait</span><span><i class="sw ln" style="background:var(--off)"></i>90% matched within</span>`;
+}
+function chartBots(R, HR) {
+  const el = document.getElementById('chBots');
+  if (!HR.some(x => x.botSeats > 0)) { el.innerHTML = `<p class="small muted">${R.cfg.bots === 'off' ? 'Bots are off in this setup.' : 'No bots were needed today.'}</p>`; return; }
+  const tk = [0, .25, .5, .75, 1], ax = yAxis(1, tk, v => Math.round(v * 100) + '%'), bw = (W - ML - MR) / 24;
+  const bars = HR.map((x, i) => x.botSeats > 0 ? `<rect x="${xH(i) + 3}" y="${ax.y(x.botSeats)}" width="${bw - 6}" height="${ax.y(0) - ax.y(x.botSeats)}" rx="2" fill="var(--accent)"/>` : '').join('');
+  el.innerHTML = `<svg viewBox="0 0 ${W} ${Hh}" role="img" aria-label="Share of seats filled by bots, by hour">${hourBands(R)}${ax.svg}${bars}${xAxis()}${hoverRects('bots')}</svg>`;
+}
+function groupedBars(elId, cats, series, maxV) {
+  const Wb = 640, Hb = 220, l = 40, r = 8, t = 10, b = 44, gw = (Wb - l - r) / cats.length, bwid = Math.min(26, (gw - 10) / series.length);
+  const tk = niceTicks(maxV), max = tk[tk.length - 1], y = v => t + (Hb - t - b) * (1 - v / max);
+  let s = `<g class="grid">${tk.map(v => `<line x1="${l}" x2="${Wb - r}" y1="${y(v)}" y2="${y(v)}"/>`).join('')}</g>` + tk.map(v => `<text x="${l - 6}" y="${y(v) + 4}" text-anchor="end">${Math.round(v * 100)}%</text>`).join('');
+  cats.forEach((c, i) => {
+    const x0 = l + gw * i + (gw - bwid * series.length - 2 * (series.length - 1)) / 2;
+    series.forEach((se, j) => { const v = se.vals[i]; if (v > 0) s += `<rect x="${x0 + j * (bwid + 2)}" y="${y(v)}" width="${bwid}" height="${y(0) - y(v)}" rx="2" fill="${se.col}"><title>${se.name}, ${c}: ${pct(v)}</title></rect>`; });
+    s += `<text x="${l + gw * (i + .5)}" y="${Hb - b + 16}" text-anchor="middle">${c}</text>`;
+  });
+  document.getElementById(elId).innerHTML = `<svg viewBox="0 0 ${Wb} ${Hb}" role="img">${s}</svg>`;
+}
+function chartHist(R) {
+  const bins = [[0, 30, '<30s'], [30, 60, '30–60s'], [60, 90, '1–1:30'], [90, 180, '1:30–3'], [180, 300, '3–5m'], [300, 1e9, '5m+'], [-1, -1, 'gave up']];
+  const mk = hours => {
+    const hs = new Set(hours), c = bins.map(() => 0); let n = 0;
+    for (const x of R.waits) if (hs.has(x.h)) { const i = bins.findIndex(b => x.w >= b[0] && x.w < b[1]); c[i] += x.n; n += x.n; }
+    for (const x of R.gave) if (hs.has(x.h)) { c[6] += x.n; n += x.n; }
+    return c.map(v => n ? v / n : 0);
+  };
+  const a = mk(R.peakHours), b = mk(R.offHours);
+  groupedBars('chHist', bins.map(x => x[2]), [{ name: 'Peak', col: 'var(--peak)', vals: a }, { name: 'Off-peak', col: 'var(--off)', vals: b }], Math.max(.05, ...a, ...b));
+  document.getElementById('lgHist').innerHTML = `<span><i class="sw" style="background:var(--peak)"></i>peak hours</span><span><i class="sw" style="background:var(--off)"></i>off-peak hours</span>`;
+}
+function chartQual(R) {
+  const k = R.F.teams, base = 1 / k;
+  const bins = [[0, .05], [.05, .1], [.1, .15], [.15, .25], [.25, 1.01]], labels = bins.map(b => b[1] > 1 ? `${Math.round((base + .25) * 100)}%+` : `${Math.round((base + b[0]) * 100)}–${Math.round((base + b[1]) * 100)}%`);
+  const mk = hours => { const hs = new Set(hours), c = bins.map(() => 0); let n = 0, short = 0; for (const x of R.matches) if (hs.has(x.h)) { if (x.fav == null) { short++; continue; } const d = x.fav - base; c[bins.findIndex(b => d >= b[0] && d < b[1])]++; n++; } return c.map(v => n ? v / n : 0); };
+  const a = mk(R.peakHours), b = mk(R.offHours);
+  groupedBars('chQual', labels, [{ name: 'Peak', col: 'var(--peak)', vals: a }, { name: 'Off-peak', col: 'var(--off)', vals: b }], Math.max(.05, ...a, ...b));
+  document.getElementById('lgQual').innerHTML = `<span><i class="sw" style="background:var(--peak)"></i>peak hours</span><span><i class="sw" style="background:var(--off)"></i>off-peak hours</span>` + (R.cfg.start === 'pad' ? '<span class="muted">Matches that played a player down are left out.</span>' : '');
+}
+
+/* ---------- tables ---------- */
+function summaryTable(R) {
+  const all = [...Array(24).keys()], P = QueueSim.summarize(R, R.peakHours), O = QueueSim.summarize(R, R.offHours), A = QueueSim.summarize(R, all);
+  const cols = [P, O, A], PS = QueueSim.partyStats(R);
+  const row = (label, f, sub) => `<tr><td class="l">${label}${sub ? `<br><span class="small muted">${sub}</span>` : ''}</td>${cols.map(c => `<td>${f(c)}</td>`).join('')}</tr>`;
+  const pad = R.cfg.start === 'pad', bots = R.cfg.bots !== 'off';
+  document.getElementById('summary').innerHTML = `<thead><tr><th></th><th>Peak (4 busiest hours)</th><th>Off-peak (4 quietest)</th><th>Whole day</th></tr></thead><tbody>
+    <tr class="head"><td class="l">Verdict</td>${cols.map(c => `<td>${pill(QueueSim.verdict(c))}</td>`).join('')}</tr>
+    ${row('Players online', c => Math.round(c.online))}
+    ${row('Median wait', c => fmtS(c.median))}
+    ${row('90% matched within', c => fmtS(c.p90))}
+    ${row('Waited over 3 minutes', c => pct(c.over3))}
+    ${row('Gave up', c => pct(c.gaveUp), `after ${fmtS(R.cfg.giveUpSec)} in the queue`)}
+    ${pad ? row('Joined a match in progress', c => pct(c.joinedMid), 'took an open seat as a joined player') : ''}
+    ${pad ? row('Matches that played a player down', c => pct(c.withShort), 'a seat nobody filled before it closed') : ''}
+    ${bots ? row('Seats taken by bots', c => pct(c.botSeats)) : ''}
+    ${bots ? row('Matches with a bot', c => pct(c.withBot)) : ''}
+    ${R.cfg.bots === 'any' ? row('Ranked-queue matches left unrated', c => pct(c.unrated), 'because a bot played') : ''}
+    ${row('Close matches (real)', c => pct(c.close), `favourite at most ${Math.round((1 / R.F.teams + .05) * 100)}% to win, carry included`)}
+    ${R.cfg.carry > 0 ? row('Close matches, as predicted', c => pct(c.pclose), 'what the matchmaker thinks, from the sum and the learned party bonus') : ''}
+    ${row('Out of depth', c => pct(c.deep), 'players more than 25 percentile points from their lobby\'s average')}
+    ${row('Lopsided matches', c => pct(c.lopsided), `favourite over ${Math.round((1 / R.F.teams + .15) * 100)}% to win`)}
+    ${row('Mixed-region matches', c => pct(c.cross))}
+    ${row('Typical worst ping in a match', c => c.worstPing == null ? '—' : c.worstPing + ' ms', 'median, for the player furthest from the server')}
+    ${row('Matches played', c => c.matches)}
+    <tr class="head"><td class="l">Parties (whole day)</td><td colspan="3"></td></tr>
+    <tr><td class="l">Parties blocked<br><span class="small muted">over the cap when they tried to queue</span></td><td colspan="3">${pct(PS.blocked)} of ${PS.n} parties (${pct(PS.playersBlocked)} of their players)</td></tr>
+    <tr><td class="l">Matched players who were in a party<br><span class="small muted">after the cap; ${pct(R.cfg.partyShare)} arrive in one</span></td><td colspan="3">${pct(PS.partyShareAfter)}</td></tr>
+    ${R.cfg.overCap === 'away' ? `<tr><td class="l">Players turned away</td><td colspan="3">${R.turnedAway}</td></tr>` : ''}
+  </tbody>`;
+  const ev = R.cfg.structure === 'events' ? ` Ranked event ${String(R.cfg.eventStart).padStart(2, '0')}:00–${String((R.cfg.eventStart + R.cfg.eventHours) % 24).padStart(2, '0')}:00 UTC.` : '';
+  document.getElementById('dayNote').textContent = `${R.cfg.format}, ${R.cfg.matchMin}-minute matches, ${STRUCTS[R.cfg.structure].toLowerCase()}.${ev} Because the regions peak at different times, the quietest hour worldwide still has ${Math.round(Math.min(...R.hourly.map(x => x.target)))} of the ${R.cfg.peakCCU} online, though each region drops to ${Math.round(R.cfg.offPeak * 100)}% of its own busiest. Peak hours (UTC): ${R.peakHours.map(h => h + ':00').join(', ')}. Off-peak: ${R.offHours.map(h => h + ':00').join(', ')}.`;
+}
+const tiersOf = d => d === Infinity ? 'no cap' : d % 3 === 0 ? `${d / 3} tier${d === 3 ? '' : 's'}` : d < 3 ? `${d} div` : `${Math.floor(d / 3)} tier${d < 6 ? '' : 's'} ${d % 3} div`;
+const spreadTxt = d => d == null ? '—' : (d / 3).toFixed(1) + ' tiers';
+function capFor(c, size) { return size === 2 ? c.capDuo : size === 3 ? c.capTrio : size === 4 ? c.capFour : c.five === 'exempt' ? Infinity : c.capFour; }
+function partiesTable(R) {
+  const PS = QueueSim.partyStats(R), q = (a, f) => a.length ? a[Math.min(a.length - 1, Math.floor(f * a.length))] : null;
+  document.getElementById('parties').innerHTML = `<thead><tr><th>Size</th><th>Cap</th><th>Formed today</th><th>Blocked</th><th>Median spread</th><th>90% within</th></tr></thead><tbody>${[2, 3, 4, 5].map(k => {
+    const b = PS.by[k] || { n: 0, blocked: 0, spreads: [] };
+    return `<tr><td class="l">${k === 5 ? 'full 5-stack' : 'party of ' + k}</td><td>${tiersOf(capFor(R.cfg, k))}</td><td>${b.n}</td><td>${b.n ? pct(b.blocked / b.n) : '—'}</td><td>${spreadTxt(q(b.spreads, .5))}</td><td>${spreadTxt(q(b.spreads, .9))}</td></tr>`;
+  }).join('')}</tbody>`;
+  document.getElementById('partyNote').textContent = `Spread is the wider of rank and rating, measured as parties arrive, before any member is dropped. ${{ drop: 'A blocked party drops its furthest member, who queues solo, until the rest fit.', split: 'A blocked party splits and everyone queues solo.', away: 'A blocked party is turned away and logs off.' }[R.cfg.overCap]}`;
+}
+// The sheet's suggested 5-stack schedule: no cut up to the 4-stack cap, then −25% per tier beyond it, at most −75%.
+function suggestedCut(c, lo) { const base = c.capFour === Infinity ? 9 : c.capFour; return lo < base ? 0 : Math.min(.75, .25 * (1 + Math.floor((lo - base) / 3))); }
+function stacksTable(cfg) {
+  const el = document.getElementById('stacks');
+  if (cfg.format !== '5v5') { el.innerHTML = '<tbody><tr><td class="l muted">Only for 5v5.</td></tr></tbody>'; return; }
+  const bands = [[0, 3], [3, 6], [6, 9], [9, 12], [12, 15], [15, 99]];
+  const rows = QueueSim.stackBands(cfg, bands);
+  el.innerHTML = `<thead><tr><th>Spread</th><th>Share of 5-stacks</th><th>Wins</th><th>Cut that cancels it</th><th>Suggested cut</th></tr></thead><tbody>${rows.map(r =>
+    `<tr><td class="l">${r.hi > 30 ? `${r.lo / 3}+ tiers` : `${r.lo / 3}–${r.hi / 3} tiers`}</td><td>${pct(r.share)}</td><td>${r.p == null ? '—' : (r.p * 100).toFixed(1) + '%'}</td><td>${r.cut == null ? '—' : Math.round(r.cut * 100) ? '−' + Math.round(r.cut * 100) + '%' : 'none'}</td><td>${cfg.five === 'exempt' ? (suggestedCut(cfg, r.lo) ? '−' + Math.round(suggestedCut(cfg, r.lo) * 100) + '%' : 'none') : r.lo >= (cfg.capFour === Infinity ? 99 : cfg.capFour) ? 'blocked' : 'none'}</td></tr>`).join('')}</tbody>`;
+}
+function queueName(R, key) {
+  const [b, i] = key.split(':'), M = R.cfg.modePolicy === 'rotate' ? 1 : R.cfg.modes;
+  const bn = R.cfg.structure === 'one' ? 'The queue (rated)' : b === 'ranked' ? 'Ranked' : 'Casual';
+  return M > 1 ? `${bn}, mode ${'ABCD'[+i]}` : bn;
+}
+function queuesTable(R) {
+  const tot = QueueSim.summarize(R, [...Array(24).keys()]).n || 1;
+  const rows = R.keys.map(k => { const all = QueueSim.summarize(R, [...Array(24).keys()], { key: k }), P = QueueSim.summarize(R, R.peakHours, { key: k }), O = QueueSim.summarize(R, R.offHours, { key: k }); return { k, all, P, O }; }).filter(r => r.all.n || r.all.matches);
+  document.getElementById('queues').innerHTML = `<thead><tr><th>Queue</th><th>Share of matched players</th><th>Peak median / 90%</th><th>Off-peak median / 90%</th><th>Off-peak gave up</th><th>Bot seats</th><th>Off-peak</th></tr></thead><tbody>${rows.map(r =>
+    `<tr><td class="l">${esc(queueName(R, r.k))}</td><td>${pct(r.all.n / tot)}</td><td>${fmtS(r.P.median)} / ${fmtS(r.P.p90)}</td><td>${fmtS(r.O.median)} / ${fmtS(r.O.p90)}</td><td>${pct(r.O.gaveUp)}</td><td>${pct(r.all.botSeats)}</td><td>${pill(QueueSim.verdict(r.O))}</td></tr>`).join('')}</tbody>` +
+    (R.cfg.modePolicy === 'pick' ? '<caption class="small muted" style="caption-side:bottom;text-align:left;padding-top:6px">A player who picked several modes is counted in the mode they were matched in.</caption>' : '');
+}
+function regionsTable(R) {
+  document.getElementById('regions').innerHTML = `<thead><tr><th>Region</th><th>Peak median / 90%</th><th>Off-peak median / 90%</th><th>Off-peak gave up</th><th>Off-peak</th></tr></thead><tbody>${REG.map(r => {
+    const P = QueueSim.summarize(R, R.peakHours, { reg: r.id }), O = QueueSim.summarize(R, R.offHours, { reg: r.id });
+    return `<tr><td class="l"><i class="sw" style="background:${REGCOL[r.id]}"></i>${r.name}</td><td>${fmtS(P.median)} / ${fmtS(P.p90)}</td><td>${fmtS(O.median)} / ${fmtS(O.p90)}</td><td>${pct(O.gaveUp)}</td><td>${pill(QueueSim.verdict(O))}</td></tr>`;
+  }).join('')}</tbody>`;
+}
+function renderSnap() {
+  const h = +document.getElementById('snapH').value, s = R0.snaps[h];
+  document.getElementById('snapLbl').textContent = `${String(h).padStart(2, '0')}:30 · ${localTimes(h)}`;
+  if (!s) { document.getElementById('snap').innerHTML = ''; return; }
+  const on = s.online.NA + s.online.EU + s.online.AP, q = Object.values(s.byKey).reduce((a, b) => a + b, 0);
+  const bk = Object.entries(s.byKey).map(([k, v]) => `${R0.cfg.structure === 'one' ? 'queue' : k}: ${v}`).join(', ') || 'nobody';
+  document.getElementById('snap').innerHTML = `<dl class="kv">
+    <dt>Online</dt><dd>${Math.round(on)} (${REG.map(r => `${r.id} ${s.online[r.id]}`).join(' · ')})</dd>
+    <dt>In a match</dt><dd>${s.playing} in ${s.matches} matches</dd>
+    <dt>Waiting in the queue</dt><dd>${q} (${esc(bk)})</dd>
+    <dt>On results and menus</dt><dd>${s.menus}</dd>
+    ${R0.cfg.start === 'pad' ? `<dt>Open seats in matches being played</dt><dd>${s.openSeats}</dd>` : ''}
+    <dt>Longest current wait</dt><dd>${fmtS(s.longest)}</dd>
+    ${R0.cfg.structure === 'events' ? `<dt>Ranked event</dt><dd>${s.event ? 'on' : 'off'}</dd>` : ''}
+  </dl>${s.waiting.length ? `<div class="scroll"><table style="margin-top:10px"><thead><tr><th>Waiting longest</th><th>Region</th><th>Skill (percentile)</th><th>Waited</th></tr></thead><tbody>${s.waiting.map(w =>
+    `<tr><td class="l">${w.size > 1 ? `party of ${w.size}, ${spreadTxt(w.spread)} apart` : 'solo'}${R0.cfg.structure !== 'one' ? `, ${w.bucket}` : ''}</td><td>${w.region}</td><td>${Math.round(w.pct * 100)}</td><td>${fmtS(w.wait)}</td></tr>`).join('')}</tbody></table></div>` : ''}`;
+}
+function thumbNote(R) {
+  const peak = Math.max(...R.hourly.map(x => x.target)), low = Math.min(...R.hourly.map(x => x.target));
+  const one = R.keys.length === 1 && R.cfg.start === 'full';
+  document.getElementById('thumb').textContent = `Rule of thumb from the research (T ≈ (m − 1) / (r · f), everyone in one queue, skill band as it starts): ${fmtS(QueueSim.ruleOfThumb(R.cfg, peak))} at the busiest hour, ${fmtS(QueueSim.ruleOfThumb(R.cfg, low))} at the quietest.` +
+    (one ? ' The simulation is usually faster because the band widens while people wait.' : ' This setup splits players or starts matches short, so the formula is only a rough reference here.');
+}
+
+/* ---------- hover ---------- */
+const tip = document.createElement('div'); tip.className = 'tip'; tip.hidden = true; document.body.appendChild(tip);
+document.addEventListener('mousemove', e => {
+  const t = e.target.closest && e.target.closest('rect.hv');
+  if (!t || !HR0) { tip.hidden = true; return; }
+  const x = HR0[+t.dataset.h];
+  tip.innerHTML = `<b>${String(x.h).padStart(2, '0')}:00–${String(x.h + 1).padStart(2, '0')}:00 UTC</b><br><span class="muted">${localTimes(x.h)}</span><br>
+    Online ${Math.round(x.total)} (${REG.map(r => `${r.id} ${Math.round(x.online[r.id])}`).join(' · ')})<br>
+    Queuing ${x.q.toFixed(1)} · playing ${Math.round(x.play)}<br>
+    Median wait ${fmtS(x.median)} · 90% within ${fmtS(x.p90)}<br>
+    ${x.matches} matches${R0.cfg.bots !== 'off' ? ` · bot seats ${pct(x.botSeats)}` : ''} · gave up ${pct(x.gaveUp)}`;
+  tip.hidden = false;
+  const w = tip.offsetWidth, hgt = tip.offsetHeight;
+  tip.style.left = Math.min(window.scrollX + e.clientX + 14, window.scrollX + document.documentElement.clientWidth - w - 8) + 'px';
+  tip.style.top = (window.scrollY + e.clientY - hgt - 10) + 'px';
+});
+
+/* ---------- compare ---------- */
+let kept = [];
+function describe(c) {
+  const P = PRESETS.find(p => Object.entries(p.set).every(([k, v]) => c[k] === v));
+  const bits = [P ? `cap ${P.name}` : `cap ${tiersOf(c.capDuo)} / ${tiersOf(c.capTrio)} / ${tiersOf(c.capFour)}`, `${c.peakCCU} at peak`];
+  if (c.five !== 'exempt') bits.push('5-stacks capped');
+  if (c.overCap !== 'drop') bits.push(c.overCap === 'split' ? 'over cap: split' : 'over cap: turned away');
+  if (c.carry !== DEFAULTS.carry) bits.push(`carry ${Math.round(c.carry * 100)}%`);
+  if (c.friendCorr !== DEFAULTS.friendCorr) bits.push(`ρ ${c.friendCorr}`);
+  if (c.rankLag !== DEFAULTS.rankLag) bits.push(`rank lag ${c.rankLag} div`);
+  if (c.format !== '5v5') bits.push(c.format);
+  if (c.structure !== 'one') bits.push(STRUCTS[c.structure]);
+  if (c.modePolicy !== 'rotate') bits.push(c.modePolicy === 'pick' ? `pick ≥${c.pickMin} of ${c.modes} modes` : `1 of ${c.modes} modes each`);
+  if (c.start === 'pad') bits.push('starts short');
+  if (c.bots !== 'off') bits.push(c.bots === 'any' ? 'bots anywhere' : 'bots in casual');
+  if (c.partyShare !== DEFAULTS.partyShare) bits.push(`${Math.round(c.partyShare * 100)}% in parties`);
+  if (c.crossSec !== DEFAULTS.crossSec) bits.push(c.crossSec < 0 ? 'regions apart' : 'regions mix ' + (c.crossSec ? `after ${c.crossSec}s` : 'at once'));
+  if (c.split !== DEFAULTS.split) bits.push(c.split.replaceAll('/', '/') + '% by region');
+  return bits.join(' · ');
+}
+function rowFor(R) { const P = QueueSim.summarize(R, R.peakHours), O = QueueSim.summarize(R, R.offHours), A = QueueSim.summarize(R, [...Array(24).keys()]); return { d: describe(R.cfg), P, O, A, PS: QueueSim.partyStats(R) }; }
+function renderCompare() {
+  const t = document.getElementById('compare');
+  if (!kept.length) { t.innerHTML = '<tbody><tr><td class="l muted">Keep a run, or try every cap, to see them side by side here.</td></tr></tbody>'; return; }
+  t.innerHTML = `<thead><tr><th>Setup</th><th>Close (real)</th><th>As predicted</th><th>Out of depth</th><th>Parties blocked</th><th>Players in parties</th><th>Off-peak median / 90%</th><th>Off-peak gave up</th><th>Off-peak</th></tr></thead><tbody>${kept.map(r =>
+    `<tr><td class="l">${esc(r.d)}</td><td>${pct(r.A.close)}</td><td>${pct(r.A.pclose)}</td><td>${pct(r.A.deep)}</td><td>${pct(r.PS.blocked)}</td><td>${pct(r.PS.partyShareAfter)}</td><td>${fmtS(r.O.median)} / ${fmtS(r.O.p90)}</td><td>${pct(r.O.gaveUp)}</td><td>${pill(QueueSim.verdict(r.O))}</td></tr>`).join('')}</tbody>`;
+}
+function sweep(variants, label) {
+  const st = document.getElementById('sweepStatus'); let i = 0;
+  document.querySelectorAll('#cmp-h ~ .panel button').forEach(b => b.disabled = true);
+  const step = () => {
+    if (i >= variants.length) { st.textContent = `Added ${variants.length} runs (${label}).`; document.querySelectorAll('#cmp-h ~ .panel button').forEach(b => b.disabled = false); return; }
+    st.textContent = `Running ${i + 1} of ${variants.length}…`;
+    setTimeout(() => { kept.push(rowFor(QueueSim.run({ ...cfg, ...variants[i] }))); i++; renderCompare(); step(); }, 10);
+  };
+  step();
+}
+document.getElementById('bKeep').addEventListener('click', () => { kept.push(rowFor(R0)); renderCompare(); });
+document.getElementById('bClear').addEventListener('click', () => { kept = []; renderCompare(); document.getElementById('sweepStatus').textContent = ''; });
+document.getElementById('bCaps').addEventListener('click', () => sweep(PRESETS.map(p => p.set), 'every cap'));
+document.getElementById('bCcu').addEventListener('click', () => sweep([200, 100, 60].flatMap(n => PRESETS.map(p => ({ ...p.set, peakCCU: n }))), 'every cap at 200, 100 and 60'));
+document.getElementById('bReset').addEventListener('click', () => { cfg = { ...DEFAULTS }; walkState = null; renderWalk(); refresh(); });
+document.getElementById('snapH').addEventListener('input', renderSnap);
+
+/* ---------- run ---------- */
+let R0 = null, HR0 = null, pending = null;
+function refresh() {
+  renderRules();
+  const st = document.getElementById('runStatus'); st.innerHTML = 'Running the day…';
+  clearTimeout(pending);
+  pending = setTimeout(() => {
+    const t0 = performance.now();
+    R0 = QueueSim.run(cfg); HR0 = QueueSim.hourly(R0);
+    summaryTable(R0); chartOnline(R0, HR0); chartWait(R0, HR0); chartBots(R0, HR0); chartHist(R0); chartQual(R0);
+    queuesTable(R0); regionsTable(R0); renderSnap(); thumbNote(R0); partiesTable(R0); stacksTable(cfg);
+    st.innerHTML = `Simulated one day (after 6 hours of warm-up) in <b>${Math.round(performance.now() - t0)} ms</b> · ${R0.waits.reduce((a, x) => a + x.n, 0)} players matched.`;
+  }, 20);
+}
+renderTabs(); renderWalk(); renderCompare(); refresh();
+</script>
