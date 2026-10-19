@@ -1,13 +1,16 @@
 //! PROTOTYPE — throwaway. Answers #24: does class-item Set A ("fix the placeholders") work?
 //! The prototype's items are kept wherever ADR 0004 allows, each class gets a throwable (or
 //! kit) on 1 crate and a capstone on all 8. Compare it with Set A plus Set B's 1-crate
-//! refill. Not production code; lives on `prototype/class-items`, branched from
+//! refill. Also answers #25: does Set B ("Team Buddies ladder") work? 1 crate refills what
+//! you hold, and every class's all 8 is a vehicle its kicker drives (tank, hauler mech,
+//! field ambulance). Compare it with the ambulance's heal aura swapped for a heal shot the
+//! driver fires. Not production code; lives on `prototype/class-items`, branched from
 //! `prototype/arena-map` (the lanes + jungle map, 5v5, and the crate grammar picked in #17).
 //!
 //!     cargo run --example class_items
 //!
-//! See `docs/prototypes/class-items.md` for what to try. Set B (#25) and Set C (#26) add
-//! their options to the set switch.
+//! See `docs/prototypes/class-items.md` for what to try. Set C (#26) adds its options to the
+//! set switch.
 //!
 //! Play: WASD / left stick move, mouse / right stick aim, Space / A jump, E / X grab or place,
 //! RMB / RB throw (empty hands: right-click item), LMB / RT shoot, Q / LB throw your 1-crate
@@ -15,14 +18,16 @@
 //! Set switch: 1 item set, 2 left click, 3 right click, 4 1 crate, 5 all 8, 6 super crates.
 //! Live: the match keeps going; the next kick uses the new items.
 //! C changes your class. T drops a crate at your feet, Y a super crate. G gives red a bunker
-//! round its pad now (Shift+G a super one), to try raiding it.
+//! round its pad now (Shift+G a super one), to try raiding it. V gives you your class's all 8
+//! now (Shift+V a super one). M gives every red player a nail-mine layer (Shift+M super).
 //! Tune: Up/Down pick, Left/Right change (Shift = x5); every item number is in the panel.
 //! R / Start resets, P prints settings, verdicts and results, H hides the rules and panel.
 //!
 //! Smoke tests: `CRATE_EXIT_AFTER=<s>`, `CRATE_SCREENSHOT=<file.png>`, `CRATE_SEAT=bot`,
 //! `CRATE_RULES=<6 digits>` (the option index of each set switch, e.g. `CRATE_RULES=000101`),
 //! `CRATE_ARENA=1` (whole-arena camera), `CRATE_SPEED=<1-4>` (time scale), `CRATE_MAP=open`,
-//! `CRATE_CLASS=<0-2>` (your class).
+//! `CRATE_CLASS=<0-2>` (your class), `CRATE_ALL8=<s>` (you get your class's all 8 at that
+//! match time, for trying a vehicle), `CRATE_MINES=1` (you start with a super nail-mine layer).
 
 use std::collections::VecDeque;
 use std::f32::consts::FRAC_PI_2;
@@ -354,8 +359,14 @@ enum Make {
     PatchKit,
     /// 1 crate, Set B: tops up what you hold (left click to full, right click +1), else +25 hp.
     Refill,
-    /// All 8, Set A soldier.
+    /// All 8, Set A and Set B soldier.
     Tank,
+    /// All 8, Set B engineer: a vehicle that carries several crates, with no weapon.
+    Mech,
+    /// All 8, Set B medic: a vehicle that heals allies close by (an aura).
+    Ambulance,
+    /// All 8, Set B variant: the ambulance with a heal shot its driver fires instead.
+    AmbulanceShot,
     /// All 8, Set A engineer: a horseshoe of walls round your pad, with one gap.
     Bunker,
     /// All 8, Set A medic: every living teammate to full health with a shield.
@@ -370,6 +381,8 @@ impl Make {
             Make::Gun(GunKind::Rapid) => "rapid gun (LMB)",
             Make::Gun(GunKind::Rivet) => "rivet gun (LMB)",
             Make::Gun(GunKind::Heal) => "heal gun (LMB)",
+            Make::Gun(GunKind::Shotgun) => "shotgun (LMB)",
+            Make::Gun(GunKind::Mines) => "nail-mine layer (LMB)",
             Make::Alt(AltKind::Rockets) => "rockets (RMB)",
             Make::Alt(AltKind::ShieldWall) => "shield wall (RMB)",
             Make::Alt(AltKind::Pulse) => "heal pulse (RMB)",
@@ -378,6 +391,9 @@ impl Make {
             Make::PatchKit => "patch kit",
             Make::Refill => "refill",
             Make::Tank => "tank",
+            Make::Mech => "hauler mech",
+            Make::Ambulance => "ambulance (heal aura)",
+            Make::AmbulanceShot => "ambulance (heal shot)",
             Make::Bunker => "bunker",
             Make::Rally => "rally",
         }
@@ -390,6 +406,8 @@ impl Make {
             Make::Gun(GunKind::Rapid) => "shots pierce one target",
             Make::Gun(GunKind::Rivet) => "rivets stagger",
             Make::Gun(GunKind::Heal) => "heals bounce to a 2nd ally",
+            Make::Gun(GunKind::Shotgun) => "7 pellets, tighter spread",
+            Make::Gun(GunKind::Mines) => "mines show the victim on the minimap",
             Make::Alt(AltKind::Rockets) => "rockets split into 3",
             Make::Alt(AltKind::ShieldWall) => "allies shoot through",
             Make::Alt(AltKind::Pulse) => "pulse adds a 25 shield",
@@ -398,6 +416,8 @@ impl Make {
             Make::PatchKit => "+2 charges",
             Make::Refill => "both to full",
             Make::Tank => "cannon leaves a slow zone, 450 hp",
+            Make::Mech => "carries 4, stomp knocks crates off carriers",
+            Make::Ambulance | Make::AmbulanceShot => "+25 shield every 5 s",
             Make::Bunker => "the gap is one-way",
             Make::Rally => "100 shield, clears slows",
         }
@@ -416,6 +436,34 @@ enum GunKind {
     Rivet,
     /// Medic: a heal shot that heals the first hurt teammate it touches, weak against enemies.
     Heal,
+    /// Set B soldier: a spread of pellets, short range.
+    Shotgun,
+    /// Set B engineer: each click drops a visible floor mine at your feet.
+    Mines,
+}
+
+/// An all-8 vehicle, driven by its kicker. It soaks hits until destroyed; the driver comes
+/// out unhurt.
+#[derive(Clone, Copy, PartialEq, Debug)]
+enum Ride {
+    /// Rocket cannon, can't carry.
+    Tank,
+    /// Carries several crates, no weapon; left click stomps.
+    Mech,
+    /// Heals allies within its aura; a weak blaster.
+    Ambulance,
+    /// Variant: no aura; the driver fires heal shots.
+    AmbulanceShot,
+}
+
+impl Ride {
+    fn name(self) -> &'static str {
+        match self {
+            Ride::Tank => "tank",
+            Ride::Mech => "hauler mech",
+            Ride::Ambulance | Ride::AmbulanceShot => "ambulance",
+        }
+    }
 }
 
 /// A right-click item from the class loadout (2 x 2 flat).
@@ -473,15 +521,22 @@ impl Class {
 // ---------------------------------------------------------------------------------------
 
 /// Whole sets for key 1: (name, option index for left click, right click, 1 crate, all 8).
-const SETS: [(&str, [usize; 4]); 2] = [
+const SETS: [(&str, [usize; 4]); 4] = [
     ("A: fix the placeholders", [0, 0, 0, 0]),
     ("A + Set B's 1-crate refill", [0, 0, 1, 0]),
+    ("B: Team Buddies ladder", [1, 0, 1, 1]),
+    ("B, ambulance fires heal shots", [1, 0, 1, 2]),
 ];
-const SET_NAMES: [&str; 2] = [SETS[0].0, SETS[1].0];
-const LEFT_OPTS: [&str; 1] = ["A: rapid / rivet / heal gun"];
-const RIGHT_OPTS: [&str; 1] = ["A: rockets / shield wall / heal pulse"];
+const SET_NAMES: [&str; 4] = [SETS[0].0, SETS[1].0, SETS[2].0, SETS[3].0];
+const LEFT_OPTS: [&str; 2] = ["A: rapid / rivet / heal gun", "B: shotgun / nail-mine layer / heal gun"];
+/// Set B's right click is Set A's.
+const RIGHT_OPTS: [&str; 1] = ["A, B: rockets / shield wall / heal pulse"];
 const SMALL_OPTS: [&str; 2] = ["A: grenade / patch kit / med pack", "B: refill"];
-const ALL8_OPTS: [&str; 1] = ["A: tank / bunker / rally"];
+const ALL8_OPTS: [&str; 3] = [
+    "A: tank / bunker / rally",
+    "B: tank / hauler mech / ambulance (heal aura)",
+    "B: tank / hauler mech / ambulance (heal shot)",
+];
 
 /// What a class makes from a recipe, given which set each slot is on.
 fn item_of(slot: Slot, class: Class, sets: [usize; 4]) -> Make {
@@ -490,6 +545,8 @@ fn item_of(slot: Slot, class: Class, sets: [usize; 4]) -> Make {
         Slot::Player1 => Make::Players(1),
         Slot::Player2 => Make::Players(2),
         Slot::Pair => match (sets[0], class) {
+            (1, Soldier) => Make::Gun(GunKind::Shotgun),
+            (1, Engineer) => Make::Gun(GunKind::Mines),
             (_, Soldier) => Make::Gun(GunKind::Rapid),
             (_, Engineer) => Make::Gun(GunKind::Rivet),
             (_, Medic) => Make::Gun(GunKind::Heal),
@@ -506,6 +563,9 @@ fn item_of(slot: Slot, class: Class, sets: [usize; 4]) -> Make {
             (_, Medic) => Make::Toss(TossKind::MedPack),
         },
         Slot::All8 => match (sets[3], class) {
+            (1 | 2, Engineer) => Make::Mech,
+            (1, Medic) => Make::Ambulance,
+            (2, Medic) => Make::AmbulanceShot,
             (_, Soldier) => Make::Tank,
             (_, Engineer) => Make::Bunker,
             (_, Medic) => Make::Rally,
@@ -693,6 +753,31 @@ enum P {
     RallyShield,
     RallyInvuln,
     RefillHp,
+    // Set B (#25).
+    EnemyMap,
+    ShotgunPellets,
+    ShotgunDmg,
+    ShotgunShells,
+    ShotgunRate,
+    ShotgunSpread,
+    ShotgunRange,
+    MineDmg,
+    Mines,
+    MinesOut,
+    MineRoot,
+    MineReveal,
+    MechTime,
+    MechHp,
+    MechCrates,
+    MechSpeed,
+    StompRadius,
+    StompPush,
+    AmbTime,
+    AmbHp,
+    AmbRadius,
+    AmbHeal,
+    AmbShotHeal,
+    AmbBlaster,
 }
 
 /// How many of the params are the set switch (keys 1-6).
@@ -771,6 +856,32 @@ fn defaults() -> Vec<Param> {
         num("rally: shield", 50.0, 0.0, 100.0, 5.0, ""),
         num("rally: invulnerable", 4.0, 0.0, 10.0, 0.5, "s"),
         num("refill: hp if empty", 25.0, 0.0, 100.0, 5.0, ""),
+        // Set B (#25). Enemies show on the minimap only when your team can see them, so a
+        // super mine's reveal means something.
+        choice("minimap enemies", 0, &["only in sight", "always shown"]),
+        num("shotgun: pellets", 5.0, 1.0, 12.0, 1.0, ""),
+        num("shotgun: dmg/pellet", 12.0, 4.0, 40.0, 1.0, ""),
+        num("shotgun: shells", 12.0, 4.0, 40.0, 1.0, ""),
+        num("shotgun: rate", 1.25, 0.5, 4.0, 0.25, "/s"),
+        num("shotgun: spread", 30.0, 5.0, 60.0, 5.0, "deg"),
+        num("shotgun: range", 7.0, 3.0, 15.0, 0.5, "m"),
+        num("mine: damage", 40.0, 10.0, 100.0, 5.0, ""),
+        num("mine: mines", 6.0, 1.0, 20.0, 1.0, ""),
+        num("mine: max out", 3.0, 1.0, 10.0, 1.0, ""),
+        num("mine: root", 1.0, 0.0, 3.0, 0.25, "s"),
+        num("mine: super reveal", 3.0, 0.0, 10.0, 0.5, "s"),
+        num("mech: time", 40.0, 10.0, 120.0, 5.0, "s"),
+        num("mech: hp", 400.0, 100.0, 1000.0, 25.0, ""),
+        num("mech: crates", 3.0, 1.0, 8.0, 1.0, ""),
+        num("mech: speed", 0.8, 0.4, 1.2, 0.05, "x"),
+        num("mech: stomp radius", 3.0, 1.0, 6.0, 0.25, "m"),
+        num("mech: stomp push", 12.0, 2.0, 30.0, 1.0, "m/s"),
+        num("ambulance: time", 40.0, 10.0, 120.0, 5.0, "s"),
+        num("ambulance: hp", 350.0, 100.0, 1000.0, 25.0, ""),
+        num("ambulance: aura", 5.0, 2.0, 10.0, 0.5, "m"),
+        num("ambulance: aura heal", 15.0, 2.0, 40.0, 1.0, "hp/s"),
+        num("ambulance: heal shot", 12.0, 2.0, 40.0, 1.0, "hp"),
+        num("ambulance: blaster", 8.0, 0.0, 25.0, 1.0, "dmg"),
     ]
 }
 
@@ -851,6 +962,10 @@ fn init_from_env(mut tune: ResMut<Tune>, mut sim: ResMut<Sim>) {
         sim.your_class = CLASSES[c.min(2)];
     }
     sim.reset(&tune);
+    sim.all8_at = std::env::var("CRATE_ALL8").ok().map(|v| v.parse::<f32>().unwrap_or(0.0));
+    if std::env::var("CRATE_MINES").is_ok() {
+        sim.actors[YOU].gun = Some(sim.new_gun(GunKind::Mines, true));
+    }
 }
 
 /// Key 1: puts every slot on the chosen set's options.
@@ -918,13 +1033,31 @@ struct Gun {
     gold: bool,
 }
 
+/// The all-8 vehicle you're driving (tank, hauler mech or ambulance).
 #[derive(Clone, Copy)]
 struct Tank {
+    ride: Ride,
     hp: f32,
     max: f32,
     life: f32,
     gold: bool,
+    /// Super ambulance: counts to the next 25 shield (every 5 s).
+    beat: f32,
 }
+
+/// A nail mine on the floor: one-shot, set off by the first enemy to step on it.
+struct Mine {
+    pos: Vec3,
+    team: usize,
+    owner: usize,
+    gold: bool,
+    /// Arms this long after it's laid.
+    arm: f32,
+}
+
+const MINE_R: f32 = 0.7;
+/// How high a hauler mech carries its bottom crate.
+const MECH_TOP: f32 = 2.6;
 
 /// A player: you, or a bot standing in for another player.
 struct Actor {
@@ -949,6 +1082,8 @@ struct Actor {
     /// 1-crate item to throw with Q (grenade or med pack), and whether it's super.
     toss: Option<(TossKind, bool)>,
     tank: Option<Tank>,
+    /// The crates a hauler mech carries, bottom first.
+    load: Vec<u32>,
     class: Class,
     /// Slowed while this is above 0 (a super tank's slow zone).
     slow: f32,
@@ -956,6 +1091,12 @@ struct Actor {
     slow_immune: f32,
     /// Takes no damage (the medic after a rally).
     invuln: f32,
+    /// Can't move while this is above 0 (a nail mine); can still shoot.
+    root: f32,
+    /// A shove (the mech's stomp) that slides you on its own, dying away.
+    shove: Vec3,
+    /// Shown on the enemy's minimap while this is above 0 (a super nail mine).
+    reveal: f32,
     /// Absorbs damage before hp (from shield camps).
     shield: f32,
     /// Bots: the goal they're routing to, the next waypoint, and how old it is.
@@ -985,6 +1126,10 @@ impl Actor {
             alt_cd: 0.0,
             toss: None,
             tank: None,
+            load: Vec::new(),
+            root: 0.0,
+            shove: Vec3::ZERO,
+            reveal: 0.0,
             slow: 0.0,
             slow_immune: 0.0,
             invuln: 0.0,
@@ -1113,6 +1258,8 @@ struct Shot {
     split: bool,
     /// Super tank cannon: leaves a slow zone.
     slow: bool,
+    /// Heal shot from an ambulance (counted as ambulance healing).
+    amb: bool,
     ent: Option<Entity>,
 }
 
@@ -1134,6 +1281,7 @@ impl Shot {
             stagger: 0.0,
             split: false,
             slow: false,
+            amb: false,
             ent: None,
         }
     }
@@ -1225,6 +1373,7 @@ struct Sim {
     shots: Vec<Shot>,
     lobs: Vec<Lob>,
     walls: Vec<Wall>,
+    mines: Vec<Mine>,
     /// Slow zones from a super tank's cannon: where, radius, time left, whose.
     zones: Vec<(Vec3, f32, f32, usize)>,
     /// Each team's rally: seconds left (it locks out all 8 while it lasts).
@@ -1259,6 +1408,8 @@ struct Sim {
     vuln: usize,
     /// The class you play (C cycles it); survives resets.
     your_class: Class,
+    /// Smoke runs: you get your class's all 8 at this match time, once it's free.
+    all8_at: Option<f32>,
     /// Blue's bots build pad shapes and kick them open too.
     ally_stacks: bool,
     /// You're in your seat (not watching a bot play it).
@@ -1304,6 +1455,21 @@ struct Sim {
     /// Shots fired with each team's crafted left-click guns, and with the standard gun.
     crafted_shots: [u32; 2],
     plain_shots: [u32; 2],
+    // Set B.
+    /// Mines each team laid, and how many went off under an enemy.
+    mines_laid: [u32; 2],
+    mine_hits: [u32; 2],
+    /// Crates each team's hauler mechs picked up, and set down on their own pad.
+    mech_grabbed: [u32; 2],
+    mech_banked: [u32; 2],
+    /// Seconds each team had a vehicle out, and the most out at once (both teams).
+    ride_time: [f32; 2],
+    rides_max: usize,
+    /// Hp each team's ambulances healed.
+    amb_healed: [f32; 2],
+    /// Seconds any ambulance was out, and the kills made in that time.
+    amb_time: f32,
+    amb_kills: u32,
 }
 
 /// Vulnerability options (key 6).
@@ -1320,6 +1486,7 @@ impl Sim {
             shots: Vec::new(),
             lobs: Vec::new(),
             walls: Vec::new(),
+            mines: Vec::new(),
             zones: Vec::new(),
             rally: [0.0; 2],
             monsters: Vec::new(),
@@ -1344,6 +1511,7 @@ impl Sim {
             build_time: 0.0,
             vuln: STEAL,
             your_class: Class::Soldier,
+            all8_at: None,
             ally_stacks: false,
             you_play: true,
             pad_kick: [0.0; 2],
@@ -1373,6 +1541,15 @@ impl Sim {
             pack_heals: [0; 2],
             crafted_shots: [0; 2],
             plain_shots: [0; 2],
+            mines_laid: [0; 2],
+            mine_hits: [0; 2],
+            mech_grabbed: [0; 2],
+            mech_banked: [0; 2],
+            ride_time: [0.0; 2],
+            rides_max: 0,
+            amb_healed: [0.0; 2],
+            amb_time: 0.0,
+            amb_kills: 0,
         };
         s.reset(tune);
         s
@@ -1407,6 +1584,7 @@ impl Sim {
             self.despawn.extend(c.ent);
         }
         self.lobs.clear();
+        self.mines.clear();
         self.zones.clear();
         self.rally = [0.0; 2];
         for w in self.walls.drain(..) {
@@ -1473,6 +1651,15 @@ impl Sim {
         self.pack_heals = [0; 2];
         self.crafted_shots = [0; 2];
         self.plain_shots = [0; 2];
+        self.mines_laid = [0; 2];
+        self.mine_hits = [0; 2];
+        self.mech_grabbed = [0; 2];
+        self.mech_banked = [0; 2];
+        self.ride_time = [0.0; 2];
+        self.rides_max = 0;
+        self.amb_healed = [0.0; 2];
+        self.amb_time = 0.0;
+        self.amb_kills = 0;
     }
 
     /// Lanes map: crates along the lanes, in the river and by the camps; a camp in each
@@ -1660,7 +1847,7 @@ impl Sim {
     /// The team's all 8 that's still out, if any: no new all 8 until it ends.
     fn capstone(&self, team: usize) -> Option<String> {
         if let Some(t) = self.actors.iter().filter(|a| a.team == team && a.alive()).find_map(|a| a.tank) {
-            return Some(format!("tank {:.0} s", t.life.max(0.0)));
+            return Some(format!("{} {:.0} s", t.ride.name(), t.life.max(0.0)));
         }
         if let Some(w) = self.walls.iter().find(|w| w.team == team && w.bunker) {
             return Some(format!("bunker {:.0} s", w.life.max(0.0)));
@@ -1921,14 +2108,24 @@ impl Sim {
                     a.hp = (a.hp + self.tv[P::RefillHp as usize] * k).min(100.0);
                 }
             }
-            Make::Tank => {
-                let hp = self.n(P::TankHp) * if gold { 1.5 } else { 1.0 };
-                let life = self.n(P::TankTime);
+            Make::Tank | Make::Mech | Make::Ambulance | Make::AmbulanceShot => {
+                let (ride, hp, life) = match make {
+                    Make::Tank => (Ride::Tank, self.n(P::TankHp) * if gold { 1.5 } else { 1.0 }, self.n(P::TankTime)),
+                    Make::Mech => (Ride::Mech, self.n(P::MechHp), self.n(P::MechTime)),
+                    Make::Ambulance => (Ride::Ambulance, self.n(P::AmbHp), self.n(P::AmbTime)),
+                    _ => (Ride::AmbulanceShot, self.n(P::AmbHp), self.n(P::AmbTime)),
+                };
                 let a = &mut self.actors[b];
-                a.tank = Some(Tank { hp, max: hp, life, gold });
+                a.tank = Some(Tank { ride, hp, max: hp, life, gold, beat: 0.0 });
                 a.gun = None;
-                if a.carrying.is_some() {
-                    self.release(b, Vec3::Y, Vec3::ZERO);
+                // A crate in your hands goes into the mech, or falls off.
+                match (ride, a.carrying.take()) {
+                    (Ride::Mech, Some(id)) => a.load.push(id),
+                    (_, Some(id)) => {
+                        a.carrying = Some(id);
+                        self.release(b, Vec3::Y, Vec3::ZERO);
+                    }
+                    _ => {}
                 }
             }
             Make::Bunker => self.add_bunker(team, gold),
@@ -1976,6 +2173,8 @@ impl Sim {
             GunKind::Rapid => self.n(P::RapidRounds),
             GunKind::Rivet => self.n(P::Rivets),
             GunKind::Heal => self.n(P::HealShots),
+            GunKind::Shotgun => self.n(P::ShotgunShells),
+            GunKind::Mines => self.n(P::Mines),
         } as u32;
         Gun { kind, ammo, max: ammo, gold }
     }
@@ -2039,8 +2238,52 @@ impl Sim {
             c.vel = Vec3::ZERO;
             c.thrown_by = None;
         }
-        self.actors[who].carrying = Some(id);
-        self.actors[who].claim = None;
+        let a = &mut self.actors[who];
+        a.claim = None;
+        // A hauler mech stacks what it picks up.
+        if a.tank.is_some_and(|t| t.ride == Ride::Mech) {
+            a.load.push(id);
+            let team = a.team;
+            self.mech_grabbed[team] += 1;
+        } else {
+            a.carrying = Some(id);
+        }
+    }
+
+    /// How many crates `who`'s hauler mech carries at most (0 when not in one).
+    fn mech_cap(&self, who: usize) -> usize {
+        match self.actors[who].tank {
+            Some(t) if t.ride == Ride::Mech => self.n(P::MechCrates) as usize + t.gold as usize,
+            _ => 0,
+        }
+    }
+
+    /// A hauler mech takes its top crate in hand, to set down or throw.
+    fn hand_top(&mut self, who: usize) {
+        let a = &mut self.actors[who];
+        if a.carrying.is_none()
+            && let Some(id) = a.load.pop()
+        {
+            a.carrying = Some(id);
+        }
+    }
+
+    /// `who` leaves their vehicle (destroyed or out of time): a mech's crates fall off.
+    fn end_ride(&mut self, who: usize, why: &str) {
+        let Some(t) = self.actors[who].tank.take() else { return };
+        let load = std::mem::take(&mut self.actors[who].load);
+        let pos = self.actors[who].pos;
+        for (k, id) in load.into_iter().enumerate() {
+            let a = k as f32 * 2.1 + self.rand();
+            if let Some(c) = self.crate_mut(id) {
+                c.state = CrateState::Free;
+                c.pos = pos + Vec3::Y * (MECH_TOP + k as f32 * CRATE);
+                c.vel = Vec3::new(a.cos() * 3.0, 3.0, a.sin() * 3.0);
+                c.placed_by = None;
+            }
+        }
+        let what = if who == YOU { "your".to_string() } else { format!("{}'s", self.describe(who)) };
+        self.say(format!("{what} {} {why}", t.ride.name()));
     }
 
     fn nearest_free(&self, who: usize, reach: f32) -> Option<(u32, f32)> {
@@ -2058,13 +2301,11 @@ impl Sim {
         if !self.actors[who].alive() || self.actors[who].invuln > 0.0 {
             return;
         }
-        // A tank soaks hits until it's destroyed; the driver comes out unhurt.
+        // A vehicle soaks hits until it's destroyed; the driver comes out unhurt.
         if let Some(tank) = &mut self.actors[who].tank {
             tank.hp -= amount;
             if tank.hp <= 0.0 {
-                self.actors[who].tank = None;
-                let what = self.describe(who);
-                self.say(format!("{what}'s tank destroyed"));
+                self.end_ride(who, "destroyed");
             }
             return;
         }
@@ -2097,6 +2338,9 @@ impl Sim {
         // by_team 2 is a PvE monster.
         if by_team < 2 {
             self.kills[by_team] += 1;
+            if self.actors.iter().any(|b| b.tank.is_some_and(|t| matches!(t.ride, Ride::Ambulance | Ride::AmbulanceShot))) {
+                self.amb_kills += 1;
+            }
         } else {
             self.pve_deaths[a.team] += 1;
         }
@@ -2649,6 +2893,30 @@ fn tune_input(
             }
         }
     }
+    // V: your class's all 8 now (Shift: super), to try a vehicle without building 8.
+    if keys.just_pressed(KeyCode::KeyV) {
+        let gold = keys.pressed(KeyCode::ShiftLeft);
+        match sim.capstone(0) {
+            Some(c) => sim.say(format!("your all 8 is locked: {c}")),
+            None if !sim.actors[YOU].alive() => sim.say("you're down"),
+            None => {
+                let make = item_of(Slot::All8, sim.actors[YOU].class, sim.sets);
+                sim.apply(0, YOU, make, gold);
+                let what = format!("{} {} (V)", sim.actors[YOU].class.name(), make.label(gold));
+                sim.made[0].push(what.clone());
+                sim.say(format!("you got a {what}"));
+            }
+        }
+    }
+    // M: every living red player gets a nail-mine layer (Shift: super), to see mines in a fight.
+    if keys.just_pressed(KeyCode::KeyM) {
+        let gold = keys.pressed(KeyCode::ShiftLeft);
+        let gun = sim.new_gun(GunKind::Mines, gold);
+        for a in sim.actors.iter_mut().filter(|a| a.team == 1 && a.alive() && a.tank.is_none()) {
+            a.gun = Some(gun);
+        }
+        sim.say(format!("red got {}nail-mine layers", if gold { "SUPER " } else { "" }));
+    }
     if keys.just_pressed(KeyCode::KeyC) {
         sim.your_class = sim.your_class.next();
         sim.actors[YOU].class = sim.your_class;
@@ -2719,6 +2987,13 @@ fn tick(s: &mut Sim, c: &Controls, tune: &Tune, dt: f32) {
     }
     s.t += dt;
     s.rules(tune);
+    let elapsed = tune.f(P::MatchLength) - s.match_left;
+    if s.all8_at.is_some_and(|at| elapsed >= at) && s.capstone(0).is_none() && s.actors[YOU].alive() && s.actors[YOU].carrying.is_none() {
+        s.all8_at = None;
+        let make = item_of(Slot::All8, s.your_class, s.sets);
+        s.apply(0, YOU, make, false);
+        s.made[0].push(format!("{} {} (CRATE_ALL8)", s.your_class.name(), make.name()));
+    }
     s.ally_stacks = tune.c(P::AllyStacks) == 1;
     s.you_play = tune.c(P::Seat) == 0;
     let t = s.t;
@@ -2730,6 +3005,8 @@ fn tick(s: &mut Sim, c: &Controls, tune: &Tune, dt: f32) {
         a.slow -= dt;
         a.slow_immune -= dt;
         a.invuln -= dt;
+        a.root -= dt;
+        a.reveal -= dt;
         if a.dead > 0.0 {
             a.dead -= dt;
             if a.dead <= 0.0 {
@@ -2759,6 +3036,7 @@ fn tick(s: &mut Sim, c: &Controls, tune: &Tune, dt: f32) {
     lobs_step(s, dt);
     walls_step(s, dt);
     vehicles_step(s, dt);
+    mines_step(s, dt);
     monsters_step(s, dt);
     pickups_step(s, dt);
     refill(s, dt);
@@ -2788,6 +3066,8 @@ fn end_match(s: &mut Sim, tune: &Tune) {
         "match: BLUE {b} - {r} RED, {winner} | {} | {} | blue player 1 = {seat} ({}) | kills {} | lost to PvE {} | \
          crates stolen off pads {} (while bunkered {}) | bunker up {:.0}-{:.0} s | wall damage taken {:.0}-{:.0} | \
          wall hp repaired {:.0}-{:.0} | heal camp pickups {} | med pack pickups {} | crafted LMB shots {} vs standard {} | \
+         mines laid {} went off {} | mech crates picked up {} set on own pad {} | vehicle time {:.0}-{:.0} s, most out at once {} | \
+         ambulance healed {:.0}-{:.0} hp, out {:.0} s with {} kills in that time (of {} kills in {:.0} s) | \
          blue made: {} | red made: {}",
         if s.map { "lanes + jungle" } else { "open arena" },
         rules_desc(tune),
@@ -2806,6 +3086,19 @@ fn end_match(s: &mut Sim, tune: &Tune) {
         pair(s.pack_heals),
         pair(s.crafted_shots),
         pair(s.plain_shots),
+        pair(s.mines_laid),
+        pair(s.mine_hits),
+        pair(s.mech_grabbed),
+        pair(s.mech_banked),
+        s.ride_time[0],
+        s.ride_time[1],
+        s.rides_max,
+        s.amb_healed[0],
+        s.amb_healed[1],
+        s.amb_time,
+        s.amb_kills,
+        s.kills[0] + s.kills[1],
+        tune.f(P::MatchLength) - s.match_left.max(0.0),
         made(0),
         made(1),
     );
@@ -2828,13 +3121,13 @@ fn player_step(s: &mut Sim, c: &Controls, dt: f32) {
         } else if c.mv.length() > 0.1 {
             a.facing = Vec3::new(c.mv.x, 0.0, -c.mv.y).normalize();
         }
-        let speed = MOVE_SPEED * if carrying { CARRY_SPEED } else if a.tank.is_some() { 0.8 } else { 1.0 } * slow_factor(a);
+        let speed = MOVE_SPEED * if carrying { CARRY_SPEED } else { ride_speed(a, &s.tv) } * slow_factor(a);
         let mut target = Vec3::new(c.mv.x, 0.0, -c.mv.y) * speed;
-        if a.stun > 0.0 { target = Vec3::ZERO; }
+        if a.stun > 0.0 || a.root > 0.0 { target = Vec3::ZERO; }
         let k = 1.0 - (-dt * 18.0).exp();
         let h = a.vel.with_y(0.0).lerp(target, k);
         a.vel = h.with_y(a.vel.y);
-        if c.jump && a.grounded {
+        if c.jump && a.grounded && a.root <= 0.0 {
             a.vel.y = JUMP_VEL;
             a.grounded = false;
         }
@@ -2849,7 +3142,9 @@ fn player_step(s: &mut Sim, c: &Controls, dt: f32) {
             let a_pos = s.actors[YOU].pos;
             match s.crates.iter().find(|cr| cr.id == id) {
                 Some(cr) if cr.state == CrateState::Free && cr.pos.xz().distance(a_pos.xz()) <= GRAB_REACH + HALF + 0.5 => {
-                    s.take(YOU, id);
+                    if s.actors[YOU].carrying.is_none() {
+                        s.take(YOU, id);
+                    }
                 }
                 _ => s.say("GRAB DENIED"),
             }
@@ -2860,6 +3155,17 @@ fn player_step(s: &mut Sim, c: &Controls, dt: f32) {
         return;
     }
     let facing = s.actors[YOU].facing;
+    let in_mech = s.mech_cap(YOU) > 0;
+    // A hauler mech's E and right click work on its top crate: take it in hand first.
+    if in_mech && (c.throw || c.grab) && !s.actors[YOU].load.is_empty() {
+        let pos = s.actors[YOU].pos;
+        let home = pos.xz().distance(pads()[s.actors[YOU].team]) < PAD_HALF + 1.6;
+        let room = s.actors[YOU].load.len() < s.mech_cap(YOU);
+        let grabbable = s.nearest_free(YOU, GRAB_REACH).is_some();
+        if c.throw || home || !room || !grabbable {
+            s.hand_top(YOU);
+        }
+    }
     let carrying = s.actors[YOU].carrying.is_some();
     let in_tank = s.actors[YOU].tank.is_some();
 
@@ -2868,8 +3174,8 @@ fn player_step(s: &mut Sim, c: &Controls, dt: f32) {
         s.spawn_crate(kind, at + Vec3::Y * 0.5);
     }
 
-    if c.grab && in_tank {
-        s.say("you can't carry crates in a tank");
+    if c.grab && in_tank && !in_mech {
+        s.say("you can't carry crates in a vehicle (the hauler mech can)");
     } else if c.grab {
         if carrying {
             let plan = throw_plan(s, c.aim_dist);
@@ -2879,7 +3185,11 @@ fn player_step(s: &mut Sim, c: &Controls, dt: f32) {
                 _ => s.place_target(YOU),
             };
             s.place(YOU, at);
+            if in_mech && pad_contains(pads()[s.actors[YOU].team], at) {
+                s.mech_banked[s.actors[YOU].team] += 1;
+            }
         } else if s.pending.is_none()
+            && (!in_mech || s.actors[YOU].load.len() < s.mech_cap(YOU))
             && let Some((id, _)) = s.nearest_free(YOU, GRAB_REACH)
         {
             s.pending = Some(Pending { crate_id: id, left: GRAB_LATENCY, total: GRAB_LATENCY });
@@ -2914,7 +3224,8 @@ fn player_step(s: &mut Sim, c: &Controls, dt: f32) {
         fire(s, YOU, facing, range);
     }
 
-    if !carrying && !in_tank {
+    // A hauler mech can kick once it's set its crates down.
+    if !carrying && (!in_tank || in_mech && s.actors[YOU].load.is_empty()) {
         let pos = s.actors[YOU].pos;
         let my_pad = pads()[s.actors[YOU].team];
         // Hold kick beside your pad to open what's on it.
@@ -2969,9 +3280,29 @@ fn fire(s: &mut Sim, who: usize, dir: Vec3, range: f32) {
     }
     let shot = |vel: Vec3, dmg: f32, life: f32| Shot::new(from, vel, Some(who), team, dmg, life);
     if let Some(tank) = a.tank {
-        s.actors[who].fire_cd = 0.9;
-        let blast = s.n(P::RocketBlast);
-        s.shots.push(Shot { splash: blast, slow: tank.gold, ..shot(dir * 16.0, 80.0, range.max(6.0) / 16.0) });
+        match tank.ride {
+            Ride::Tank => {
+                s.actors[who].fire_cd = 0.9;
+                let blast = s.n(P::RocketBlast);
+                s.shots.push(Shot { splash: blast, slow: tank.gold, ..shot(dir * 16.0, 80.0, range.max(6.0) / 16.0) });
+            }
+            Ride::Mech => stomp(s, who, tank.gold),
+            Ride::Ambulance => {
+                // A weak blaster.
+                s.actors[who].fire_cd = 1.0 / FIRE_RATE;
+                let dmg = s.n(P::AmbBlaster);
+                s.shots.push(shot(dir * PROJ_SPEED, dmg, range.min(14.0) / PROJ_SPEED));
+            }
+            Ride::AmbulanceShot => {
+                // The variant: heal shots the driver aims, weak against enemies. A super one's
+                // shot carries a 25 shield every 5 s.
+                s.actors[who].fire_cd = 1.0 / FIRE_RATE;
+                let heal = s.n(P::AmbShotHeal) * s.k(tank.gold);
+                let life = 12.0 / PROJ_SPEED;
+                let dmg = s.n(P::AmbBlaster);
+                s.shots.push(Shot { heal, amb: true, ..shot(dir * PROJ_SPEED, dmg, life) });
+            }
+        }
         return;
     }
     let Some(mut gun) = a.gun else {
@@ -3001,6 +3332,30 @@ fn fire(s: &mut Sim, who: usize, dir: Vec3, range: f32) {
             let heal = s.n(P::HealShot) * k;
             let life = s.n(P::HealRange) / PROJ_SPEED;
             s.shots.push(Shot { heal, bounce: gun.gold, ..shot(dir * PROJ_SPEED, heal, life) });
+        }
+        GunKind::Shotgun => {
+            // A fan of pellets. Super: 7 pellets in a tighter fan (its extra strength).
+            s.actors[who].fire_cd = 1.0 / s.n(P::ShotgunRate);
+            let (n, spread) = if gun.gold { (7, s.n(P::ShotgunSpread) * 0.6) } else { (s.n(P::ShotgunPellets) as usize, s.n(P::ShotgunSpread)) };
+            let (dmg, life) = (s.n(P::ShotgunDmg), s.n(P::ShotgunRange) / PROJ_SPEED);
+            for k in 0..n {
+                let t = if n > 1 { k as f32 / (n - 1) as f32 - 0.5 } else { 0.0 };
+                let d = Quat::from_rotation_y((t * spread).to_radians()) * dir;
+                s.shots.push(shot(d * PROJ_SPEED, dmg, life));
+            }
+        }
+        GunKind::Mines => {
+            // A mine at your feet. Past the most you can have out, your oldest one goes.
+            s.actors[who].fire_cd = 0.5;
+            let at = s.actors[who].pos.with_y(0.0);
+            let out = s.mines.iter().filter(|m| m.owner == who).count();
+            if out >= s.n(P::MinesOut) as usize
+                && let Some(k) = s.mines.iter().position(|m| m.owner == who)
+            {
+                s.mines.remove(k);
+            }
+            s.mines.push(Mine { pos: at, team, owner: who, gold: gun.gold, arm: 0.5 });
+            s.mines_laid[team] += 1;
         }
     }
     gun.ammo -= 1;
@@ -3073,6 +3428,40 @@ fn toss(s: &mut Sim, who: usize, at: Vec3) {
     let (team, fuse) = (a.team, s.n(P::GrenadeFuse));
     s.lobs.push(Lob { kind, pos: from, vel, team, owner: who, gold, fuse, stuck: None });
     s.actors[who].toss = None;
+}
+
+/// The hauler mech's left click: a stomp that shoves enemies close by away. No damage, so a
+/// carrier keeps its crate, except against a super mech's stomp, which knocks it loose.
+fn stomp(s: &mut Sim, who: usize, gold: bool) {
+    s.actors[who].fire_cd = 1.5;
+    let (pos, team) = (s.actors[who].pos, s.actors[who].team);
+    let (r, push) = (s.n(P::StompRadius), s.n(P::StompPush) * s.k(gold));
+    for j in 0..s.actors.len() {
+        let b = &s.actors[j];
+        if b.team == team || !b.alive() || b.pos.xz().distance(pos.xz()) > r {
+            continue;
+        }
+        let out = (b.pos - pos).with_y(0.0).normalize_or(Vec3::X);
+        // A super stomp knocks a crate off a carrier (the top one off an enemy mech).
+        if gold && (b.carrying.is_some() || !b.load.is_empty()) {
+            s.hand_top(j);
+            s.release(j, out * 2.5 + Vec3::Y * 2.5, Vec3::ZERO);
+            s.say(format!("super stomp knocked a crate off {}", s.describe(j)));
+        }
+        let b = &mut s.actors[j];
+        b.shove += out * push;
+        b.stun = b.stun.max(0.3);
+    }
+    s.booms.push((pos + Vec3::Y * 0.2, r, 0.3));
+}
+
+/// How fast a vehicle moves, as a share of the walking speed.
+fn ride_speed(a: &Actor, tv: &[f32]) -> f32 {
+    match a.tank {
+        None => 1.0,
+        Some(t) if t.ride == Ride::Mech => tv[P::MechSpeed as usize],
+        Some(_) => 0.8,
+    }
 }
 
 // ---------------------------------------------------------------------------------------
@@ -3330,7 +3719,7 @@ fn wants_to_kick(s: &Sim, i: usize) -> bool {
     let human = tune_free_seat(s);
     !(0..s.actors.len()).any(|j| {
         let b = &s.actors[j];
-        j != i && j != human && b.team == team && b.alive() && b.carrying.is_none() && b.pos.xz().distance(pad) < me
+        j != i && j != human && b.team == team && b.alive() && b.carrying.is_none() && b.tank.is_none() && b.pos.xz().distance(pad) < me
     })
 }
 
@@ -3365,8 +3754,19 @@ fn ai_step(s: &mut Sim, i: usize, dt: f32) {
     let carrier = nearest_enemy(s, i, pos, 14.0).filter(|&e| s.actors[e].carrying.is_some());
     let keep = s.actors[i].claim;
     let in_tank = s.actors[i].tank.is_some();
+    let ride = s.actors[i].tank.map(|t| t.ride);
     let enemy_pad = pads()[1 - s.actors[i].team];
     let (target, goal, act, claim) = match (carrying, near, carrier) {
+        // A hauler mech hauls, a few crates a trip, and stomps whoever gets close.
+        (false, _, _) if ride == Some(Ride::Mech) => {
+            let (goal, act, claim) = mech_plan(s, i);
+            let goal = if goal.is_none() && act_none(&act) { Some(guard_post(s, i)) } else { goal };
+            (nearest_enemy(s, i, pos, s.n(P::StompRadius) * 0.8), goal, act, claim)
+        }
+        // An ambulance stays with the most hurt teammate (or the one closest to a fight).
+        (false, _, _) if matches!(ride, Some(Ride::Ambulance | Ride::AmbulanceShot)) => {
+            (nearest_enemy(s, i, pos, 10.0), Some(ambulance_goal(s, i)), Act::None, None)
+        }
         // A tank pushes to the enemy pad and fights whatever it meets.
         (false, _, _) if in_tank => {
             let e = nearest_enemy(s, i, pos, 12.0);
@@ -3411,7 +3811,7 @@ fn ai_step(s: &mut Sim, i: usize, dt: f32) {
         }
         None => (None, None),
     };
-    let speed = MOVE_SPEED * 0.85 * if carrying { CARRY_SPEED } else if in_tank { 0.8 } else { 1.0 } * slow_factor(&s.actors[i]);
+    let speed = MOVE_SPEED * 0.85 * if carrying { CARRY_SPEED } else { ride_speed(&s.actors[i], &s.tv) } * slow_factor(&s.actors[i]);
     let spread = (s.rand() - 0.5) * 0.15;
     let jungling = target.is_none() && act_none(&act) && jungle_goal(s, i).is_some();
     {
@@ -3419,7 +3819,7 @@ fn ai_step(s: &mut Sim, i: usize, dt: f32) {
         a.claim = claim;
         let goal = goal.map(|g| steer(a, g, dt));
         let want = match goal.map(|g| (g - a.pos).with_y(0.0)) {
-            Some(v) if v.length() > 0.4 && a.stun <= 0.0 => v.normalize() * speed,
+            Some(v) if v.length() > 0.4 && a.stun <= 0.0 && a.root <= 0.0 => v.normalize() * speed,
             _ => Vec3::ZERO,
         };
         let k = 1.0 - (-dt * 12.0).exp();
@@ -3448,11 +3848,14 @@ fn ai_step(s: &mut Sim, i: usize, dt: f32) {
             toss(s, i, at);
         }
     }
-    let hurt_mate = if !carrying && s.actors[i].gun.is_some_and(|g| g.kind == GunKind::Heal) {
+    let heal_shot = s.actors[i].gun.is_some_and(|g| g.kind == GunKind::Heal) || ride == Some(Ride::AmbulanceShot);
+    let mines = s.actors[i].gun.is_some_and(|g| g.kind == GunKind::Mines);
+    let hurt_mate = if !carrying && heal_shot {
         let team = s.actors[i].team;
+        let reach = if in_tank { 11.0 } else { 9.0 };
         (0..s.actors.len())
             .filter(|&j| j != i && s.actors[j].team == team && s.actors[j].alive() && s.actors[j].hp < 80.0)
-            .filter(|&j| s.actors[j].pos.distance(pos) < 9.0 && clear(pos.xz(), s.actors[j].pos.xz(), 0.1))
+            .filter(|&j| s.actors[j].pos.distance(pos) < reach && clear(pos.xz(), s.actors[j].pos.xz(), 0.1))
             .min_by(|&x, &y| s.actors[x].hp.total_cmp(&s.actors[y].hp))
     } else {
         None
@@ -3461,7 +3864,22 @@ fn ai_step(s: &mut Sim, i: usize, dt: f32) {
         let dir = (s.actors[m].pos - pos).with_y(0.0).normalize_or_zero();
         s.actors[i].facing = dir;
         if s.actors[i].fire_cd <= 0.0 && s.actors[i].stun <= 0.0 {
-            fire(s, i, dir, 10.0);
+            fire(s, i, dir, 12.0);
+        }
+    } else if mines {
+        // Nail mines: one at your feet when an enemy is close, and (while you have fewer than
+        // the most out) round your own pad, against thieves. Never two on top of each other.
+        let spaced = !s.mines.iter().any(|m| m.owner == i && m.pos.xz().distance(pos.xz()) < 2.5);
+        let close = target.is_some_and(|e| s.actors[e].pos.xz().distance(pos.xz()) < 8.0);
+        let out = s.mines.iter().filter(|m| m.owner == i).count();
+        let home = pos.xz().distance(pads()[s.actors[i].team]) < 10.0;
+        let posted = target.is_none() && home && out < s.n(P::MinesOut) as usize;
+        if let Some(e) = target {
+            s.actors[i].facing = (s.actors[e].pos - pos).with_y(0.0).normalize_or(s.actors[i].facing);
+        }
+        if !carrying && spaced && (close || posted) && s.actors[i].fire_cd <= 0.0 && s.actors[i].stun <= 0.0 {
+            let f = s.actors[i].facing;
+            fire(s, i, f, 1.0);
         }
     } else if let Some(e) = target {
         let (ep, ev) = (s.actors[e].pos, s.actors[e].vel.with_y(0.0));
@@ -3488,6 +3906,8 @@ fn ai_step(s: &mut Sim, i: usize, dt: f32) {
             fire(s, i, dir, 14.0);
             s.actors[i].fire_cd = (s.actors[i].fire_cd * 1.5).max(0.25);
         }
+    } else if ride == Some(Ride::Mech) {
+        // The stomp only shoves players: nothing else to aim at.
     } else if let Some(at) = breach.or_else(|| wall_to_fix(s, i)) {
         // A shut enemy bunker in the way, or a hurt wall of ours to rivet.
         let dir = (at - pos).with_y(0.0).normalize_or_zero();
@@ -3514,12 +3934,77 @@ fn ai_step(s: &mut Sim, i: usize, dt: f32) {
     }
     match act {
         Act::Grab(id) => s.take(i, id),
-        Act::Place(at) => s.place(i, at),
+        Act::Place(at) => {
+            let mech = s.mech_cap(i) > 0;
+            s.hand_top(i);
+            s.place(i, at);
+            if mech && pad_contains(pads()[s.actors[i].team], at) {
+                s.mech_banked[s.actors[i].team] += 1;
+            }
+        }
         Act::Drop => {
+            s.hand_top(i);
             let at = s.actors[i].pos.with_y(HALF) + s.actors[i].facing * -0.2;
             s.place(i, at);
         }
         Act::None => {}
+    }
+}
+
+/// A hauler mech bot: pick up crates until it's full (or there are none close by), then set
+/// them down on its pad one by one.
+fn mech_plan(s: &Sim, i: usize) -> (Option<Vec3>, Act, Option<u32>) {
+    let a = &s.actors[i];
+    let (load, cap) = (a.load.len(), s.mech_cap(i));
+    let pad = pads()[a.team];
+    let claimed = |id: u32| s.actors.iter().enumerate().any(|(j, b)| j != i && b.team == a.team && b.claim == Some(id));
+    let pick = s
+        .crates
+        .iter()
+        .filter(|c| c.loose() && c.kind.builds() && c.pos.y < 3.0)
+        .filter(|c| !pad_contains(pad, c.pos) && !claimed(c.id))
+        .map(|c| (c, c.pos.distance(a.pos) - if c.kind == Kind::Super && s.super_mode > 0 { 8.0 } else { 0.0 }))
+        .min_by(|x, y| x.1.total_cmp(&y.1))
+        .map(|(c, _)| c);
+    // With some on board, only stop for crates close by; else head home.
+    let pick = pick.filter(|c| load < cap && (load == 0 || c.pos.distance(a.pos) < 10.0));
+    if let Some(c) = pick {
+        if c.pos.xz().distance(a.pos.xz()) <= GRAB_REACH + HALF {
+            return (None, Act::Grab(c.id), Some(c.id));
+        }
+        return (Some(c.pos.with_y(0.0)), Act::None, Some(c.id));
+    }
+    if load == 0 {
+        return (None, Act::None, None);
+    }
+    match s.pad_cell(i) {
+        Some(cell) if cell.xz().distance(a.pos.xz()) < 2.0 => (None, Act::Place(cell), None),
+        Some(cell) => (Some(cell.with_y(0.0)), Act::None, None),
+        None => {
+            // The pad is full: set them down beside it.
+            let front = pad_front(a.team, a.slot);
+            if front.xz().distance(a.pos.xz()) < 1.0 { (None, Act::Drop, None) } else { (Some(front), Act::None, None) }
+        }
+    }
+}
+
+/// Where an ambulance bot goes: next to the most hurt teammate, else the teammate nearest the
+/// enemy pad, else its guard post.
+fn ambulance_goal(s: &Sim, i: usize) -> Vec3 {
+    let a = &s.actors[i];
+    let mates = || (0..s.actors.len()).filter(move |&j| j != i && s.actors[j].team == a.team && s.actors[j].alive());
+    let enemy_pad = pads()[1 - a.team];
+    let mate = mates()
+        .filter(|&j| s.actors[j].hp < 90.0)
+        .min_by(|&x, &y| s.actors[x].hp.total_cmp(&s.actors[y].hp))
+        .or_else(|| mates().min_by(|&x, &y| s.actors[x].pos.xz().distance(enemy_pad).total_cmp(&s.actors[y].pos.xz().distance(enemy_pad))));
+    match mate {
+        Some(j) => {
+            let to = s.actors[j].pos;
+            let back = (a.pos - to).with_y(0.0).normalize_or(Vec3::X * -toward_centre(a.team));
+            to + back * 2.0
+        }
+        None => guard_post(s, i),
     }
 }
 
@@ -3537,7 +4022,8 @@ fn actors_physics(s: &mut Sim, dt: f32) {
         .collect();
     for a in s.actors.iter_mut().filter(|a| a.alive()) {
         a.vel.y -= G * dt;
-        a.pos += a.vel * dt;
+        a.pos += (a.vel + a.shove) * dt;
+        a.shove *= (-6.0 * dt).exp();
         if a.pos.y <= 0.0 {
             a.pos.y = 0.0;
             a.vel.y = 0.0;
@@ -3598,11 +4084,15 @@ fn actors_physics(s: &mut Sim, dt: f32) {
     }
 }
 
-/// Carried crates ride on the carrier's head.
+/// Carried crates ride on the carrier's head; a hauler mech's stack on its roof.
 fn crates_physics(s: &mut Sim) {
     for c in &mut s.crates {
         if let CrateState::Carried { by, lift_from, lift_t } = &mut c.state {
-            let head = s.actors[*by].pos + Vec3::Y * HEAD;
+            let a = &s.actors[*by];
+            let head = match a.load.iter().position(|&id| id == c.id) {
+                Some(k) => a.pos + Vec3::Y * (MECH_TOP + HALF + k as f32 * CRATE),
+                None => a.pos + Vec3::Y * HEAD,
+            };
             c.pos = lift_from.lerp(head, (*lift_t / 0.1).min(1.0));
         }
     }
@@ -3737,7 +4227,7 @@ fn shots_step(s: &mut Sim, dt: f32) {
                 a.team == sh.team && Some(j) != sh.owner && Some(j) != sh.last && a.hp < 100.0 && body(a)
             })
         {
-            heals.push((j, sh.heal, sh.bounce, sh.owner, sh.team));
+            heals.push((j, sh.heal, sh.bounce, sh.owner, sh.team, sh.amb));
             sh.life = 0.0;
             continue;
         }
@@ -3814,7 +4304,18 @@ fn shots_step(s: &mut Sim, dt: f32) {
             a.stun = a.stun.max(0.15 + stagger);
         }
     }
-    for (j, heal, bounce, owner, team) in heals {
+    for (j, heal, bounce, owner, team, amb) in heals {
+        if amb {
+            s.amb_healed[team] += heal.min(100.0 - s.actors[j].hp).max(0.0);
+            // A super ambulance's heal shot carries a 25 shield every 5 s.
+            if let Some(t) = owner.and_then(|o| s.actors[o].tank.as_mut())
+                && t.gold
+                && t.beat >= 5.0
+            {
+                t.beat = 0.0;
+                s.actors[j].shield = (s.actors[j].shield + 25.0).min(100.0);
+            }
+        }
         s.actors[j].hp = (s.actors[j].hp + heal).min(100.0);
         s.booms.push((s.actors[j].pos + Vec3::Y, 0.5, 0.15));
         // Super heal: a second heal shot flies on to the nearest other hurt ally within 4 m.
@@ -4106,16 +4607,78 @@ fn walls_step(s: &mut Sim, dt: f32) {
 }
 
 fn vehicles_step(s: &mut Sim, dt: f32) {
+    let out = s.actors.iter().filter(|a| a.tank.is_some()).count();
+    s.rides_max = s.rides_max.max(out);
+    if s.actors.iter().any(|a| a.tank.is_some_and(|t| matches!(t.ride, Ride::Ambulance | Ride::AmbulanceShot))) {
+        s.amb_time += dt;
+    }
     for i in 0..s.actors.len() {
-        if let Some(t) = &mut s.actors[i].tank {
-            t.life -= dt;
-            if t.life <= 0.0 {
-                s.actors[i].tank = None;
-                if i == YOU {
-                    s.say("your tank ran out of time");
+        let Some(t) = &mut s.actors[i].tank else { continue };
+        t.life -= dt;
+        t.beat += dt;
+        let (t, team, pos) = (*t, s.actors[i].team, s.actors[i].pos);
+        s.ride_time[team] += dt;
+        if t.ride == Ride::Ambulance {
+            // The aura: allies close by (the driver too) heal on their own. Super: a 25
+            // shield every 5 s.
+            let (r, heal) = (s.n(P::AmbRadius), s.n(P::AmbHeal) * s.k(t.gold) * dt);
+            let shield = t.gold && t.beat >= 5.0;
+            for b in s.actors.iter_mut().filter(|b| b.team == team && b.alive() && b.pos.xz().distance(pos.xz()) < r) {
+                let add = heal.min(100.0 - b.hp).max(0.0);
+                b.hp += add;
+                s.amb_healed[team] += add;
+                if shield {
+                    b.shield = (b.shield + 25.0).min(100.0);
                 }
             }
+            if shield {
+                s.booms.push((pos + Vec3::Y * 0.2, r, 0.3));
+            }
         }
+        if t.ride == Ride::Ambulance && t.beat >= 5.0
+            && let Some(t) = &mut s.actors[i].tank
+        {
+            t.beat = 0.0;
+        }
+        if t.life <= 0.0 {
+            s.end_ride(i, "ran out of time");
+        }
+    }
+}
+
+/// Nail mines: the first enemy to step on an armed one takes the damage and is rooted (a
+/// super mine also shows them on your minimap).
+fn mines_step(s: &mut Sim, dt: f32) {
+    let (dmg, root, reveal) = (s.n(P::MineDmg), s.n(P::MineRoot), s.n(P::MineReveal));
+    let mut k = 0;
+    while k < s.mines.len() {
+        let m = &mut s.mines[k];
+        m.arm -= dt;
+        let (pos, team) = (m.pos, m.team);
+        let victim = (m.arm <= 0.0)
+            .then(|| (0..s.actors.len()).find(|&j| {
+                let a = &s.actors[j];
+                a.team != team && a.alive() && a.pos.y < 0.5 && a.pos.xz().distance(pos.xz()) < MINE_R + ACTOR_R * 0.5
+            }))
+            .flatten();
+        let Some(j) = victim else {
+            k += 1;
+            continue;
+        };
+        let m = s.mines.remove(k);
+        s.mine_hits[team] += 1;
+        if m.owner == YOU {
+            s.hits += 1;
+        }
+        s.hurt(j, dmg * s.k(m.gold), Vec3::ZERO, Some(m.owner), team);
+        let a = &mut s.actors[j];
+        a.root = a.root.max(root);
+        if m.gold {
+            a.reveal = reveal;
+        }
+        s.booms.push((pos + Vec3::Y * 0.2, MINE_R, 0.3));
+        let who = if j == YOU { "you".to_string() } else { s.describe(j) };
+        s.say(format!("{who} stepped on a {}mine", if m.gold { "SUPER " } else { "" }));
     }
 }
 
@@ -4390,6 +4953,7 @@ fn minimap_view(sim: Res<Sim>, window: Single<&Window>, mut cam: Single<&mut Cam
 fn sync_markers(
     mut commands: Commands,
     sim: Res<Sim>,
+    tune: Res<Tune>,
     looks: Res<Looks>,
     mut markers: Query<(Entity, &Marker, &mut Transform, &mut Visibility)>,
     mut seen: Local<(usize, usize)>,
@@ -4408,15 +4972,27 @@ fn sync_markers(
         }
         return;
     }
+    let fog = tune.c(P::EnemyMap) == 0;
     for (_, marker, mut tf, mut vis) in &mut markers {
         let (pos, alive, scale) = match marker {
-            Marker::Actor(i) => (sim.actors[*i].pos, sim.actors[*i].alive(), if *i == YOU { 1.3 } else { 1.0 }),
+            // Enemies show only while your team can see them, or a super mine reveals them.
+            Marker::Actor(i) => {
+                let a = &sim.actors[*i];
+                let shown = a.team == 0 || !fog || a.reveal > 0.0 || in_sight(&sim, *i);
+                (a.pos, a.alive() && shown, if *i == YOU { 1.3 } else if a.reveal > 0.0 { 1.8 } else { 1.0 })
+            }
             Marker::Monster(m) => (sim.monsters[*m].pos, sim.monsters[*m].alive(), 0.8),
         };
         tf.translation = pos.with_y(30.0);
         tf.scale = Vec3::splat(scale);
         *vis = if alive && sim.map { Visibility::Visible } else { Visibility::Hidden };
     }
+}
+
+/// Whether a living blue player can see actor `i`: within 20 m with no jungle wall between.
+fn in_sight(sim: &Sim, i: usize) -> bool {
+    let p = sim.actors[i].pos.xz();
+    sim.actors.iter().any(|a| a.team == 0 && a.alive() && a.pos.xz().distance(p) < 20.0 && clear(a.pos.xz(), p, 0.1))
 }
 
 #[derive(Component)]
@@ -4755,12 +5331,48 @@ fn draw_gizmos(mut g: Gizmos, sim: Res<Sim>, tune: Res<Tune>, controls: Res<Cont
         if let Some(t) = &b.tank {
             let p = pos_of(i);
             let rot = Transform::IDENTITY.looking_to(b.facing, Vec3::Y).rotation;
-            g.cube(Transform::from_translation(p + Vec3::Y * 0.6).with_rotation(rot).with_scale(Vec3::new(1.8, 1.0, 2.4)), TEAM_COLOR[b.team]);
-            g.line(p + Vec3::Y * 1.2, p + Vec3::Y * 1.2 + b.facing * 1.8, TEAM_COLOR[b.team]);
-            let top = p + Vec3::Y * 2.8 - Vec3::X * 0.6;
+            let team = TEAM_COLOR[b.team];
+            // Tank: a low hull and a barrel. Mech: a tall frame on two legs. Ambulance: a white
+            // box with a red cross on the roof, and its aura on the floor.
+            let (size, y) = match t.ride {
+                Ride::Tank => (Vec3::new(1.8, 1.0, 2.4), 0.6),
+                Ride::Mech => (Vec3::new(1.6, 1.2, 1.6), 1.9),
+                Ride::Ambulance | Ride::AmbulanceShot => (Vec3::new(1.7, 1.4, 2.6), 0.8),
+            };
+            let hull = Transform::from_translation(p + Vec3::Y * y).with_rotation(rot);
+            match t.ride {
+                Ride::Tank => {
+                    g.cube(hull.with_scale(size), team);
+                    g.line(p + Vec3::Y * 1.2, p + Vec3::Y * 1.2 + b.facing * 1.8, team);
+                }
+                Ride::Mech => {
+                    g.cube(hull.with_scale(size), team);
+                    let side = Vec3::new(-b.facing.z, 0.0, b.facing.x) * 0.5;
+                    let step = (sim.t * 6.0).sin() * 0.3 * (b.vel.with_y(0.0).length() > 0.5) as u8 as f32;
+                    for (k, sgn) in [(1.0, 1.0), (-1.0, -1.0)] {
+                        let hip = p + Vec3::Y * 1.3 + side * k;
+                        g.line(hip, p + side * k + b.facing * step * sgn, team);
+                    }
+                }
+                Ride::Ambulance | Ride::AmbulanceShot => {
+                    g.cube(hull.with_scale(size), Color::WHITE);
+                    let roof = p + Vec3::Y * 1.55;
+                    let side = Vec3::new(-b.facing.z, 0.0, b.facing.x);
+                    let red = Color::srgb(1.0, 0.15, 0.15);
+                    g.line(roof - side * 0.5, roof + side * 0.5, red);
+                    g.line(roof - b.facing * 0.5, roof + b.facing * 0.5, red);
+                    g.circle(ground_circle(p.with_y(0.05)), 1.0, team);
+                    if t.ride == Ride::Ambulance {
+                        let r = sim.n(P::AmbRadius);
+                        g.circle(ground_circle(p.with_y(0.05)), r, Color::srgba(0.3, 1.0, 0.4, 0.7));
+                        g.circle(ground_circle(p.with_y(0.05)), r * (0.3 + 0.7 * (sim.t * 1.5).fract()), Color::srgba(0.3, 1.0, 0.4, 0.25));
+                    }
+                }
+            }
+            let top = p + Vec3::Y * (y + size.y / 2.0 + 0.8) - Vec3::X * 0.6;
             g.line(top, top + Vec3::X * 1.2 * (t.hp / t.max).max(0.0), Color::srgb(0.3, 0.8, 1.0));
             if t.gold {
-                g.cube(Transform::from_translation(p + Vec3::Y * 0.6).with_rotation(rot).with_scale(Vec3::new(1.9, 1.1, 2.5)), Color::srgb(1.0, 0.85, 0.2));
+                g.cube(hull.with_scale(size + Vec3::splat(0.1)), Color::srgb(1.0, 0.85, 0.2));
             }
         }
         if let Some(gun) = &b.gun {
@@ -4858,6 +5470,29 @@ fn draw_gizmos(mut g: Gizmos, sim: Res<Sim>, tune: Res<Tune>, controls: Res<Cont
             g.line(at - tan, at + tan, Color::srgba(0.6, 0.8, 1.0, 0.5));
         }
     }
+    // Nail mines: a spiked ring in the layer's team colour (gold edge when super), dim until
+    // armed. Both teams see them.
+    for m in &sim.mines {
+        let c = m.pos.with_y(0.04);
+        let col = if m.arm > 0.0 { TEAM_COLOR[m.team].with_alpha(0.35) } else { TEAM_COLOR[m.team] };
+        g.circle(ground_circle(c), MINE_R * 0.6, col);
+        for k in 0..6 {
+            let d = Vec3::from(Quat::from_rotation_y(k as f32 * 1.047) * Vec3::X);
+            g.line(c + d * MINE_R * 0.6, c + d * MINE_R, col);
+        }
+        if m.gold {
+            g.circle(ground_circle(c), MINE_R, Color::srgb(1.0, 0.85, 0.2));
+        }
+    }
+    // Revealed by a super mine: a magenta ring round them.
+    for (i, _) in sim.actors.iter().enumerate().filter(|(_, b)| b.alive() && b.reveal > 0.0) {
+        g.circle(ground_circle(pos_of(i).with_y(0.07)), 1.2, Color::srgb(1.0, 0.2, 0.9));
+    }
+    for (i, _) in sim.actors.iter().enumerate().filter(|(_, b)| b.alive() && b.root > 0.0) {
+        let p = pos_of(i).with_y(0.08);
+        g.line(p - Vec3::X * 0.6, p + Vec3::X * 0.6, Color::srgb(0.8, 0.8, 0.8));
+        g.line(p - Vec3::Z * 0.6, p + Vec3::Z * 0.6, Color::srgb(0.8, 0.8, 0.8));
+    }
     for (at, r, left) in &sim.booms {
         g.sphere(Isometry3d::from_translation(*at), r * (1.0 - left / 0.3 * 0.5), Color::srgb(1.0, 0.6, 0.1));
     }
@@ -4908,9 +5543,29 @@ fn hud(sim: Res<Sim>, tune: Res<Tune>, controls: Res<Controls>, mut hud: Single<
             if a.alive() { String::new() } else { format!("  DOWN {:.1}s", a.dead) },
         );
         if let Some(t) = &a.tank {
-            s += &format!("IN A {}TANK: hp {:.0}, {:.0} s left, cannon only, can't carry\n", if t.gold { "SUPER " } else { "" }, t.hp, t.life);
+            let what = match t.ride {
+                Ride::Tank => "cannon only, can't carry".to_string(),
+                Ride::Mech => format!(
+                    "carrying {}/{} (E grab, E again or beside your pad to set one down, RMB throw one), LMB stomp, no weapon",
+                    a.load.len(),
+                    sim.mech_cap(YOU)
+                ),
+                Ride::Ambulance => format!("allies within {:.0} m heal {:.0} hp/s, LMB weak blaster", sim.n(P::AmbRadius), sim.n(P::AmbHeal)),
+                Ride::AmbulanceShot => format!("LMB heal shot (+{:.0} hp to the first hurt ally it touches)", sim.n(P::AmbShotHeal)),
+            };
+            s += &format!("IN A {}{}: hp {:.0}, {:.0} s left, {what}\n", if t.gold { "SUPER " } else { "" }, t.ride.name().to_uppercase(), t.hp, t.life);
+        }
+        if a.root > 0.0 {
+            s += &format!("ROOTED by a nail mine ({:.1} s)\n", a.root);
         }
         s += &match &a.gun {
+            Some(gun) if gun.kind == GunKind::Mines => format!(
+                "left click: {} ({} mines left, {} out of {})\n",
+                Make::Gun(gun.kind).label(gun.gold),
+                gun.ammo,
+                sim.mines.iter().filter(|m| m.owner == YOU).count(),
+                sim.n(P::MinesOut)
+            ),
             Some(gun) => format!("left click: {} ({} shots left)\n", Make::Gun(gun.kind).label(gun.gold), gun.ammo),
             None => "left click: standard gun\n".to_string(),
         };
@@ -4942,7 +5597,7 @@ fn hud(sim: Res<Sim>, tune: Res<Tune>, controls: Res<Controls>, mut hud: Single<
         s += &format!("> {m}\n");
     }
     s += "\nWASD move  mouse aim  Space jump  E grab/place  RMB throw (empty hands: right-click item)  LMB shoot  Q throw 1-crate item  F kick\n";
-    s += "1-6 set switch  C your class  ENTER pick this set  T drop crate  Y drop super crate  G red bunker (Shift: super)  R reset  P print  H hide boxes";
+    s += "1-6 set switch  C your class  ENTER pick this set  T drop crate  Y drop super crate  G red bunker  V your all 8  M red mines (Shift: super)  R reset  P print  H hide boxes";
     hud.0 = s;
 }
 
@@ -5028,7 +5683,11 @@ fn guide_text(
         }
     }
     s += "\nALL 8 has a team lockout: no new all 8 until the current one ends. Items go to the kicker and are lost on knockout.";
-    s += "\nWATCH: does the engineer skip the rivet gun to save for walls? Is the bunker's 40 s a siege or a dead pause? Does rally make the heal camp pointless?";
+    if sim.sets[0] == 1 || sim.sets[3] >= 1 {
+        s += "\nWATCH (Set B): do the vehicles crowd the map? Does the ambulance stall fights? Does a mech carrying 3-4 crates break the haul rhythm? Can you read the mines on a busy floor? (V: your all 8 now, M: red gets mines)";
+    } else {
+        s += "\nWATCH: does the engineer skip the rivet gun to save for walls? Is the bunker's 40 s a siege or a dead pause? Does rally make the heal camp pointless?";
+    }
     s += "\nENTER = pick this set";
     if !tune.verdicts.is_empty() {
         s += &format!(" ({} picked so far, P prints them)", tune.verdicts.len());

@@ -2,10 +2,12 @@
 
 Throwaway. Lives on `prototype/class-items` only, branched from `prototype/arena-map` (the
 lanes + jungle map at 5v5, with the crate grammar picked in #17). One prototype for all three
-item-set tickets: Set A is [#24](https://github.com/ALLiDoizCode/big_back/issues/24); Set B
-([#25](https://github.com/ALLiDoizCode/big_back/issues/25)) and Set C
-([#26](https://github.com/ALLiDoizCode/big_back/issues/26)) add their options to the same set
-switch. Feeds the grilling in [#22](https://github.com/ALLiDoizCode/big_back/issues/22).
+item-set tickets: Set A is [#24](https://github.com/ALLiDoizCode/big_back/issues/24) and Set B
+is [#25](https://github.com/ALLiDoizCode/big_back/issues/25), both on the same set switch. Set C
+([#26](https://github.com/ALLiDoizCode/big_back/issues/26)) adds its options to it. Feeds the
+grilling in [#22](https://github.com/ALLiDoizCode/big_back/issues/22).
+
+Jump to [Set B (#25)](#set-b-25-team-buddies-ladder).
 
 ```
 cargo run --example class_items
@@ -35,15 +37,15 @@ you already hold keep working. R restarts the match.
 
 | Key | Switch | Options now |
 |---|---|---|
-| 1 | item set (sets every slot at once) | **A: fix the placeholders**, **A + Set B's 1-crate refill** |
-| 2 | left click (2 side by side) | A |
-| 3 | right click (4 flat) | A |
+| 1 | item set (sets every slot at once) | **A: fix the placeholders**, **A + Set B's 1-crate refill**, **B: Team Buddies ladder**, **B, ambulance fires heal shots** |
+| 2 | left click (2 side by side) | A, B (shotgun / nail-mine layer / heal gun) |
+| 3 | right click (4 flat) | A and B share it |
 | 4 | 1 crate | A (throwable / kit), B (refill) |
-| 5 | all 8 | A |
+| 5 | all 8 | A, B (heal aura ambulance), B (heal shot ambulance) |
 | 6 | super crates | off, upgrade (one twist) |
 
-**Enter** records the switch you're playing as your pick, and **P** prints your picks. Set B
-and Set C add their options to keys 1–5.
+**Enter** records the switch you're playing as your pick, and **P** prints your picks. Set C
+adds its options to keys 1–5.
 
 The crate grammar is fixed at what ADR 0007 picked: the kicker's class decides, recipes are
 read by shape, the readout is shown, results are instant, pads are steal only, and you hold
@@ -172,3 +174,143 @@ show the items working in a real match.
   sets the slots: `CRATE_RULES=1` is A + refill), `CRATE_CLASS=<0-2>` your class, and
   `CRATE_SEAT=bot`, `CRATE_ARENA=1`, `CRATE_SPEED=4`, `CRATE_MAP=open`,
   `CRATE_EXIT_AFTER=<s>`, `CRATE_SCREENSHOT=<png>` as before.
+
+---
+
+## Set B (#25): Team Buddies ladder
+
+**Question (#25):** does **Set B, "Team Buddies ladder"**, work? 1 crate refills what you hold,
+and every class's all 8 is a vehicle its kicker drives
+([research §8](https://github.com/ALLiDoizCode/big_back/blob/research/class-items/docs/research/class-items.md#set-b-team-buddies-ladder-1-crate-refills-all-8-is-always-a-vehicle)).
+Compare it with the variant on **key 1**: the same set, but the ambulance has **no aura** and
+its driver **fires heal shots** instead. That tests the research's warning about
+fire-and-forget healing.
+
+```
+cargo run --example class_items      # then press 1 twice: "B: Team Buddies ladder"
+```
+
+### Verdict
+
+**Pending.** It needs a human to play both variants.
+
+### Set B, as built
+
+Every number is a live tunable in the panel, after the Set A ones (Up/Down to pick,
+Left/Right to change).
+
+| | Left click (2 side by side) | Right click (4 flat) | 1 crate | All 8 |
+|---|---|---|---|---|
+| **Soldier** | **Shotgun**: 5 pellets in a 30° fan, 12 damage each, out to 7 m, 1.25 shots/s, 12 shells | **Rockets** (as Set A) | **Refill**: left click to full, right click +1; +25 hp if you hold neither | **Tank** (as Set A) |
+| *super* | 7 pellets in a fan 0.6× as wide | Rockets split into 3 | Both to full | 450 hp, slow zone |
+| **Engineer** | **Nail-mine layer**: each click drops a mine at your feet (6 mines, 3 out at most). The first enemy to step on one takes 40 damage and is rooted 1 s | **Shield wall** (as Set A) | **Refill** | **Hauler mech**: 40 s or 400 hp, carries up to 3 crates, 0.8× speed, no weapon. Left click stomps: enemies within 3 m are shoved away |
+| *super* | Mines show the victim on your minimap for 3 s | Allies shoot through | Both to full | Carries 4; the stomp knocks a crate off an enemy carrier |
+| **Medic** | **Heal gun** (as Set A) | **Heal pulse** (as Set A) | **Refill** | **Field ambulance**: 40 s or 350 hp, 0.8× speed. Allies within 5 m (you too) heal 15 hp/s. A weak blaster (8 damage) |
+| *super* | Heals bounce | Pulse adds a 25 shield | Both to full | Everyone in the aura gets a 25 shield every 5 s |
+
+**The variant (key 1, "B, ambulance fires heal shots"; or key 5's third option):** the
+ambulance has no aura. Left click fires a heal shot (+12 hp to the first hurt teammate it
+touches, out to 12 m, 3 a second, 8 damage against enemies). Super: one shot every 5 s also
+carries a 25 shield.
+
+**How to drive the hauler mech:** **E** picks up the crate in reach, until it's full. E sets the
+top crate down when you're beside your pad, when the mech is full, or when there's nothing to
+pick up. **RMB** throws the top crate. **LMB** stomps (every 1.5 s). The crates ride stacked on
+its roof. Once it's set them all down, it can kick the pad open.
+
+Everything common to every set (base gun, items go to the kicker, the all-8 lockout, supers,
+ADR 0002 and 0004) is as Set A has it, above. The lockout now also names the vehicle:
+`all 8: blue LOCKED (hauler mech 21 s still out)`.
+
+**Calls the table didn't make, made here so they can be played (say if any is wrong):**
+
+1. **Shotgun numbers.** The table gives none: 12 damage a pellet (60 if all 5 hit, so 2 shots
+   kill up close), a 30° fan, 7 m, 1.25 shots a second. The super's 7 pellets are its extra
+   strength (1.4×), so there's no 1.25× on top.
+2. **Mines.** They drop at your feet and arm after 0.5 s. Only enemies set them off. Both teams
+   see them (ADR 0002), as a spiked ring in the layer's colour, dim until armed. Laying a 4th
+   removes your oldest. Mines stay on the floor after you're knocked out (you lose the layer,
+   not the mines). Like any left-click item, the layer **replaces your gun**: an engineer has
+   no gun until all 6 are down.
+3. **The minimap now hides enemies** unless one of your team can see them (within 20 m, no
+   jungle wall between). Without that, "shows the victim on the minimap" means nothing,
+   because the minimap showed everyone. This applies to Set A too. "minimap enemies" in the
+   panel turns it back to always shown.
+4. **The mech's crates only fall when it ends.** Like the tank, it soaks hits: shots don't
+   knock its crates loose. They spill when it's destroyed or runs out of time.
+5. **The stomp works while the mech carries.** It's not a shot, so ADR 0003 holds. It does no
+   damage: a 3 m shove (12 m/s, dying away over about 2 m) and a 0.3 s stun. A plain stomp
+   doesn't knock crates loose; a super one knocks one off a carrier, or the top one off an
+   enemy mech.
+6. **The aura heals the driver too**, and a super aura's shield goes to everyone in it (capped
+   at 100). Super strength (1.25×) applies to the aura heal, the heal shot, mine damage and the
+   stomp's shove. Vehicle hp isn't scaled (the table gives none), except the tank's 450.
+7. **Getting into any vehicle drops your left-click item**, as the tank did in Set A. A crate in
+   your hands goes into a mech.
+8. **The ambulance moves at 0.8×**, like the tank. It can't carry.
+
+### What to try (Set B)
+
+0. **Press 1 until it says "B: Team Buddies ladder"** and play a match as each class (C cycles
+   your class). The readout names each result:
+   `1 crate -> refill > 2 side by side -> nail-mine layer (LMB) > 4 flat -> shield wall (RMB)`.
+1. **Do three vehicle types crowd a 90 × 50 m map?** (main risk) Each team can have one vehicle
+   out at a time (the lockout), so at most two are on the map at once. **V** gives you your
+   class's all 8 now (Shift+V a super one). Try all three. Do vehicles take over the match,
+   or are they rare treats? The match log counts `vehicle time` per team and `most out at
+   once`.
+2. **Does the ambulance stall fights?** (main risk) As a medic, **V** for an ambulance and park
+   it by a fight. Does the fight end, or does it drag on while the aura heals? Then press **1**
+   for **"B, ambulance fires heal shots"** and do the same. Is healing you aim more readable,
+   for you and for the enemy? The match log counts `ambulance healed` and the kills made while
+   an ambulance was out, against all kills.
+3. **Does a mech carrying 3 or 4 crates break the haul rhythm?** (main risk) As an engineer,
+   **V** for a mech and haul. Is one trip with 3 crates too strong against carrying one at a
+   time? Can the enemy stop it (400 hp, and hits don't knock its crates off)? Raid red's pad
+   with it. The match log counts `mech crates picked up` and `set on own pad`, and `crates
+   stolen off pads`.
+4. **Can you read the mines on a busy floor?** **M** gives every living red player a nail-mine
+   layer (Shift+M super). Fight red near its pad and in the jungle. Do you see mines before you
+   step on them? Does the 1 s root feel fair? As an engineer, open 2 side by side yourself:
+   is a mine layer worth losing your gun for? The match log counts `mines laid` and `went off`.
+5. **Supers**: drop a super crate with **Y** into a recipe and read the twist
+   (`SUPER hauler mech [carries 4, stomp knocks crates off carriers]`). With a super mine,
+   watch the victim's marker grow on the minimap.
+6. **The refill** is the same one you compared in Set A. Does it read differently when every
+   left-click item has ammo to refill (12 shells, 6 mines)?
+
+### What it answers (Set B)
+
+On top of Set A's counts, the match-end line (also printed with **P**) logs mines laid and how
+many went off, crates the mechs picked up and set on their own pad, each team's vehicle time
+and the most out at once, how much the ambulances healed, and the kills made while an
+ambulance was out against all kills in the match.
+
+### What the bot matches showed (Set B, 5 min, 5v5, bots on both teams, 4× speed)
+
+Your seat was a bot, given its class's all 8 at 100–120 s (`CRATE_ALL8`):
+
+| | Hauler mech | Ambulance (aura) | Ambulance (heal shot) | Tank |
+|---|---|---|---|---|
+| Score | 46–37 | 43–38 | 43–42 | 45–46 |
+| Kills | 10–9 | 12–7 | 4–8 | 7–7 |
+| Vehicle | 4 crates picked up, all 4 set on the pad | healed 79 hp in 40 s | healed 168 hp in 40 s | destroyed after 11 s |
+| Kills while the ambulance was out | | 2 in 40 s (19 in 300 s overall) | 1 in 40 s (12 in 300 s overall) | |
+
+In an earlier mech run the bots also built a mech of their own from 8 crates. The two mechs
+picked up 12 crates and set 9 on the pad. Bots haul when crates are scarce, so a mech mostly
+finds one or two at a time. Bots lay mines round their own pad and at their feet in a fight;
+in these runs no bot stepped on one. Like Set A's, this shows the items working in a real
+match, not what humans would choose.
+
+### Notes on the model (Set B)
+
+- Bots: a mech bot picks up crates until it's full (or none are within 10 m) and sets them on
+  its pad, and stomps enemies within reach. An ambulance bot stays 2 m from the most hurt
+  teammate (else the one nearest the enemy pad). A heal-shot ambulance aims at hurt
+  teammates, as the heal gun does. A mine-layer bot lays mines at its feet when an enemy is
+  within 8 m, and keeps 3 out round its pad.
+- Bots don't see mines and walk over them.
+- Smoke runs: `CRATE_RULES=2` is Set B and `CRATE_RULES=3` the heal-shot variant.
+  `CRATE_ALL8=<s>` gives your seat its class's all 8 at that match time, and `CRATE_MINES=1`
+  starts you with a super nail-mine layer.
