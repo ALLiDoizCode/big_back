@@ -18,8 +18,11 @@ Compare it with Set A plus **Set B's 1-crate refill**: a throwable against a ref
 
 ## Verdict
 
-_Not given yet. Resolved when the human has played both variants and given a verdict on
-Set A._
+**2026-10-18: Set A feels good.** The human, after playing it: "feels good".
+
+Not decided yet: the 1-crate comparison (Set A's throwable or kit against Set B's refill),
+and the five calls listed under "Set A, as built". These carry to the grilling in #22 and to
+Set B and Set C (#25, #26).
 
 ## The set switch (keys 1–6)
 
