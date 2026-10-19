@@ -21,7 +21,19 @@ ship; **P** prints your picks, the maps played and every result).
 
 ## Verdict
 
-_Not played yet._
+**Picked 2026-10-19: one map, the big lanes + jungle map, mirrored** (ADR 0020). The human,
+after playing the full map: "the map seems smaller than a League of Legends map and there
+needs to be more jungle and the base area should be bigger". The big map was built for that,
+and after playing it: "I like the bigger map". Asked, they picked one map over two or three,
+mirror over rotational, and said the big map didn't feel too quiet.
+
+- **Ships:** big (120 × 72 m), its 20 m walled base areas, four roomed jungle quadrants with a
+  heal and a shield camp each, and the 10 m river with its two objectives.
+- **Not shipped:** the 90 × 50 m map, the small map (and with it ADR 0012's 3v3 fallback),
+  crossroads and canal.
+- **The queue picks nothing:** with one map, keys 3 and 4 are unused.
+- **Not settled here:** wall, camp and crate placement on the big map, and whether the
+  comeback set needs retuning for its longer hauls and rarer fights (see the bot results).
 
 ## The maps (key 1)
 
