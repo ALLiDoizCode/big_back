@@ -16,6 +16,17 @@ hauls and rarer fights. Retune the set, or leave it? Does the 8 min timer still 
 **Resolved when** you've played from behind (key 3) under A and at least one of B or C, and
 ruled which set ships (press **Enter** on it; **P** prints your picks and results).
 
+## Verdict
+
+**Picked 2026-10-19: B, the set scaled to the map** (ADR 0013, amended). The human, after
+playing it on the big map: "big map feels good", with B on.
+
+- **Ships on the big map:** a megacrate every 35 s, pulled up to 30 m toward the trailing
+  team at a 10-point gap, and mercy at a 12-point gap held 20 s. Lock-in 8 s, spill up to 3,
+  megacrate worth 3 and overtime up to 60 s are unchanged.
+- **Not shipped:** A unchanged (comebacks at about half the old map's rate in bot play), C's
+  longer steal window (bots couldn't test it, and B was enough), and no set at all.
+
 ## The switch (keys 1-3, each restarts)
 
 | Key | Switch | Options |
