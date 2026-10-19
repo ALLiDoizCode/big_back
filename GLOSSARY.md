@@ -124,6 +124,10 @@ _Avoid_: leader, captain, commander
 A player who entered the match when the team kicked open a player recipe. A joined player who is knocked out stays out until another player recipe is opened.
 _Avoid_: spawned player, reinforcement
 
+**Friendly fire**:
+Harm a team does to itself. In Crate Race, the only friendly fire is a crate knocking its own team's pad crates. Shots, blasts and thrown crates never hurt allies.
+_Avoid_: team damage, team kill
+
 ### Map
 
 **Lane**:
