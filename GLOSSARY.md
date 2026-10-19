@@ -245,11 +245,11 @@ Players who queue together and are put on the same team.
 _Avoid_: premade, stack, squad, group
 
 **Party cap**:
-How far apart in skill a party may be and still queue. It is shown in tiers and divisions, and enforced on whichever is wider, rank or rating. A full 5-stack is exempt but plays for fewer points.
+How far apart in skill a party may be and still queue: 2 tiers for a duo or a party of 3, 3 tiers for a party of 4. It is shown in tiers and divisions, and enforced on whichever is wider, rank or rating. A full 5-stack is exempt but plays for fewer points.
 _Avoid_: party restriction, rank restriction, duo limit
 
 **Wide 5-stack**:
-A full five-player party over the party cap. It may queue, but its rank points are cut by its spread, and its wins don't count toward ranked-win rewards.
+A full five-player party more than 3 tiers apart. It may queue, but its rank points are cut by its spread (−25%, −50% or −75%), and its wins don't count toward ranked-win rewards.
 _Avoid_: wide group, stack penalty
 
 **Party bonus**:

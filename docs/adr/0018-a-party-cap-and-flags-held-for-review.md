@@ -46,8 +46,20 @@ width is set by a prototype ([#47](https://github.com/ALLiDoizCode/big_back/issu
     queueing and on the results screen.
   - When only the hidden rating is too wide, the message says "skill too far apart" and
     shows no number.
-- **Open:** the widths for each party size and the 5-stack cut, to be set by
-  [#47](https://github.com/ALLiDoizCode/big_back/issues/47) in the queue simulator.
+- **Widths** (set by [#47](https://github.com/ALLiDoizCode/big_back/issues/47) after playing the
+  [party-cap sheet](https://github.com/ALLiDoizCode/big_back/blob/prototype/party-cap/docs/prototypes/party-cap.md); the human's verdict: "lets go with that, record it"):
+
+  | Party | May be at most |
+  |---|---|
+  | Duo | 2 tiers apart |
+  | Party of 3 | 2 tiers apart |
+  | Party of 4 | 3 tiers apart |
+  | Full 5-stack | any width; points cut past 3 tiers |
+
+- **The 5-stack cut:** none up to 3 tiers of spread, then −25% for 3–4 tiers, −50% for 4–5 and
+  −75% beyond. About 70% of 5-stacks get no cut in the sim.
+- **A party over its cap** is blocked as above. The sim modelled the plain fix: its furthest
+  member drops out and queues solo, until the rest fit.
 
 ## Prevention in the matchmaker
 
@@ -105,6 +117,9 @@ wipe out confirmed abuse.
 
 ## Considered options
 
+- **Cap widths of 1 tier:** close matches 93%, but about two parties in three blocked.
+- **Cap widths of 3 tiers:** 9% blocked, but close matches only went from 78% to 83%.
+
 - **No cap, trust the party bonus** (the rating research's pick): 0012's sim showed close
   matches falling from 99% to 68% once a quarter of players were in parties.
 - **Allow every width, cut points by spread** (Valorant 5-stacks): a wide duo still makes three
@@ -131,5 +146,16 @@ wipe out confirmed abuse.
 - **The queue simulator has to keep each party member's skill** to set the cap (#47).
 - **Settles** the win-trading detection left open by 0009, 0010 and 0011, and the shape of the
   party skill cap left open by 0012.
-- **Open:** the cap widths and the 5-stack cut (#47); every flag threshold, once there are
-  real matches to measure them against.
+- **What the cap buys** (the sim of #47: 5v5, full lobbies, 25% of players arriving in parties):
+  close matches rise from 78% to 86% at 200 players at the busiest hour (99% with solo players
+  only), about the same at 100 and 60. About a quarter of parties are blocked, and most of them
+  still play a member short. Waits don't move.
+- **Most of the gain comes from fewer parties, not narrower ones.** Under 0010's model a team is
+  just the sum of its players plus the party bonus, so width matters only if a strong player
+  lifts weaker friends beyond that. The sim assumed a 25% lift; real matches should measure it.
+- **The widths need re-fitting from real party data.** The share blocked ran from 11% to 43%
+  at these widths, depending on how alike friends' skills are and how far rank lags rating.
+- **The cap matters little next to short starts** ([0012](0012-one-rated-queue-with-short-starts.md)): with them, late joiners and bots
+  drive fairness far more than party width.
+- **Open:** every flag threshold, once there are real matches to measure them against.
+- **Settled by [#47](https://github.com/ALLiDoizCode/big_back/issues/47):** the cap widths and the 5-stack cut.
