@@ -54,6 +54,10 @@ _Avoid_: preview, marker, reticle
 A crate that can't be carried and must be kicked open to release crates.
 _Avoid_: loot crate, weapon crate
 
+**Super crate**:
+A rare crate that upgrades whatever recipe it's part of into a stronger version of the same result.
+_Avoid_: gold crate, rare crate, power-up
+
 **Recipe**:
 A shape of crates on a pad, and what kicking the pad open gives. For example, two stacked crates bring in a player.
 _Avoid_: blueprint, craft, build
