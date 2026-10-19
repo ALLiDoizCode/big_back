@@ -73,4 +73,11 @@ there for 10 matches (median of 15 seeds, 3 matches a day):
 
 ## Verdict
 
-_Not yet picked._ The human plays the walkthroughs and picks a ladder structure.
+**Picked 2026-10-19: Divisions and points.** The human's words: "Divisions and points, record
+it". In the sim that is the `Divisions and points` preset with its rules as they stand:
+points with convergence, 5 placements for new accounts (placed one uncertainty low, capped at
+Diamond III), no underdog cushion, Diamond+ decay from banked days, a one-tier drop at season
+start, 3-month seasons, rank updated after every match, ranked-win rewards for 10 wins at a
+rank or above, and Champion as Master above a rating line.
+
+Recorded on main in ADR 0011 and the glossary.
