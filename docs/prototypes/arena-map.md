@@ -27,7 +27,7 @@ continues on this map.
 **Team size is 5v5 by default**, as in League of Legends (10 players). "team size" in the panel still
 goes from 1 to 8. Teams still start with one player and the rest join from the pad (ADR-0005).
 
-Everything from the crate-grammar prototype still works here (keys 1–6, C for class, T and Y
+Everything from the crate-grammar prototype still works here (keys 1–7, C for class, T and Y
 to drop crates). The **map** setting in the panel switches back to the open #10 arena
 (36 × 22 m) to compare. Changing it restarts the match.
 

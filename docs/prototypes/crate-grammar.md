@@ -25,19 +25,21 @@ The issue's other options are ruled out by those: **owned Buddies or neutral hau
 and **1×N towers or 3×3 blocks** (the pad is 2 × 2 × 2). What's left to pick is what the
 other four shapes build, and the rules around them.
 
-## The rules (keys 1–6)
+## The rules (keys 1–7)
 
 Each key steps through that rule's options and restarts the match. The box top-left always
 shows what you're playing, with the current option in `[brackets]`.
 
 | Key | Rule | Options |
 |---|---|---|
-| **1** | What stacks build | **mix**, **weapons**, **base upgrades** (table below), **by kicker's class** (see "Classes") |
+| **1** | What stacks build | **mix**, **weapons**, **base upgrades** (table below), **by kicker's class** (see "Classes"), **class loadout (LMB/RMB)** (see "Class loadout") |
 | **2** | Recipe shape | **by shape** (Team Buddies) · **by count only** (any arrangement; the number of crates decides) |
 | **3** | Pad readout | **secret**: the HUD only says "4 crates: what will it make?", the pad never glows, and kicking a non-recipe does nothing · **pad shows what it makes**: `your pad: 4 flat -> rocket launcher`, gold outline when it can open |
 | **4** | Super crates | **off** · **upgrade**: a purple crate in a recipe makes the SUPER version · **branch**: it makes the result from another book instead |
 | **5** | Build time | **instant** · **1 s per crate** · **2 s per crate**, counted after the kick. While building, the crates are merged into one locked lump with 30 hp per crate. Enemy shots wear it down, and if it breaks the crates spill out and nothing is made. |
 | **6** | Vulnerability of an unfinished stack | **steal only** (enemies take crates off your pad, as in #10) · **a hit splits the stack**: an enemy shot crossing a stack knocks its top crate off · **a hit spills the pad**: one hit scatters every crate on it · **locks once placed**: a crate that settles in a cell locks. Nobody can take it, knock it or shoot it off; only a kick uses it. |
+
+| **7** | Kick | **uses the whole pad** (the whole pad has to be one recipe) · **hold longer to use more crates** (the default; see "Hold to choose") |
 
 Stealing is a fixed pillar (see the glossary), so "split" and "spill" add to stealing rather
 than replacing it. "Lock" is the only option that stops stealing off pads. Stealing loose and
@@ -82,6 +84,56 @@ Things to watch: does choosing who kicks become a decision, or a chore? Can you 
 enemy's threat from who's standing at their pad? Does a team that loses its engineer feel
 locked out of half the recipes?
 
+### Class loadout (rule 1: "class loadout (LMB/RMB)")
+
+Only in `cargo run --example arena_map` (branch `prototype/arena-map`), not in `crate_grammar`.
+
+Added 2026-10-18 from the human's idea: "each class has a right click and a left click recipe.
+1x2 creates an utility or weapon for the left click and 2x2 flat does the same for the right
+click". As with "by kicker's class", the class of whoever kicks the pad open decides, and the
+item goes to the kicker.
+
+| Shape | soldier | engineer | medic |
+|---|---|---|---|
+| 2 side by side (1×2): **left click** | rapid gun | shotgun | heal gun: heals the teammate you aim at (8 hp a shot, 10 m), otherwise a weak shot |
+| 4 flat (2×2): **right click** | rockets: 4 | turret drop: 2 turrets where you aim (up to 8 m), 30 s each | heal pulse: 3 pulses of +40 hp to you and teammates within 7 m |
+| 1 crate | full health | full health | full health |
+| all 8 | tank | tank | tank |
+
+- **Right click with empty hands** uses the item. While carrying, right click still throws.
+  The HUD shows `right click (empty hands): ...` with the charges left.
+- The left-click item replaces your standard gun until its ammo runs out (as before).
+- **SUPER**: double the charges, and 1.5× damage or healing (super turrets fire twice as fast).
+  A branching super crate gives the next class's item.
+- **1 crate and all 8 aren't specified yet**, so they're placeholders: full health and the tank.
+- Bot medics heal hurt teammates with the heal gun and pulse when someone close by is below 60 hp.
+
+**The tension this showed** (with the kick using the whole pad): by shape, 2×2 flat is built
+*through* 1×2. A team that opens the pair the moment it's there never gets a right-click item,
+and one that wants the right-click item has to leave the pair alone. Bots opening the pair
+right away made only left-click items, so they now open it only after the pad has sat for 8 s.
+Rule 7 is the human's fix for this.
+
+### Hold to choose (rule 7: "hold longer to use more crates")
+
+Only in `cargo run --example arena_map` (branch `prototype/arena-map`), not in `crate_grammar`.
+
+Added 2026-10-18 from the human's idea: "the longer you hold f the more crates you consume
+allowing you to control what shape you use when there are multiple options".
+
+- Hold F beside your pad. After 0.75 s the **smallest recipe inside the pad** is ready, and
+  every 0.6 s after that the hold steps up to the next bigger one. **Let go to open** the one
+  you're on. The crates it would use get a **gold outline**.
+- It uses **only those crates** (from the top of each cell). The rest stay on the pad.
+- What fits inside, smallest first: 1 crate, 2 stacked, 2 side by side, 2 wide × 2 high,
+  4 flat, all 8. Player recipes are skipped when the team is full. By count only, the steps
+  are 1, 2, 3, 4, 5–7 and 8 crates, taken from the tallest cells first.
+- The pad no longer has to be exactly one shape: an L of 3 crates still holds 1 crate,
+  2 stacked or 2 side by side. "A crate out of line" still breaks the pad.
+- `your pad:` lists the steps with the current one in `[brackets]`. With the readout secret,
+  it shows only the crate counts (`1 crate: ? > 2 crates: ? > 4 crates: ?`).
+- Bots hold until the biggest recipe and open that.
+
 - **Guns** go to whoever kicked the pad open, and are lost when they're knocked out or run
   dry. Shotgun: 5 pellets, short range, 12 shells. Rapid: 6 shots/s, 60 rounds. Rocket: slow
   14 m/s rocket, blast 2.5 m, 6 rockets. **SUPER**: 1.5× damage, twice the ammo.
@@ -95,6 +147,13 @@ locked out of half the recipes?
   Against a build they do their damage to the build.
 
 ## What to try
+
+0. **Class loadout + hold to choose (keys 1 and 7)**, added after #17's first handoff. Stack
+   4 flat, then hold F and watch the gold outline step from 1 crate to 2 side by side to
+   4 flat. Do you open the pair (left click) and keep building, or wait for 2×2 (right
+   click)? Press 7 to compare with the whole-pad kick: is choosing by hold a decision, or a
+   timing chore? Press C before kicking to see another class's items. Try each class's
+   right click.
 
 1. **Recipe shape (key 2).** Play a match by shape, then one by count only. Does the shape
    puzzle add skill, or just friction? Under count only, 4 crates always make 2 players, so a
@@ -137,5 +196,5 @@ pad to you.
   trip. No avian3d: the same hand-rolled physics as core feel.
 - The win condition is still crates on the pad plus crates spent there. It isn't settled here
   (see the win-conditions research, [#3](https://github.com/ALLiDoizCode/big_back/issues/3)).
-- Smoke runs: `CRATE_RULES=<6 digits>` sets each rule by option index (build time 0/1/2 = instant / 1 s / 2 s),
+- Smoke runs: `CRATE_RULES=<7 digits>` sets each rule by option index (build time 0/1/2 = instant / 1 s / 2 s),
   `CRATE_SEAT=bot`, `CRATE_ARENA=1`, `CRATE_SPEED=4`, `CRATE_EXIT_AFTER=<s>`, `CRATE_SCREENSHOT=<png>`.
