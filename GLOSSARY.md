@@ -275,7 +275,7 @@ What a match adds to or takes from a rank. Wins pay more and losses cost less wh
 _Avoid_: LP, RR, SR, stars
 
 **Placements**:
-A new account's first 5 ranked matches, played with no rank shown. They set its starting rank.
+A new account's first 5 rated matches, played with no rank shown. They set its starting rank. A match made unrated by a bot seat doesn't count.
 _Avoid_: calibration, qualifiers, provisional matches
 
 **Decay**:
@@ -363,3 +363,13 @@ _Avoid_: freeze, pending points, suspension
 **Offence**:
 Abuse a reviewer has confirmed. Each one steps up the penalty, and offences never step down.
 _Avoid_: strike, violation
+
+### Onboarding
+
+**Tutorial**:
+The required solo lesson, once per account, that stands between first launch and the queue. It teaches the crate grammar and one full Crate Race loop, and is passed by finishing each step.
+_Avoid_: training, boot camp, new player experience
+
+**Practice**:
+A custom lobby against bots, open any time, with any party. It is unrated and earns nothing.
+_Avoid_: casual, training mode, vs AI, bot match

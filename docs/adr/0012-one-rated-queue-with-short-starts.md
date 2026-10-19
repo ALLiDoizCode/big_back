@@ -80,3 +80,5 @@ these were the waits at the 4 quietest hours (median / 90% matched within):
 - **Settled by [0018](0018-a-party-cap-and-flags-held-for-review.md):** the party cap's shape: shown in rank, enforced on the wider of rank
   and rating, with a full 5-stack exempt for fewer points. Its widths are set by
   [#47](https://github.com/ALLiDoizCode/big_back/issues/47).
+- **Settled by [0019](0019-a-tutorial-then-the-rated-queue.md):** the seat bot is also the
+  tutorial's and practice's bot, run scripted in the tutorial.
