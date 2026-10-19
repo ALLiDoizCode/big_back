@@ -141,3 +141,33 @@ _Avoid_: creep, neutral, mob
 **River objective**:
 The bigger camp in the river, north and south, that drops crates.
 _Avoid_: boss, dragon, baron
+
+### Progression
+
+**Identity**:
+What a player can earn across matches: cosmetics, titles and proof of skill. It never changes a match.
+_Avoid_: unlocks, rewards, power
+
+**Readability rule**:
+The list of things a cosmetic may never change, such as a body's silhouette, team colour, crates and how a stack reads.
+_Avoid_: cosmetic rules, skin limits
+
+**Grade**:
+A player's D to S result for a class in one match, measured against the whole lobby.
+_Avoid_: score, rating, performance rank
+
+**Mastery**:
+A player's seasonal progress with one class, earned by grades and paid out in milestones and a title.
+_Avoid_: class level, hero level, XP
+
+**Pass**:
+The one free, linear track of cosmetics that a player moves along by playing matchmade games.
+_Avoid_: battle pass, season pass, track
+
+**Challenge**:
+A goal that adds pass XP, counted only from matchmade play and capped per match.
+_Avoid_: quest, mission, bounty
+
+**Joke award**:
+The single public award each player gets on the results screen, framed as a joke.
+_Avoid_: medal, accolade, card
