@@ -4,13 +4,15 @@
 //! refill. Also answers #25: does Set B ("Team Buddies ladder") work? 1 crate refills what
 //! you hold, and every class's all 8 is a vehicle its kicker drives (tank, hauler mech,
 //! field ambulance). Compare it with the ambulance's heal aura swapped for a heal shot the
-//! driver fires. Not production code; lives on `prototype/class-items`, branched from
-//! `prototype/arena-map` (the lanes + jungle map, 5v5, and the crate grammar picked in #17).
+//! driver fires. And #26: does Set C ("a capstone per class") work? 1 crate is a short class
+//! self-buff, and all 8 is a loud team-wide moment in the class's job (a barrage, a gate, a
+//! rally). Compare it with a slower, sparser barrage. Not production code; lives on
+//! `prototype/class-items`, branched from `prototype/arena-map` (the lanes + jungle map, 5v5,
+//! and the crate grammar picked in #17).
 //!
 //!     cargo run --example class_items
 //!
-//! See `docs/prototypes/class-items.md` for what to try. Set C (#26) adds its options to the
-//! set switch.
+//! See `docs/prototypes/class-items.md` for what to try.
 //!
 //! Play: WASD / left stick move, mouse / right stick aim, Space / A jump, E / X grab or place,
 //! RMB / RB throw (empty hands: right-click item), LMB / RT shoot, Q / LB throw your 1-crate
@@ -20,6 +22,8 @@
 //! C changes your class. T drops a crate at your feet, Y a super crate. G gives red a bunker
 //! round its pad now (Shift+G a super one), to try raiding it. V gives you your class's all 8
 //! now (Shift+V a super one). M gives every red player a nail-mine layer (Shift+M super).
+//! B: red marks a barrage on you now (Shift+B super). J: red shuts its mid lane and a side lane
+//! with gates now (Shift+J super).
 //! Tune: Up/Down pick, Left/Right change (Shift = x5); every item number is in the panel.
 //! R / Start resets, P prints settings, verdicts and results, H hides the rules and panel.
 //!
@@ -27,7 +31,8 @@
 //! `CRATE_RULES=<6 digits>` (the option index of each set switch, e.g. `CRATE_RULES=000101`),
 //! `CRATE_ARENA=1` (whole-arena camera), `CRATE_SPEED=<1-4>` (time scale), `CRATE_MAP=open`,
 //! `CRATE_CLASS=<0-2>` (your class), `CRATE_ALL8=<s>` (you get your class's all 8 at that
-//! match time, for trying a vehicle), `CRATE_MINES=1` (you start with a super nail-mine layer).
+//! match time, for trying a vehicle), `CRATE_MINES=1` (you start with a super nail-mine layer),
+//! `CRATE_B=<s>` / `CRATE_J=<s>` (red marks a barrage on you / gates two lanes at that time).
 
 use std::collections::VecDeque;
 use std::f32::consts::FRAC_PI_2;
@@ -371,6 +376,13 @@ enum Make {
     Bunker,
     /// All 8, Set A medic: every living teammate to full health with a shield.
     Rally,
+    /// 1 crate, Set C: a class self-buff (or the engineer's barricade), used with Q.
+    Kit(KitKind),
+    /// All 8, Set C soldier: mark a circle; shells fall on it after a delay. `true` is the
+    /// sparser variant.
+    Barrage(bool),
+    /// All 8, Set C engineer: two long walls your team passes and enemies don't.
+    Gate,
 }
 
 impl Make {
@@ -396,6 +408,15 @@ impl Make {
             Make::AmbulanceShot => "ambulance (heal shot)",
             Make::Bunker => "bunker",
             Make::Rally => "rally",
+            Make::Alt(AltKind::Launcher) => "grenade launcher (RMB)",
+            Make::Alt(AltKind::ShieldBurst) => "shield burst (RMB)",
+            Make::Toss(_) => "grenade",
+            Make::Kit(KitKind::Adrenaline) => "adrenaline (Q)",
+            Make::Kit(KitKind::Barricade) => "barricade (Q)",
+            Make::Kit(KitKind::SelfPatch) => "self-patch (Q)",
+            Make::Barrage(false) => "barrage (LMB marks it)",
+            Make::Barrage(true) => "sparse barrage (LMB marks it)",
+            Make::Gate => "gate (LMB places 2 walls)",
         }
     }
     /// What a super crate adds: one behaviour twist (research section 7). The pad readout
@@ -420,6 +441,14 @@ impl Make {
             Make::Ambulance | Make::AmbulanceShot => "+25 shield every 5 s",
             Make::Bunker => "the gap is one-way",
             Make::Rally => "100 shield, clears slows",
+            Make::Alt(AltKind::Launcher) => "grenades split on the bounce",
+            Make::Alt(AltKind::ShieldBurst) => "shield also cleanses slows",
+            Make::Toss(_) => "",
+            Make::Kit(KitKind::Adrenaline) => "8 s, reload on kill",
+            Make::Kit(KitKind::Barricade) => "allies can climb it",
+            Make::Kit(KitKind::SelfPatch) => "adds a 25 shield",
+            Make::Barrage(_) => "shells leave a slow zone",
+            Make::Gate => "enemies touching it are slowed",
         }
     }
     /// The pad readout's name: "SUPER rockets (RMB) [rockets split into 3]".
@@ -475,6 +504,32 @@ enum AltKind {
     ShieldWall,
     /// Medic: heals you and every teammate close by.
     Pulse,
+    /// Set C soldier: grenades lobbed on a visible arc, bouncing once.
+    Launcher,
+    /// Set C medic: a shot that gives the first ally it touches a shield.
+    ShieldBurst,
+}
+
+/// A Set C 1-crate item, used with Q.
+#[derive(Clone, Copy, PartialEq, Debug)]
+enum KitKind {
+    /// Soldier: a few seconds of faster fire, lost if you pick up a crate.
+    Adrenaline,
+    /// Engineer: a short chest-high block where you aim.
+    Barricade,
+    /// Medic: hp now and more over a few seconds.
+    SelfPatch,
+}
+
+/// A Set C all 8 waiting to be placed with left click (a barrage's circle, or gate walls).
+#[derive(Clone, Copy)]
+struct Mark {
+    make: Make,
+    gold: bool,
+    /// Placements left (a gate has 2 walls).
+    left: u32,
+    /// Lost if not placed in this long.
+    life: f32,
 }
 
 /// A 1-crate item thrown with Q, on the jump-throw arc.
@@ -482,6 +537,10 @@ enum AltKind {
 enum TossKind {
     Grenade,
     MedPack,
+    /// Set C: a grenade from the launcher (right click), bouncing once.
+    Launched,
+    /// Set C: a barrage shell, falling from the sky.
+    Shell,
 }
 
 #[derive(Clone, Copy)]
@@ -521,21 +580,26 @@ impl Class {
 // ---------------------------------------------------------------------------------------
 
 /// Whole sets for key 1: (name, option index for left click, right click, 1 crate, all 8).
-const SETS: [(&str, [usize; 4]); 4] = [
+const SETS: [(&str, [usize; 4]); 6] = [
     ("A: fix the placeholders", [0, 0, 0, 0]),
     ("A + Set B's 1-crate refill", [0, 0, 1, 0]),
     ("B: Team Buddies ladder", [1, 0, 1, 1]),
     ("B, ambulance fires heal shots", [1, 0, 1, 2]),
+    ("C: a capstone per class", [0, 1, 2, 3]),
+    ("C, sparser barrage", [0, 1, 2, 4]),
 ];
-const SET_NAMES: [&str; 4] = [SETS[0].0, SETS[1].0, SETS[2].0, SETS[3].0];
-const LEFT_OPTS: [&str; 2] = ["A: rapid / rivet / heal gun", "B: shotgun / nail-mine layer / heal gun"];
+const SET_NAMES: [&str; 6] = [SETS[0].0, SETS[1].0, SETS[2].0, SETS[3].0, SETS[4].0, SETS[5].0];
+/// Set C's left click is Set A's.
+const LEFT_OPTS: [&str; 2] = ["A, C: rapid / rivet / heal gun", "B: shotgun / nail-mine layer / heal gun"];
 /// Set B's right click is Set A's.
-const RIGHT_OPTS: [&str; 1] = ["A, B: rockets / shield wall / heal pulse"];
-const SMALL_OPTS: [&str; 2] = ["A: grenade / patch kit / med pack", "B: refill"];
-const ALL8_OPTS: [&str; 3] = [
+const RIGHT_OPTS: [&str; 2] = ["A, B: rockets / shield wall / heal pulse", "C: grenade launcher / shield wall / shield burst"];
+const SMALL_OPTS: [&str; 3] = ["A: grenade / patch kit / med pack", "B: refill", "C: adrenaline / barricade / self-patch"];
+const ALL8_OPTS: [&str; 5] = [
     "A: tank / bunker / rally",
     "B: tank / hauler mech / ambulance (heal aura)",
     "B: tank / hauler mech / ambulance (heal shot)",
+    "C: barrage / gate / rally",
+    "C: sparser barrage / gate / rally",
 ];
 
 /// What a class makes from a recipe, given which set each slot is on.
@@ -552,12 +616,17 @@ fn item_of(slot: Slot, class: Class, sets: [usize; 4]) -> Make {
             (_, Medic) => Make::Gun(GunKind::Heal),
         },
         Slot::Flat4 => match (sets[1], class) {
+            (1, Soldier) => Make::Alt(AltKind::Launcher),
+            (1, Medic) => Make::Alt(AltKind::ShieldBurst),
             (_, Soldier) => Make::Alt(AltKind::Rockets),
             (_, Engineer) => Make::Alt(AltKind::ShieldWall),
             (_, Medic) => Make::Alt(AltKind::Pulse),
         },
         Slot::Small => match (sets[2], class) {
             (1, _) => Make::Refill,
+            (2, Soldier) => Make::Kit(KitKind::Adrenaline),
+            (2, Engineer) => Make::Kit(KitKind::Barricade),
+            (2, Medic) => Make::Kit(KitKind::SelfPatch),
             (_, Soldier) => Make::Toss(TossKind::Grenade),
             (_, Engineer) => Make::PatchKit,
             (_, Medic) => Make::Toss(TossKind::MedPack),
@@ -566,6 +635,10 @@ fn item_of(slot: Slot, class: Class, sets: [usize; 4]) -> Make {
             (1 | 2, Engineer) => Make::Mech,
             (1, Medic) => Make::Ambulance,
             (2, Medic) => Make::AmbulanceShot,
+            // ADR 0005 stands (ruling on #26): the medic's second wind is out; Set C plays
+            // Set A's rally.
+            (n @ (3 | 4), Soldier) => Make::Barrage(n == 4),
+            (3 | 4, Engineer) => Make::Gate,
             (_, Soldier) => Make::Tank,
             (_, Engineer) => Make::Bunker,
             (_, Medic) => Make::Rally,
@@ -778,6 +851,38 @@ enum P {
     AmbHeal,
     AmbShotHeal,
     AmbBlaster,
+    // Set C (#26).
+    LauncherCharges,
+    LauncherDmg,
+    LauncherBlast,
+    LauncherRange,
+    AdrenRate,
+    AdrenTime,
+    AdrenSuperTime,
+    BarricadeLen,
+    BarricadeHp,
+    BarricadeLife,
+    GateLen,
+    GateHp,
+    GateLife,
+    GateSlow,
+    MarkRange,
+    MarkTime,
+    BarrageRadius,
+    BarrageDelay,
+    BarrageShells,
+    BarrageTime,
+    SparseShells,
+    SparseTime,
+    ShellDmg,
+    ShellBlast,
+    ShellFall,
+    BurstCharges,
+    BurstShield,
+    BurstRange,
+    PatchNow,
+    PatchOver,
+    PatchSecs,
 }
 
 /// How many of the params are the set switch (keys 1-6).
@@ -882,6 +987,38 @@ fn defaults() -> Vec<Param> {
         num("ambulance: aura heal", 15.0, 2.0, 40.0, 1.0, "hp/s"),
         num("ambulance: heal shot", 12.0, 2.0, 40.0, 1.0, "hp"),
         num("ambulance: blaster", 8.0, 0.0, 25.0, 1.0, "dmg"),
+        // Set C (#26).
+        num("launcher: charges", 3.0, 1.0, 10.0, 1.0, ""),
+        num("launcher: damage", 60.0, 20.0, 150.0, 5.0, ""),
+        num("launcher: blast", 2.0, 1.0, 5.0, 0.25, "m"),
+        num("launcher: range", 14.0, 5.0, 25.0, 1.0, "m"),
+        num("adrenaline: fire rate", 1.3, 1.0, 2.5, 0.05, "x"),
+        num("adrenaline: time", 6.0, 1.0, 20.0, 0.5, "s"),
+        num("adrenaline: super time", 8.0, 1.0, 20.0, 0.5, "s"),
+        num("barricade: length", 2.0, 1.0, 6.0, 0.5, "m"),
+        num("barricade: hp", 150.0, 25.0, 600.0, 25.0, ""),
+        num("barricade: life", 20.0, 5.0, 60.0, 5.0, "s"),
+        num("gate: wall length", 8.0, 2.0, 14.0, 0.5, "m"),
+        num("gate: hp each wall", 500.0, 100.0, 2000.0, 50.0, ""),
+        num("gate: life", 45.0, 10.0, 120.0, 5.0, "s"),
+        num("gate: super slow", 1.5, 0.0, 5.0, 0.25, "s"),
+        num("mark: range", 25.0, 8.0, 45.0, 1.0, "m"),
+        num("mark: time to place", 30.0, 5.0, 90.0, 5.0, "s"),
+        num("barrage: radius", 5.0, 2.0, 10.0, 0.5, "m"),
+        num("barrage: delay", 3.0, 0.0, 8.0, 0.5, "s"),
+        num("barrage: shells", 12.0, 1.0, 40.0, 1.0, ""),
+        num("barrage: over", 4.0, 0.5, 12.0, 0.5, "s"),
+        num("sparse: shells", 6.0, 1.0, 40.0, 1.0, ""),
+        num("sparse: over", 4.0, 0.5, 12.0, 0.5, "s"),
+        num("shell: damage", 50.0, 10.0, 150.0, 5.0, ""),
+        num("shell: blast", 2.0, 0.5, 5.0, 0.25, "m"),
+        num("shell: fall speed", 12.0, 4.0, 40.0, 1.0, "m/s"),
+        num("shield burst: charges", 3.0, 1.0, 8.0, 1.0, ""),
+        num("shield burst: shield", 40.0, 10.0, 100.0, 5.0, ""),
+        num("shield burst: range", 10.0, 4.0, 20.0, 1.0, "m"),
+        num("self-patch: now", 30.0, 0.0, 100.0, 5.0, "hp"),
+        num("self-patch: over time", 30.0, 0.0, 100.0, 5.0, "hp"),
+        num("self-patch: over", 3.0, 0.5, 10.0, 0.5, "s"),
     ]
 }
 
@@ -963,6 +1100,8 @@ fn init_from_env(mut tune: ResMut<Tune>, mut sim: ResMut<Sim>) {
     }
     sim.reset(&tune);
     sim.all8_at = std::env::var("CRATE_ALL8").ok().map(|v| v.parse::<f32>().unwrap_or(0.0));
+    sim.red_barrage_at = std::env::var("CRATE_B").ok().map(|v| v.parse::<f32>().unwrap_or(0.0));
+    sim.red_gates_at = std::env::var("CRATE_J").ok().map(|v| v.parse::<f32>().unwrap_or(0.0));
     if std::env::var("CRATE_MINES").is_ok() {
         sim.actors[YOU].gun = Some(sim.new_gun(GunKind::Mines, true));
     }
@@ -1099,6 +1238,16 @@ struct Actor {
     reveal: f32,
     /// Absorbs damage before hp (from shield camps).
     shield: f32,
+    /// Set C: the 1-crate item to use with Q, and whether it's super.
+    kit: Option<(KitKind, bool)>,
+    /// Adrenaline seconds left (faster fire), and whether it's super (reload on kill).
+    adren: f32,
+    adren_gold: bool,
+    /// Self-patch: hp a second, for this many seconds more.
+    regen: f32,
+    regen_t: f32,
+    /// A barrage or gate waiting to be placed with left click.
+    mark: Option<Mark>,
     /// Bots: the goal they're routing to, the next waypoint, and how old it is.
     nav: Option<(Vec2, Vec2, f32)>,
     /// Recent positions, to show other players slightly in the past (online interpolation).
@@ -1136,6 +1285,12 @@ impl Actor {
             // Bots by slot: 1st soldier, 2nd engineer, 3rd medic.
             class: CLASSES[slot % 3],
             shield: 0.0,
+            kit: None,
+            adren: 0.0,
+            adren_gold: false,
+            regen: 0.0,
+            regen_t: 0.0,
+            mark: None,
             nav: None,
             hist: VecDeque::new(),
             ent: None,
@@ -1170,10 +1325,18 @@ struct Wall {
     gold: bool,
     bunker: bool,
     gate: bool,
+    /// Set C gate: your team's bodies and shots pass, enemies' don't.
+    pass: bool,
+    /// Set C barricade: low and short (a super one your team can climb).
+    barricade: bool,
+    /// How tall it is: shots, lobs and crates below this stop.
+    h: f32,
     ent: Option<Entity>,
 }
 
 const WALL_H: f32 = 2.0;
+/// A barricade is chest-high: shots stop, nobody jumps it (a super one, your team can).
+const BARRICADE_H: f32 = 1.3;
 const WALL_HALF_T: f32 = 0.2;
 /// Bunker walls stand this far from the pad's centre.
 const BUNKER_R: f32 = 2.6;
@@ -1203,7 +1366,7 @@ impl Wall {
     }
     /// Whether it stops a body on `team`.
     fn blocks_body(&self, team: usize) -> bool {
-        !self.gate || team != self.team
+        !(self.gate || self.pass) || team != self.team
     }
     /// Whether the straight walk from `a` to `b` crosses it.
     fn crosses(&self, a: Vec2, b: Vec2, r: f32) -> bool {
@@ -1260,6 +1423,10 @@ struct Shot {
     slow: bool,
     /// Heal shot from an ambulance (counted as ambulance healing).
     amb: bool,
+    /// Shield burst: the first ally it touches gets this much shield (a super one also
+    /// clears slows).
+    shield: f32,
+    cleanse: bool,
     ent: Option<Entity>,
 }
 
@@ -1282,12 +1449,15 @@ impl Shot {
             split: false,
             slow: false,
             amb: false,
+            shield: 0.0,
+            cleanse: false,
             ent: None,
         }
     }
 }
 
 /// A grenade or med pack in flight (or a grenade lying or stuck, waiting to go off).
+#[derive(Clone, Copy)]
 struct Lob {
     kind: TossKind,
     pos: Vec3,
@@ -1299,6 +1469,29 @@ struct Lob {
     /// A super grenade sticks to the first thing it touches: a player (and their offset),
     /// or the floor or a wall.
     stuck: Option<Option<(usize, Vec3)>>,
+    /// Launcher grenades: bounces so far (they go off on the second touch), and whether it's
+    /// one of the 3 a super one splits into.
+    hops: u8,
+    small: bool,
+    /// Barrage shells: the barrage they belong to.
+    wave: u32,
+}
+
+/// A Set C barrage: a marked circle that shells fall on after a delay. Both teams see it.
+struct Barrage {
+    id: u32,
+    team: usize,
+    owner: usize,
+    at: Vec3,
+    r: f32,
+    /// Seconds until the first shell.
+    delay: f32,
+    shells_left: u32,
+    every: f32,
+    next: f32,
+    gold: bool,
+    /// Enemies (by actor index) any of its shells hit.
+    hit: u64,
 }
 
 /// A blast: rockets, grenades and the tank cannon.
@@ -1378,6 +1571,7 @@ struct Sim {
     zones: Vec<(Vec3, f32, f32, usize)>,
     /// Each team's rally: seconds left (it locks out all 8 while it lasts).
     rally: [f32; 2],
+    barrages: Vec<Barrage>,
     monsters: Vec<Monster>,
     pickups: Vec<Pickup>,
     /// The lanes map is on.
@@ -1410,6 +1604,10 @@ struct Sim {
     your_class: Class,
     /// Smoke runs: you get your class's all 8 at this match time, once it's free.
     all8_at: Option<f32>,
+    /// Smoke runs: red marks a barrage on you (B), or shuts two lanes with gates (J), at
+    /// these match times.
+    red_barrage_at: Option<f32>,
+    red_gates_at: Option<f32>,
     /// Blue's bots build pad shapes and kick them open too.
     ally_stacks: bool,
     /// You're in your seat (not watching a bot play it).
@@ -1470,6 +1668,24 @@ struct Sim {
     /// Seconds any ambulance was out, and the kills made in that time.
     amb_time: f32,
     amb_kills: u32,
+    // Set C.
+    /// Barrages each team marked; enemies in the circle at the mark, still in it when the
+    /// shells began, and hit by a shell.
+    barrage_n: [u32; 2],
+    barrage_in_mark: [u32; 2],
+    barrage_in_fall: [u32; 2],
+    barrage_hit: [u32; 2],
+    /// Seconds each team had a gate up, and seconds each team's players were held at an
+    /// enemy gate.
+    gate_time: [f32; 2],
+    gate_held: [f32; 2],
+    /// Left-click items each team ran dry, and lost on a knockout.
+    dry: [u32; 2],
+    gun_lost: [u32; 2],
+    /// Adrenaline cancelled by picking up a crate.
+    adren_cut: [u32; 2],
+    /// Shield each team's shield bursts gave.
+    burst_given: [f32; 2],
 }
 
 /// Vulnerability options (key 6).
@@ -1512,6 +1728,8 @@ impl Sim {
             vuln: STEAL,
             your_class: Class::Soldier,
             all8_at: None,
+            red_barrage_at: None,
+            red_gates_at: None,
             ally_stacks: false,
             you_play: true,
             pad_kick: [0.0; 2],
@@ -1550,6 +1768,17 @@ impl Sim {
             amb_healed: [0.0; 2],
             amb_time: 0.0,
             amb_kills: 0,
+            barrages: Vec::new(),
+            barrage_n: [0; 2],
+            barrage_in_mark: [0; 2],
+            barrage_in_fall: [0; 2],
+            barrage_hit: [0; 2],
+            gate_time: [0.0; 2],
+            gate_held: [0.0; 2],
+            dry: [0; 2],
+            gun_lost: [0; 2],
+            adren_cut: [0; 2],
+            burst_given: [0.0; 2],
         };
         s.reset(tune);
         s
@@ -1660,6 +1889,17 @@ impl Sim {
         self.amb_healed = [0.0; 2];
         self.amb_time = 0.0;
         self.amb_kills = 0;
+        self.barrages.clear();
+        self.barrage_n = [0; 2];
+        self.barrage_in_mark = [0; 2];
+        self.barrage_in_fall = [0; 2];
+        self.barrage_hit = [0; 2];
+        self.gate_time = [0.0; 2];
+        self.gate_held = [0.0; 2];
+        self.dry = [0; 2];
+        self.gun_lost = [0; 2];
+        self.adren_cut = [0; 2];
+        self.burst_given = [0.0; 2];
     }
 
     /// Lanes map: crates along the lanes, in the river and by the camps; a camp in each
@@ -1851,6 +2091,16 @@ impl Sim {
         }
         if let Some(w) = self.walls.iter().find(|w| w.team == team && w.bunker) {
             return Some(format!("bunker {:.0} s", w.life.max(0.0)));
+        }
+        if let Some(m) = self.actors.iter().filter(|a| a.team == team && a.alive()).find_map(|a| a.mark) {
+            let what = if m.make == Make::Gate { "gate" } else { "barrage" };
+            return Some(format!("{what} to place, {:.0} s", m.life.max(0.0)));
+        }
+        if let Some(b) = self.barrages.iter().find(|b| b.team == team) {
+            return Some(format!("barrage, {} shells to fall", b.shells_left));
+        }
+        if let Some(w) = self.walls.iter().find(|w| w.team == team && w.pass) {
+            return Some(format!("gate {:.0} s", w.life.max(0.0)));
         }
         (self.rally[team] > 0.0).then(|| format!("rally {:.0} s", self.rally[team]))
     }
@@ -2129,6 +2379,13 @@ impl Sim {
                 }
             }
             Make::Bunker => self.add_bunker(team, gold),
+            Make::Kit(kind) => self.actors[b].kit = Some((kind, gold)),
+            Make::Barrage(_) | Make::Gate => {
+                // Placed with left click, where you aim (you fire nothing until then).
+                let left = if make == Make::Gate { 2 } else { 1 };
+                let life = self.n(P::MarkTime);
+                self.actors[b].mark = Some(Mark { make, gold, left, life });
+            }
             Make::Rally => {
                 let shield = if gold { 100.0 } else { self.n(P::RallyShield) };
                 let t = self.n(P::RallyInvuln);
@@ -2184,13 +2441,30 @@ impl Sim {
             AltKind::Rockets => self.n(P::RocketCharges),
             AltKind::ShieldWall => self.n(P::WallCharges),
             AltKind::Pulse => self.n(P::PulseCharges),
+            AltKind::Launcher => self.n(P::LauncherCharges),
+            AltKind::ShieldBurst => self.n(P::BurstCharges),
         } as u32;
         Alt { kind, charges: n, max: n, gold }
     }
 
     /// A shield wall `half_len` wide, facing `normal`.
     fn add_wall(&mut self, team: usize, pos: Vec3, normal: Vec3, half_len: f32, hp: f32, life: f32, gold: bool, bunker: bool, gate: bool) {
-        self.walls.push(Wall { team, pos: pos.with_y(0.0), normal, half_len, hp, max_hp: hp, life, gold, bunker, gate, ent: None });
+        self.walls.push(Wall {
+            team,
+            pos: pos.with_y(0.0),
+            normal,
+            half_len,
+            hp,
+            max_hp: hp,
+            life,
+            gold,
+            bunker,
+            gate,
+            pass: false,
+            barricade: false,
+            h: WALL_H,
+            ent: None,
+        });
     }
 
     /// The engineer's all 8: three full sides round the pad and the side facing the arena
@@ -2240,6 +2514,16 @@ impl Sim {
         }
         let a = &mut self.actors[who];
         a.claim = None;
+        // Adrenaline ends when you pick up a crate.
+        if a.adren > 0.0 {
+            a.adren = 0.0;
+            let team = a.team;
+            self.adren_cut[team] += 1;
+            if who == YOU {
+                self.say("adrenaline cancelled: you picked up a crate");
+            }
+        }
+        let a = &mut self.actors[who];
         // A hauler mech stacks what it picks up.
         if a.tank.is_some_and(|t| t.ride == Ride::Mech) {
             a.load.push(id);
@@ -2330,11 +2614,23 @@ impl Sim {
         let first = a.slot == 0;
         a.dead = if first { 3.0 } else { f32::INFINITY };
         a.claim = None;
-        a.gun = None;
+        let lost_gun = a.gun.take().is_some();
         a.alt = None;
         a.toss = None;
+        a.kit = None;
+        a.adren = 0.0;
+        a.regen_t = 0.0;
+        let lost_mark = a.mark.take().is_some();
         a.shield = 0.0;
         a.slow = 0.0;
+        let team = a.team;
+        if lost_gun {
+            self.gun_lost[team] += 1;
+        }
+        if lost_mark {
+            self.say(format!("{} went down with an all 8 still to place: it's lost", self.describe(who)));
+        }
+        let a = &mut self.actors[who];
         // by_team 2 is a PvE monster.
         if by_team < 2 {
             self.kills[by_team] += 1;
@@ -2343,6 +2639,14 @@ impl Sim {
             }
         } else {
             self.pve_deaths[a.team] += 1;
+        }
+        // Super adrenaline: a kill reloads your left-click item.
+        if let Some(k) = by
+            && self.actors[k].adren > 0.0
+            && self.actors[k].adren_gold
+            && let Some(g) = &mut self.actors[k].gun
+        {
+            g.ammo = g.max;
         }
         let what = self.describe(who);
         if who == YOU {
@@ -2727,6 +3031,8 @@ struct Controls {
     grab: bool,
     throw: bool,
     fire: bool,
+    /// Left click this frame (places a barrage or gate).
+    fire_tap: bool,
     kick_held: bool,
     kick: bool,
     /// Throw your 1-crate item (Q / LB).
@@ -2761,6 +3067,7 @@ fn read_controls(
     c.grab = keys.just_pressed(KeyCode::KeyE);
     c.throw = mouse.just_pressed(MouseButton::Right);
     c.fire = mouse.pressed(MouseButton::Left);
+    c.fire_tap = mouse.just_pressed(MouseButton::Left);
     c.kick_held = keys.pressed(KeyCode::KeyF);
     c.kick = keys.just_pressed(KeyCode::KeyF);
     c.toss = keys.just_pressed(KeyCode::KeyQ);
@@ -2789,6 +3096,7 @@ fn read_controls(
         c.grab |= pad.just_pressed(GamepadButton::West);
         c.throw |= pad.just_pressed(GamepadButton::RightTrigger);
         c.fire |= pad.pressed(GamepadButton::RightTrigger2);
+        c.fire_tap |= pad.just_pressed(GamepadButton::RightTrigger2);
         c.kick_held |= pad.pressed(GamepadButton::East);
         c.kick |= pad.just_pressed(GamepadButton::East);
         c.toss |= pad.just_pressed(GamepadButton::LeftTrigger);
@@ -2917,6 +3225,14 @@ fn tune_input(
         }
         sim.say(format!("red got {}nail-mine layers", if gold { "SUPER " } else { "" }));
     }
+    // B: red marks a barrage on you now (Shift: super), to try dodging one.
+    if keys.just_pressed(KeyCode::KeyB) {
+        red_barrage(&mut sim, keys.pressed(KeyCode::ShiftLeft));
+    }
+    // J: red shuts its mid lane and a side lane with gate walls now (Shift: super).
+    if keys.just_pressed(KeyCode::KeyJ) {
+        red_gates(&mut sim, keys.pressed(KeyCode::ShiftLeft));
+    }
     if keys.just_pressed(KeyCode::KeyC) {
         sim.your_class = sim.your_class.next();
         sim.actors[YOU].class = sim.your_class;
@@ -2947,6 +3263,34 @@ fn tune_input(
             }
         }
         sim.say("printed settings, verdicts and results to the terminal");
+    }
+}
+
+/// Red marks a barrage where you stand (key B), unless its all 8 is locked.
+fn red_barrage(sim: &mut Sim, gold: bool) {
+    if let Some(c) = sim.capstone(1) {
+        return sim.say(format!("red's all 8 is locked: {c}"));
+    }
+    let (lead, at, sparse) = (team_lead(sim, 1), sim.actors[YOU].pos.with_y(0.0), sim.sets[3] == 4);
+    start_barrage(sim, 1, lead, at, gold, sparse);
+    sim.made[1].push(format!("soldier {} (B)", Make::Barrage(sparse).label(gold)));
+}
+
+/// Red shuts its mid lane and a side lane with gate walls (key J), unless its all 8 is locked.
+fn red_gates(sim: &mut Sim, gold: bool) {
+    let lead = team_lead(sim, 1);
+    match sim.capstone(1) {
+        Some(c) => sim.say(format!("red's all 8 is locked: {c}")),
+        None if !sim.map => sim.say("gates shut lanes: only on the lanes map"),
+        None if !sim.actors[lead].alive() => sim.say("red's first player is down"),
+        None => {
+            sim.actors[lead].mark = Some(Mark { make: Make::Gate, gold, left: 2, life: 5.0 });
+            // Red's half is +x: its mid-lane and a side-lane choke.
+            for at in [Vec3::new(26.0, 0.0, 0.0), Vec3::new(26.0, 0.0, 21.5)] {
+                place_mark(sim, lead, at);
+            }
+            sim.made[1].push(format!("engineer {} (J)", Make::Gate.label(gold)));
+        }
     }
 }
 
@@ -2994,6 +3338,14 @@ fn tick(s: &mut Sim, c: &Controls, tune: &Tune, dt: f32) {
         s.apply(0, YOU, make, false);
         s.made[0].push(format!("{} {} (CRATE_ALL8)", s.your_class.name(), make.name()));
     }
+    if s.red_barrage_at.is_some_and(|at| elapsed >= at) {
+        s.red_barrage_at = None;
+        red_barrage(s, false);
+    }
+    if s.red_gates_at.is_some_and(|at| elapsed >= at) {
+        s.red_gates_at = None;
+        red_gates(s, false);
+    }
     s.ally_stacks = tune.c(P::AllyStacks) == 1;
     s.you_play = tune.c(P::Seat) == 0;
     let t = s.t;
@@ -3007,6 +3359,21 @@ fn tick(s: &mut Sim, c: &Controls, tune: &Tune, dt: f32) {
         a.invuln -= dt;
         a.root -= dt;
         a.reveal -= dt;
+        a.adren -= dt;
+        if a.regen_t > 0.0 && a.alive() {
+            a.regen_t -= dt;
+            a.hp = (a.hp + a.regen * dt).min(100.0);
+        }
+        if let Some(m) = &mut a.mark {
+            m.life -= dt;
+            if m.life <= 0.0 {
+                a.mark = None;
+                if i == YOU {
+                    s.say("your all 8 ran out of time before you placed it");
+                }
+            }
+        }
+        let a = &mut s.actors[i];
         if a.dead > 0.0 {
             a.dead -= dt;
             if a.dead <= 0.0 {
@@ -3034,6 +3401,7 @@ fn tick(s: &mut Sim, c: &Controls, tune: &Tune, dt: f32) {
     pads_step(s, dt);
     builds_step(s, dt);
     lobs_step(s, dt);
+    barrages_step(s, dt);
     walls_step(s, dt);
     vehicles_step(s, dt);
     mines_step(s, dt);
@@ -3068,7 +3436,9 @@ fn end_match(s: &mut Sim, tune: &Tune) {
          wall hp repaired {:.0}-{:.0} | heal camp pickups {} | med pack pickups {} | crafted LMB shots {} vs standard {} | \
          mines laid {} went off {} | mech crates picked up {} set on own pad {} | vehicle time {:.0}-{:.0} s, most out at once {} | \
          ambulance healed {:.0}-{:.0} hp, out {:.0} s with {} kills in that time (of {} kills in {:.0} s) | \
-         blue made: {} | red made: {}",
+         barrages {} with enemies in the circle at the mark {} when shells began {} hit {} | \
+         gate up {:.0}-{:.0} s, players held at an enemy gate {:.0}-{:.0} s | left-click items ran dry {} lost on knockout {} | \
+         adrenaline cut by a crate {} | shield burst gave {:.0}-{:.0} | blue made: {} | red made: {}",
         if s.map { "lanes + jungle" } else { "open arena" },
         rules_desc(tune),
         s.your_class.name(),
@@ -3099,6 +3469,19 @@ fn end_match(s: &mut Sim, tune: &Tune) {
         s.amb_kills,
         s.kills[0] + s.kills[1],
         tune.f(P::MatchLength) - s.match_left.max(0.0),
+        pair(s.barrage_n),
+        pair(s.barrage_in_mark),
+        pair(s.barrage_in_fall),
+        pair(s.barrage_hit),
+        s.gate_time[0],
+        s.gate_time[1],
+        s.gate_held[0],
+        s.gate_held[1],
+        pair(s.dry),
+        pair(s.gun_lost),
+        pair(s.adren_cut),
+        s.burst_given[0],
+        s.burst_given[1],
         made(0),
         made(1),
     );
@@ -3208,18 +3591,29 @@ fn player_step(s: &mut Sim, c: &Controls, dt: f32) {
         use_alt(s, YOU, facing, range);
     }
 
-    // Q: throw the 1-crate item where you aim.
+    // Q: throw the 1-crate item where you aim (Set C: use it).
     if c.toss && !carrying && !in_tank {
         let pos = s.actors[YOU].pos;
         let at = c.aim_point.unwrap_or(pos + facing * 6.0);
-        if s.actors[YOU].toss.is_none() {
-            s.say("nothing to throw: 1 crate makes your class's throwable");
+        if s.actors[YOU].kit.is_some() {
+            use_kit(s, YOU, at);
+        } else {
+            if s.actors[YOU].toss.is_none() {
+                s.say("nothing to use: 1 crate makes your class's 1-crate item");
+            }
+            toss(s, YOU, at);
         }
-        toss(s, YOU, at);
     }
 
-    // Full lock: no shooting while carrying.
-    if c.fire && !carrying && s.actors[YOU].fire_cd <= 0.0 {
+    // A barrage or gate waiting: left click places it where you aim, and fires nothing.
+    if s.actors[YOU].mark.is_some() {
+        if c.fire_tap && !carrying {
+            let pos = s.actors[YOU].pos;
+            let at = c.aim_point.unwrap_or(pos + facing * 10.0);
+            place_mark(s, YOU, at);
+        }
+    } else if c.fire && !carrying && s.actors[YOU].fire_cd <= 0.0 {
+        // Full lock: no shooting while carrying.
         let range = c.aim_dist.map_or(30.0, |d| d.clamp(1.0, 30.0));
         fire(s, YOU, facing, range);
     }
@@ -3270,8 +3664,20 @@ fn player_step(s: &mut Sim, c: &Controls, dt: f32) {
 }
 
 /// Fires `who`'s weapon: the tank's cannon, a crafted gun (until its ammo runs out), or the
-/// standard gun. Sets the cooldown.
+/// standard gun. Sets the cooldown, shorter with adrenaline. Nothing while a barrage or gate
+/// waits to be placed.
 fn fire(s: &mut Sim, who: usize, dir: Vec3, range: f32) {
+    if s.actors[who].mark.is_some() {
+        return;
+    }
+    fire_weapon(s, who, dir, range);
+    if s.actors[who].adren > 0.0 {
+        let rate = s.n(P::AdrenRate);
+        s.actors[who].fire_cd /= rate;
+    }
+}
+
+fn fire_weapon(s: &mut Sim, who: usize, dir: Vec3, range: f32) {
     let a = &s.actors[who];
     let from = a.pos + Vec3::Y * CHEST + dir * 0.5;
     let team = a.team;
@@ -3360,6 +3766,9 @@ fn fire(s: &mut Sim, who: usize, dir: Vec3, range: f32) {
     }
     gun.ammo -= 1;
     s.actors[who].gun = if gun.ammo == 0 { None } else { Some(gun) };
+    if gun.ammo == 0 {
+        s.dry[team] += 1;
+    }
     if gun.ammo == 0 && who == YOU {
         s.say("out of ammo: back to your standard gun");
     }
@@ -3403,6 +3812,23 @@ fn use_alt(s: &mut Sim, who: usize, dir: Vec3, range: f32) {
             }
             s.booms.push((pos + Vec3::Y * 0.2, r, 0.4));
         }
+        AltKind::Launcher => {
+            // Lobbed on a visible arc to where you aim; bounces once, goes off on the next
+            // touch (or on an enemy).
+            s.actors[who].alt_cd = 0.6;
+            let from = pos + Vec3::Y * CHEST + dir * 0.5;
+            let to = pos + dir * range.clamp(2.0, s.n(P::LauncherRange));
+            let vel = velocity_to(from, to.with_y(0.15), 40f32.to_radians());
+            s.lobs.push(Lob { kind: TossKind::Launched, pos: from, vel, team, owner: who, gold: alt.gold, fuse: 4.0, stuck: None, hops: 0, small: false, wave: 0 });
+        }
+        AltKind::ShieldBurst => {
+            // A visible shot: the first ally it touches gets the shield.
+            s.actors[who].alt_cd = 0.5;
+            let from = pos + Vec3::Y * CHEST + dir * 0.5;
+            let life = s.n(P::BurstRange) / PROJ_SPEED;
+            let shield = s.n(P::BurstShield) * k;
+            s.shots.push(Shot { shield, cleanse: alt.gold, ..Shot::new(from, dir * PROJ_SPEED, Some(who), team, 0.0, life) });
+        }
     }
     alt.charges -= 1;
     s.actors[who].alt = if alt.charges == 0 { None } else { Some(alt) };
@@ -3426,8 +3852,172 @@ fn toss(s: &mut Sim, who: usize, at: Vec3) {
     let to = a.pos + flat;
     let vel = velocity_to(from, to.with_y(0.15), THROW_ANGLE.to_radians());
     let (team, fuse) = (a.team, s.n(P::GrenadeFuse));
-    s.lobs.push(Lob { kind, pos: from, vel, team, owner: who, gold, fuse, stuck: None });
+    s.lobs.push(Lob { kind, pos: from, vel, team, owner: who, gold, fuse, stuck: None, hops: 0, small: false, wave: 0 });
     s.actors[who].toss = None;
+}
+
+/// Uses `who`'s Set C 1-crate item (Q): adrenaline, a barricade where you aim, or a self-patch.
+/// Not while carrying or in a vehicle.
+fn use_kit(s: &mut Sim, who: usize, at: Vec3) {
+    let a = &s.actors[who];
+    let Some((kind, gold)) = a.kit else { return };
+    if a.carrying.is_some() || a.tank.is_some() || !a.alive() {
+        return;
+    }
+    let (pos, team, facing) = (a.pos, a.team, a.facing);
+    let k = s.k(gold);
+    match kind {
+        KitKind::Adrenaline => {
+            let t = if gold { s.n(P::AdrenSuperTime) } else { s.n(P::AdrenTime) };
+            let a = &mut s.actors[who];
+            a.adren = t;
+            a.adren_gold = gold;
+        }
+        KitKind::Barricade => {
+            let flat = (at - pos).with_y(0.0);
+            let dir = flat.normalize_or(facing);
+            let mut spot = pos + dir * flat.length().clamp(1.5, 8.0);
+            if !clear(pos.xz(), spot.xz(), 0.5) {
+                spot = pos + dir * 1.5;
+            }
+            let (half, hp, life) = (s.n(P::BarricadeLen) / 2.0, s.n(P::BarricadeHp) * k, s.n(P::BarricadeLife));
+            s.add_wall(team, spot, dir, half, hp, life, gold, false, false);
+            let w = s.walls.last_mut().unwrap();
+            w.barricade = true;
+            w.h = BARRICADE_H;
+        }
+        KitKind::SelfPatch => {
+            let (now, over, secs) = (s.n(P::PatchNow) * k, s.n(P::PatchOver) * k, s.n(P::PatchSecs));
+            let a = &mut s.actors[who];
+            a.hp = (a.hp + now).min(100.0);
+            a.regen = over / secs;
+            a.regen_t = secs;
+            if gold {
+                a.shield = (a.shield + 25.0).min(100.0);
+            }
+            s.booms.push((pos + Vec3::Y, 0.8, 0.3));
+        }
+    }
+    s.actors[who].kit = None;
+}
+
+/// Lane chokes and jungle entrances a gate can shut, on both halves: (centre, the way it
+/// faces). A gate placed near one snaps to it.
+fn chokes() -> Vec<(Vec2, Vec2)> {
+    let mut out = Vec::new();
+    for sx in [-1.0f32, 1.0] {
+        // The three lanes, where they leave the base.
+        for z in [0.0, 21.5, -21.5] {
+            out.push((Vec2::new(26.0 * sx, z), Vec2::X));
+        }
+        for sz in [-1.0f32, 1.0] {
+            // Jungle entrances: off mid lane, off the side lane, and facing the base.
+            out.push((Vec2::new(16.0 * sx, 4.5 * sz), Vec2::Y));
+            out.push((Vec2::new(22.0 * sx, 17.5 * sz), Vec2::Y));
+            out.push((Vec2::new(30.5 * sx, 11.0 * sz), Vec2::X));
+        }
+    }
+    out
+}
+
+/// Places `who`'s waiting all 8 at `at`: a barrage's circle, or one gate wall (snapped to a
+/// choke within 5 m, else facing the nearest axis to your aim). Out to the mark range.
+fn place_mark(s: &mut Sim, who: usize, at: Vec3) {
+    let a = &s.actors[who];
+    let Some(mut m) = a.mark else { return };
+    let (pos, team, facing) = (a.pos, a.team, a.facing);
+    let range = s.n(P::MarkRange);
+    // Bots stand in for players who know the map: they skip the range.
+    if who == YOU && at.xz().distance(pos.xz()) > range {
+        s.say(format!("too far: you can mark out to {range:.0} m"));
+        return;
+    }
+    match m.make {
+        Make::Barrage(sparse) => {
+            start_barrage(s, team, who, at.with_y(0.0), m.gold, sparse);
+        }
+        _ => {
+            let near = chokes().into_iter().filter(|c| s.map && c.0.distance(at.xz()) < 5.0).min_by(|x, y| x.0.distance(at.xz()).total_cmp(&y.0.distance(at.xz())));
+            let (spot, normal) = match near {
+                Some((p, n)) => (p, n),
+                None => {
+                    let n = if facing.x.abs() >= facing.z.abs() { Vec2::X } else { Vec2::Y };
+                    (at.xz(), n)
+                }
+            };
+            let (half, hp, life) = (s.n(P::GateLen) / 2.0, s.n(P::GateHp) * s.k(m.gold), s.n(P::GateLife));
+            s.add_wall(team, spot.extend(0.0).xzy(), normal.extend(0.0).xzy(), half, hp, life, m.gold, false, false);
+            s.walls.last_mut().unwrap().pass = true;
+            let msg = format!("{} gate wall up{}", ["BLUE", "RED"][team], if near.is_some() { " across a choke" } else { "" });
+            println!("t={:.1}s {msg}", s.t);
+            s.say(msg);
+        }
+    }
+    m.left -= 1;
+    s.actors[who].mark = if m.left == 0 { None } else { Some(m) };
+    s.actors[who].fire_cd = 0.3;
+}
+
+/// A barrage marked on `at`: both teams see the circle; shells start falling after the delay.
+fn start_barrage(s: &mut Sim, team: usize, owner: usize, at: Vec3, gold: bool, sparse: bool) {
+    let (shells, over) = if sparse { (s.n(P::SparseShells), s.n(P::SparseTime)) } else { (s.n(P::BarrageShells), s.n(P::BarrageTime)) };
+    let r = s.n(P::BarrageRadius);
+    let inside = s.actors.iter().filter(|a| a.team != team && a.alive() && a.pos.xz().distance(at.xz()) < r).count();
+    s.barrage_n[team] += 1;
+    s.barrage_in_mark[team] += inside as u32;
+    let id = s.next_id;
+    s.next_id += 1;
+    let shells = shells as u32;
+    s.barrages.push(Barrage { id, team, owner, at, r, delay: s.n(P::BarrageDelay), shells_left: shells, every: over / shells.max(1) as f32, next: 0.0, gold, hit: 0 });
+    let msg = format!("{} marked a {}barrage ({shells} shells): get out of the circle", ["BLUE", "RED"][team], if gold { "SUPER " } else { "" });
+    println!("t={:.1}s {msg}", s.t);
+    s.say(msg);
+}
+
+/// Barrages: after the delay, shells fall one by one on random spots in the circle.
+fn barrages_step(s: &mut Sim, dt: f32) {
+    let fall = s.n(P::ShellFall);
+    let mut k = 0;
+    while k < s.barrages.len() {
+        let b = &mut s.barrages[k];
+        let was = b.delay;
+        b.delay -= dt;
+        if b.delay > 0.0 {
+            k += 1;
+            continue;
+        }
+        if was > 0.0 {
+            let (team, at, r) = (b.team, b.at, b.r);
+            let inside = s.actors.iter().filter(|a| a.team != team && a.alive() && a.pos.xz().distance(at.xz()) < r).count();
+            s.barrage_in_fall[team] += inside as u32;
+        }
+        let b = &mut s.barrages[k];
+        b.next -= dt;
+        let mut drops = Vec::new();
+        while b.shells_left > 0 && b.next <= 0.0 {
+            b.next += b.every;
+            b.shells_left -= 1;
+            drops.push((b.id, b.team, b.owner, b.at, b.r, b.gold));
+        }
+        for (id, team, owner, at, r, gold) in drops {
+            // Uniform over the disc.
+            let (u, v) = (s.rand(), s.rand() * std::f32::consts::TAU);
+            let spot = at + (Vec2::from_angle(v) * r * u.sqrt()).extend(0.0).xzy();
+            let pos = spot.with_y(16.0);
+            s.lobs.push(Lob { kind: TossKind::Shell, pos, vel: Vec3::NEG_Y * fall, team, owner, gold, fuse: 99.0, stuck: None, hops: 0, small: false, wave: id });
+        }
+        let b = &s.barrages[k];
+        let (id, team, hit) = (b.id, b.team, b.hit);
+        if b.shells_left == 0 && !s.lobs.iter().any(|l| l.wave == id) {
+            s.barrages.remove(k);
+            s.barrage_hit[team] += hit.count_ones();
+            let msg = format!("{} barrage over: {} enemies hit", ["BLUE", "RED"][team], hit.count_ones());
+            println!("t={:.1}s {msg}", s.t);
+            s.say(msg);
+            continue;
+        }
+        k += 1;
+    }
 }
 
 /// The hauler mech's left click: a stomp that shoves enemies close by away. No damage, so a
@@ -3641,8 +4231,19 @@ fn detour(s: &Sim, i: usize, goal: Vec3) -> (Vec3, Option<Vec3>) {
     let (from, team) = (a.pos.xz(), a.team);
     let r = ACTOR_R * 0.8;
     let in_way = |p: Vec2, q: Vec2| s.walls.iter().find(|w| w.blocks_body(team) && w.crosses(p, q, r));
+    // Pressed against an enemy gate (the route led here): keep at it and shoot it down.
+    if let Some(w) = s.walls.iter().find(|w| w.pass && w.team != team && w.dist(from) < 1.2) {
+        return (goal, Some(w.pos.with_y(CHEST)));
+    }
     let Some(w) = in_way(from, goal.xz()) else { return (goal, None) };
     let to3 = |p: Vec2| p.extend(0.0).xzy();
+    if w.pass {
+        // An enemy gate: walk up to it, then stand and shoot it down.
+        if w.dist(from) < 5.0 {
+            return (to3(from), Some(w.pos.with_y(CHEST)));
+        }
+        return (goal, None);
+    }
     // The best of some waypoints: in a straight line from here, shortest way to the goal.
     let best = |pts: &[Vec2]| {
         pts.iter()
@@ -3748,6 +4349,30 @@ fn ai_step(s: &mut Sim, i: usize, dt: f32) {
     if !s.actors[i].alive() {
         return;
     }
+    // A barrage goes on the nearest enemy in sight within the mark range; gate walls across
+    // the chokes nearest the bot that aren't shut yet.
+    if let Some(m) = s.actors[i].mark
+        && s.actors[i].carrying.is_none()
+    {
+        let pos = s.actors[i].pos;
+        if m.make == Make::Gate {
+            let team = s.actors[i].team;
+            let free = chokes()
+                .into_iter()
+                .filter(|c| !s.walls.iter().any(|w| w.pass && w.team == team && w.pos.xz().distance(c.0) < 1.0))
+                .min_by(|x, y| x.0.distance(pos.xz()).total_cmp(&y.0.distance(pos.xz())));
+            if let Some((at, _)) = free.filter(|_| s.map) {
+                place_mark(s, i, at.extend(0.0).xzy());
+            } else {
+                // The open arena has no chokes: across the way to the enemy pad.
+                let at = pos + Vec3::X * toward_centre(team) * 6.0;
+                place_mark(s, i, at);
+            }
+        } else if let Some(e) = nearest_enemy(s, i, pos, s.n(P::MarkRange)) {
+            let at = s.actors[e].pos;
+            place_mark(s, i, at);
+        }
+    }
     let pos = s.actors[i].pos;
     let carrying = s.actors[i].carrying.is_some();
     let near = nearest_enemy(s, i, pos, if s.map { 10.0 } else { 8.0 });
@@ -3766,6 +4391,11 @@ fn ai_step(s: &mut Sim, i: usize, dt: f32) {
         // An ambulance stays with the most hurt teammate (or the one closest to a fight).
         (false, _, _) if matches!(ride, Some(Ride::Ambulance | Ride::AmbulanceShot)) => {
             (nearest_enemy(s, i, pos, 10.0), Some(ambulance_goal(s, i)), Act::None, None)
+        }
+        // A barrage to mark: push toward the enemy pad until someone shows up.
+        (false, _, _) if s.actors[i].mark.is_some() => {
+            let goal = Vec3::new(enemy_pad.x - toward_centre(1 - s.actors[i].team) * 12.0, 0.0, enemy_pad.y);
+            (None, Some(goal), Act::None, None)
         }
         // A tank pushes to the enemy pad and fights whatever it meets.
         (false, _, _) if in_tank => {
@@ -3836,6 +4466,35 @@ fn ai_step(s: &mut Sim, i: usize, dt: f32) {
             use_alt(s, i, f, 0.0);
         }
     }
+    // Set C kits: a self-patch when hurt, adrenaline and a barricade when a fight is close.
+    let kit = if carrying { None } else { s.actors[i].kit };
+    let fight = target.filter(|&e| s.actors[e].pos.xz().distance(pos.xz()) < 12.0);
+    match (kit, fight) {
+        (Some((KitKind::SelfPatch, _)), _) if s.actors[i].hp < 50.0 => use_kit(s, i, pos),
+        (Some((KitKind::Adrenaline, _)), Some(_)) => use_kit(s, i, pos),
+        (Some((KitKind::Barricade, _)), Some(e)) => {
+            let to = s.actors[e].pos - pos;
+            let team = s.actors[i].team;
+            if !s.walls.iter().any(|w| w.team == team && !w.bunker && !w.pass && w.pos.distance(pos) < 6.0) {
+                use_kit(s, i, pos + to.with_y(0.0).normalize_or_zero() * (to.length() * 0.4).clamp(2.0, 4.0));
+            }
+        }
+        _ => {}
+    }
+    // Shield bursts: at a teammate in a fight (or hurt) who has no shield, in sight.
+    if !carrying && s.actors[i].alt.is_some_and(|a| a.kind == AltKind::ShieldBurst) {
+        let team = s.actors[i].team;
+        let reach = s.n(P::BurstRange) * 0.9;
+        let mate = (0..s.actors.len())
+            .filter(|&j| j != i && s.actors[j].team == team && s.actors[j].alive() && s.actors[j].shield < 10.0 && s.actors[j].tank.is_none())
+            .filter(|&j| s.actors[j].hp < 80.0 || nearest_enemy(s, j, s.actors[j].pos, 10.0).is_some())
+            .filter(|&j| s.actors[j].pos.distance(pos) < reach && clear(pos.xz(), s.actors[j].pos.xz(), 0.1))
+            .min_by(|&x, &y| s.actors[x].hp.total_cmp(&s.actors[y].hp));
+        if let Some(j) = mate {
+            let dir = (s.actors[j].pos - pos).with_y(0.0).normalize_or_zero();
+            use_alt(s, i, dir, 10.0);
+        }
+    }
     // Med packs: thrown at the most hurt teammate close by (yourself included).
     if !carrying && s.actors[i].toss.is_some_and(|t| t.0 == TossKind::MedPack) {
         let team = s.actors[i].team;
@@ -3892,6 +4551,10 @@ fn ai_step(s: &mut Sim, i: usize, dt: f32) {
         let ready = !carrying && s.actors[i].stun <= 0.0;
         if ready && d < 12.0 && alt == Some(AltKind::Rockets) {
             use_alt(s, i, dir, d.min(6.0));
+        }
+        if ready && d > 4.0 && d < s.n(P::LauncherRange) && alt == Some(AltKind::Launcher) {
+            // Short of them: it bounces once on the way in.
+            use_alt(s, i, dir, (lead - pos).with_y(0.0).length() * 0.7);
         }
         // Engineers put a wall between them and the fight, if they don't have one close.
         let team = s.actors[i].team;
@@ -4052,13 +4715,24 @@ fn actors_physics(s: &mut Sim, dt: f32) {
             }
         }
     }
-    // Shield walls and bunkers block everyone; a bunker gate only enemies.
+    // Shield walls and bunkers block everyone; a bunker gate and a Set C gate only enemies.
+    // Your team jumps over its super barricade. A super gate slows the enemies it holds.
+    let gate_slow = s.tv[P::GateSlow as usize];
     for a in s.actors.iter_mut().filter(|a| a.alive()) {
         for w in s.walls.iter().filter(|w| w.blocks_body(a.team)) {
+            if w.barricade && w.gold && w.team == a.team && a.pos.y > 0.35 {
+                continue;
+            }
             let mut xz = a.pos.xz();
             if w.push_out(&mut xz, ACTOR_R).is_some() {
                 a.pos.x = xz.x;
                 a.pos.z = xz.y;
+                if w.pass {
+                    s.gate_held[a.team] += dt;
+                    if w.gold && a.slow_immune <= 0.0 {
+                        a.slow = a.slow.max(gate_slow);
+                    }
+                }
             }
         }
     }
@@ -4138,8 +4812,8 @@ fn crates_step(s: &mut Sim, dt: f32) {
         }
     }
     // Shield walls stop sliding and low-flying crates.
-    for c in s.crates.iter_mut().filter(|c| c.loose() && c.pos.y - HALF < WALL_H) {
-        for w in s.walls.iter().filter(|w| !w.gate) {
+    for c in s.crates.iter_mut().filter(|c| c.loose()) {
+        for w in s.walls.iter().filter(|w| !w.gate && c.pos.y - HALF < w.h) {
             let mut xz = c.pos.xz();
             if let Some(n) = w.push_out(&mut xz, HALF) {
                 c.pos.x = xz.x;
@@ -4213,6 +4887,7 @@ fn shots_step(s: &mut Sim, dt: f32) {
     let mut heals = Vec::new();
     let mut booms = Vec::new();
     let mut monster_hits = Vec::new();
+    let mut shields = Vec::new();
     for sh in &mut s.shots {
         sh.pos += sh.vel * dt;
         sh.life -= dt;
@@ -4220,6 +4895,16 @@ fn shots_step(s: &mut Sim, dt: f32) {
             let r = if a.tank.is_some() { 0.9 } else { ACTOR_R + 0.15 };
             a.alive() && sh.pos.xz().distance(a.pos.xz()) < r && sh.pos.y > a.pos.y && sh.pos.y < a.pos.y + 1.9
         };
+        // Shield bursts stop on the first player they touch; an ally gets the shield.
+        if sh.shield > 0.0
+            && let Some(j) = (0..s.actors.len()).find(|&j| Some(j) != sh.owner && body(&s.actors[j]))
+        {
+            if s.actors[j].team == sh.team {
+                shields.push((j, sh.shield, sh.cleanse, sh.team));
+            }
+            sh.life = 0.0;
+            continue;
+        }
         // Heal shots heal the first hurt teammate they touch (not the medic who fired).
         if sh.heal > 0.0
             && let Some(j) = (0..s.actors.len()).find(|&j| {
@@ -4267,7 +4952,7 @@ fn shots_step(s: &mut Sim, dt: f32) {
         }
         // Walls stop shots from both teams. Enemy shots hurt them; a rivet repairs its own
         // team's wall; a super shield wall lets its own team's shots through.
-        if let Some(w) = s.walls.iter_mut().find(|w| !w.gate && w.touches(sh.pos.xz(), 0.1) && sh.pos.y < WALL_H) {
+        if let Some(w) = s.walls.iter_mut().find(|w| !w.gate && w.touches(sh.pos.xz(), 0.1) && sh.pos.y < w.h) {
             if w.team != sh.team {
                 if sh.splash == 0.0 {
                     w.hp -= sh.dmg;
@@ -4277,7 +4962,8 @@ fn shots_step(s: &mut Sim, dt: f32) {
                 let add = s.tv[P::RivetRepair as usize].min(w.max_hp - w.hp).max(0.0);
                 w.hp += add;
                 s.repaired[w.team] += add;
-            } else if w.gold && !w.bunker {
+            } else if w.pass || (w.gold && !w.bunker && !w.barricade) {
+                // Your own gate, or your super shield wall: your shots pass.
                 continue;
             }
             if sh.splash > 0.0 {
@@ -4330,6 +5016,17 @@ fn shots_step(s: &mut Sim, dt: f32) {
             s.shots.push(Shot { heal, last: Some(j), ..Shot::new(start, dir * PROJ_SPEED, owner, team, heal, 5.0 / PROJ_SPEED) });
         }
     }
+    for (j, shield, cleanse, team) in shields {
+        let a = &mut s.actors[j];
+        let add = shield.min(100.0 - a.shield).max(0.0);
+        a.shield += add;
+        if cleanse {
+            a.slow = 0.0;
+            a.root = 0.0;
+        }
+        s.burst_given[team] += add;
+        s.booms.push((s.actors[j].pos + Vec3::Y, 0.6, 0.15));
+    }
     for (m, dmg, owner) in monster_hits {
         s.hurt_monster(m, dmg, owner);
     }
@@ -4363,6 +5060,7 @@ fn blast(s: &mut Sim, b: Boom) {
 /// thing it touches) and goes off when its fuse runs out; a med pack lands as a pickup.
 fn lobs_step(s: &mut Sim, dt: f32) {
     let arena = arena();
+    let mut split = Vec::new();
     let mut k = 0;
     while k < s.lobs.len() {
         let l = &mut s.lobs[k];
@@ -4398,8 +5096,8 @@ fn lobs_step(s: &mut Sim, dt: f32) {
                         touched = true;
                     }
                 }
-                let low = l.pos.y < WALL_H;
-                for w in s.walls.iter().filter(|w| !w.gate && low) {
+                let (y, team) = (l.pos.y, l.team);
+                for w in s.walls.iter().filter(|w| !w.gate && y < w.h && !(w.pass && w.team == team)) {
                     let mut xz = l.pos.xz();
                     if let Some(n) = w.push_out(&mut xz, 0.15) {
                         l.pos = Vec3::new(xz.x, l.pos.y, xz.y);
@@ -4436,6 +5134,45 @@ fn lobs_step(s: &mut Sim, dt: f32) {
                     s.pickups.push(Pickup { pos, drop: Drop::MedPack(gold), life: 30.0 });
                     continue;
                 }
+                // Set C: launcher grenades bounce once, then go off on the next touch (or on
+                // an enemy); a super one splits into 3 on the bounce. Shells go off where they
+                // land.
+                if matches!(l.kind, TossKind::Launched | TossKind::Shell) {
+                    let on_enemy = body.is_some_and(|j| s.actors[j].team != l.team);
+                    let go = match l.kind {
+                        TossKind::Shell => touched || on_enemy,
+                        _ => on_enemy || (touched && l.hops >= 1) || l.fuse <= 0.0,
+                    };
+                    if !go && touched {
+                        l.hops = 1;
+                        l.vel.y = l.vel.y.max(4.0);
+                        if l.gold && !l.small {
+                            l.small = true;
+                            for turn in [-0.6f32, 0.6] {
+                                let vel = Quat::from_rotation_y(turn) * l.vel;
+                                split.push(Lob { vel, ..*l });
+                            }
+                        }
+                    }
+                    if go {
+                        let l = s.lobs.remove(k);
+                        let shell = l.kind == TossKind::Shell;
+                        let (dmg, r) = if shell { (s.n(P::ShellDmg), s.n(P::ShellBlast)) } else { (s.n(P::LauncherDmg), s.n(P::LauncherBlast)) };
+                        let (dmg, r) = if l.small { (dmg * 0.5, r * 0.75) } else { (dmg, r) };
+                        let at = l.pos.with_y(l.pos.y.max(0.5));
+                        if shell {
+                            let hit = (0..s.actors.len())
+                                .filter(|&j| s.actors[j].team != l.team && s.actors[j].alive() && s.actors[j].pos.xz().distance(at.xz()) < r)
+                                .fold(0u64, |m, j| m | 1 << j);
+                            if let Some(b) = s.barrages.iter_mut().find(|b| b.id == l.wave) {
+                                b.hit |= hit;
+                            }
+                        }
+                        let b = Boom { at, team: l.team, dmg: dmg * s.k(l.gold), r, owner: Some(l.owner), split: false, slow: shell && l.gold };
+                        blast(s, b);
+                        continue;
+                    }
+                }
             }
         }
         let l = &s.lobs[k];
@@ -4448,6 +5185,7 @@ fn lobs_step(s: &mut Sim, dt: f32) {
         }
         k += 1;
     }
+    s.lobs.extend(split);
     // Slow zones from a super tank's cannon.
     for z in &mut s.zones {
         z.2 -= dt;
@@ -4565,6 +5303,9 @@ fn walls_step(s: &mut Sim, dt: f32) {
         if s.walls.iter().any(|w| w.team == team && w.bunker) {
             s.bunker_time[team] += dt;
         }
+        if s.walls.iter().any(|w| w.team == team && w.pass) {
+            s.gate_time[team] += dt;
+        }
     }
     for w in &mut s.walls {
         w.life -= dt;
@@ -4590,7 +5331,7 @@ fn walls_step(s: &mut Sim, dt: f32) {
         }
     }
     for (team, bunker) in broke {
-        let what = if bunker { "bunker wall breached" } else { "shield wall broken" };
+        let what = if bunker { "bunker wall breached" } else { "wall broken" };
         s.say(format!("{} {what}", ["BLUE", "RED"][team]));
     }
     for team in 0..2 {
@@ -5184,9 +5925,9 @@ fn sync_views(
         if w.ent.is_none() {
             let (m, mat) = (looks.wall_mesh.clone(), looks.wall_mat[w.team].clone());
             // The mesh is 1 m long on z and thin on x: turn x to face the wall's normal.
-            let tf = Transform::from_translation(w.pos + Vec3::Y * WALL_H / 2.0)
+            let tf = Transform::from_translation(w.pos + Vec3::Y * w.h / 2.0)
                 .with_rotation(Quat::from_rotation_arc(Vec3::X, w.normal))
-                .with_scale(Vec3::new(1.0, if w.gate { 0.15 } else { 1.0 }, w.half_len * 2.0));
+                .with_scale(Vec3::new(1.0, if w.gate { 0.15 } else { w.h / WALL_H }, w.half_len * 2.0));
             w.ent = Some(commands.spawn((Mesh3d(m), MeshMaterial3d(mat), tf)).id());
         }
     }
@@ -5419,7 +6160,7 @@ fn draw_gizmos(mut g: Gizmos, sim: Res<Sim>, tune: Res<Tune>, controls: Res<Cont
     let gold = Color::srgb(1.0, 0.85, 0.2);
     for w in &sim.walls {
         let tan = Vec3::new(-w.normal.z, 0.0, w.normal.x);
-        let top = w.pos + Vec3::Y * (WALL_H + 0.3);
+        let top = w.pos + Vec3::Y * (w.h + 0.3);
         if w.gate {
             for k in 0..4 {
                 let a = w.pos + tan * (-w.half_len + k as f32 * w.half_len / 2.0) + Vec3::Y * 0.3;
@@ -5429,8 +6170,16 @@ fn draw_gizmos(mut g: Gizmos, sim: Res<Sim>, tune: Res<Tune>, controls: Res<Cont
         }
         g.line(top - tan * 0.8, top - tan * 0.8 + tan * 1.6 * (w.hp / w.max_hp).max(0.0), Color::srgb(1.0, 0.3, 0.3));
         if w.gold {
-            let a = w.pos + Vec3::Y * WALL_H;
+            let a = w.pos + Vec3::Y * w.h;
             g.line(a - tan * w.half_len, a + tan * w.half_len, gold);
+        }
+        // A Set C gate: bars across it in its team's colour (its team walks through).
+        if w.pass {
+            let n = (w.half_len * 2.0) as i32;
+            for k in 0..=n {
+                let a = w.pos + tan * (-w.half_len + k as f32);
+                g.line(a, a + Vec3::Y * w.h, TEAM_COLOR[w.team]);
+            }
         }
     }
     // Grenades (red, the ring grows as the fuse runs down) and med packs (green).
@@ -5444,6 +6193,42 @@ fn draw_gizmos(mut g: Gizmos, sim: Res<Sim>, tune: Res<Tune>, controls: Res<Cont
             TossKind::MedPack => {
                 g.sphere(Isometry3d::from_translation(l.pos), 0.25, Color::srgb(0.2, 1.0, 0.3));
             }
+            TossKind::Launched => {
+                let r = if l.small { 0.13 } else { 0.2 };
+                g.sphere(Isometry3d::from_translation(l.pos), r, if l.gold { gold } else { TEAM_COLOR[l.team].mix(&Color::srgb(0.2, 0.2, 0.2), 0.4) });
+            }
+            TossKind::Shell => {
+                // A falling shell, and where it lands: a ring that closes as it falls.
+                g.sphere(Isometry3d::from_translation(l.pos), 0.3, Color::srgb(1.0, 0.45, 0.1));
+                let r = sim.n(P::ShellBlast) * (0.3 + 0.7 * (l.pos.y / 16.0).clamp(0.0, 1.0));
+                g.circle(ground_circle(l.pos.with_y(0.06)), r, Color::srgb(1.0, 0.2, 0.1));
+            }
+        }
+    }
+    // Barrages: the marked circle in the marker's colour, both teams see it; a ring closes in
+    // over the delay, then it flashes while shells fall.
+    for b in &sim.barrages {
+        let c = b.at.with_y(0.07);
+        let col = TEAM_COLOR[b.team].mix(&Color::srgb(1.0, 0.2, 0.1), 0.5);
+        g.circle(ground_circle(c), b.r, col);
+        g.circle(ground_circle(c), b.r + 0.15, col);
+        if b.delay > 0.0 {
+            let k = (b.delay / sim.n(P::BarrageDelay).max(0.1)).clamp(0.0, 1.0);
+            g.circle(ground_circle(c), b.r * k, Color::srgba(1.0, 0.3, 0.1, 0.8));
+        } else if (sim.t * 6.0).fract() < 0.5 {
+            g.circle(ground_circle(c), b.r * 0.5, Color::srgba(1.0, 0.3, 0.1, 0.6));
+        }
+        if b.gold {
+            g.circle(ground_circle(c), b.r + 0.3, gold);
+        }
+    }
+    // Adrenaline: a red ring at the feet; self-patch: a green one.
+    for (i, b) in sim.actors.iter().enumerate().filter(|(_, b)| b.alive()) {
+        if b.adren > 0.0 {
+            g.circle(ground_circle(pos_of(i).with_y(0.09)), 0.85, Color::srgb(1.0, 0.25, 0.25));
+        }
+        if b.regen_t > 0.0 {
+            g.circle(ground_circle(pos_of(i).with_y(0.09)), 0.75, Color::srgb(0.3, 1.0, 0.4));
         }
     }
     for (at, r, _, team) in &sim.zones {
@@ -5462,6 +6247,28 @@ fn draw_gizmos(mut g: Gizmos, sim: Res<Sim>, tune: Res<Tune>, controls: Res<Cont
         if a.toss.is_some() {
             let flat = (aim - a.pos).with_y(0.0).clamp_length_max(THROW_DIST * jump_boost(a));
             g.circle(ground_circle((a.pos + flat).with_y(0.05)), 0.5, Color::srgba(1.0, 0.5, 0.2, 0.7));
+        }
+        if a.kit.is_some_and(|k| k.0 == KitKind::Barricade) {
+            let flat = (aim - a.pos).with_y(0.0);
+            let dir = flat.normalize_or(a.facing);
+            let at = (a.pos + dir * flat.length().clamp(1.5, 8.0)).with_y(0.05);
+            let tan = Vec3::new(-dir.z, 0.0, dir.x) * sim.n(P::BarricadeLen) / 2.0;
+            g.line(at - tan, at + tan, Color::srgba(1.0, 0.8, 0.4, 0.7));
+        }
+        // A barrage's circle, or where a gate wall goes (snapped to a choke when close).
+        if let Some(m) = a.mark {
+            let far = aim.xz().distance(a.pos.xz()) > sim.n(P::MarkRange);
+            let col = if far { Color::srgba(0.6, 0.6, 0.6, 0.5) } else { Color::srgb(1.0, 0.5, 0.2) };
+            if m.make == Make::Gate {
+                let near = chokes().into_iter().filter(|c| sim.map && c.0.distance(aim.xz()) < 5.0).min_by(|x, y| x.0.distance(aim.xz()).total_cmp(&y.0.distance(aim.xz())));
+                let (p, n) = near.unwrap_or((aim.xz(), if a.facing.x.abs() >= a.facing.z.abs() { Vec2::X } else { Vec2::Y }));
+                let tan = Vec3::new(-n.y, 0.0, n.x) * sim.n(P::GateLen) / 2.0;
+                let at = p.extend(0.1).xzy();
+                g.line(at - tan, at + tan, col);
+                g.line(at - tan + Vec3::Y * WALL_H, at + tan + Vec3::Y * WALL_H, col);
+            } else {
+                g.circle(ground_circle(aim.with_y(0.07)), sim.n(P::BarrageRadius), col);
+            }
         }
         if a.alt.is_some_and(|x| x.kind == AltKind::ShieldWall) {
             let d = controls.aim_dist.unwrap_or(8.0).clamp(1.5, 8.0);
@@ -5575,6 +6382,23 @@ fn hud(sim: Res<Sim>, tune: Res<Tune>, controls: Res<Controls>, mut hud: Single<
         if let Some((kind, gold)) = a.toss {
             s += &format!("Q: throw your {}\n", Make::Toss(kind).label(gold));
         }
+        if let Some((kind, gold)) = a.kit {
+            s += &format!("Q: use your {}\n", Make::Kit(kind).label(gold));
+        }
+        if a.adren > 0.0 {
+            s += &format!("ADRENALINE {:.1} s ({:.2}x fire rate; picking up a crate ends it{})\n", a.adren, sim.n(P::AdrenRate), if a.adren_gold { "; a kill reloads" } else { "" });
+        }
+        if let Some(m) = a.mark {
+            let what = if m.make == Make::Gate {
+                format!("place a gate wall ({} left; near a choke it snaps across it)", m.left)
+            } else {
+                format!("mark the barrage circle ({:.0} m across)", sim.n(P::BarrageRadius) * 2.0)
+            };
+            s += &format!("LMB: {what}, out to {:.0} m. No shooting until then ({:.0} s left)\n", sim.n(P::MarkRange), m.life);
+        }
+        if sim.barrages.iter().any(|b| b.team == 1 && b.at.xz().distance(a.pos.xz()) < b.r) {
+            s += "INCOMING BARRAGE: GET OUT OF THE CIRCLE\n";
+        }
         if a.carrying.is_some() {
             let boost = throw_plan(&sim, controls.aim_dist).boost;
             s += &format!("throw reach: {:.1} m  (jump x{boost:.2})\n", THROW_DIST * boost);
@@ -5597,7 +6421,7 @@ fn hud(sim: Res<Sim>, tune: Res<Tune>, controls: Res<Controls>, mut hud: Single<
         s += &format!("> {m}\n");
     }
     s += "\nWASD move  mouse aim  Space jump  E grab/place  RMB throw (empty hands: right-click item)  LMB shoot  Q throw 1-crate item  F kick\n";
-    s += "1-6 set switch  C your class  ENTER pick this set  T drop crate  Y drop super crate  G red bunker  V your all 8  M red mines (Shift: super)  R reset  P print  H hide boxes";
+    s += "1-6 set switch  C your class  ENTER pick this set  T drop crate  Y drop super crate  G red bunker  V your all 8  M red mines  B red barrage on you  J red gates (Shift: super)  R reset  P print  H hide boxes";
     hud.0 = s;
 }
 
@@ -5683,7 +6507,9 @@ fn guide_text(
         }
     }
     s += "\nALL 8 has a team lockout: no new all 8 until the current one ends. Items go to the kicker and are lost on knockout.";
-    if sim.sets[0] == 1 || sim.sets[3] >= 1 {
+    if sim.sets[3] >= 3 || sim.sets[2] == 2 || sim.sets[1] == 1 {
+        s += "\nWATCH (Set C): does the barrage feel undodgeable despite the telegraph? With no refill, do left-click items run dry before you reach the pad? Does the gate stall a lane? (V: your all 8 now, B: red barrage on you, J: red gates)";
+    } else if sim.sets[0] == 1 || sim.sets[3] >= 1 {
         s += "\nWATCH (Set B): do the vehicles crowd the map? Does the ambulance stall fights? Does a mech carrying 3-4 crates break the haul rhythm? Can you read the mines on a busy floor? (V: your all 8 now, M: red gets mines)";
     } else {
         s += "\nWATCH: does the engineer skip the rivet gun to save for walls? Is the bunker's 40 s a siege or a dead pause? Does rally make the heal camp pointless?";

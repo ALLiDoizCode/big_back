@@ -2,12 +2,13 @@
 
 Throwaway. Lives on `prototype/class-items` only, branched from `prototype/arena-map` (the
 lanes + jungle map at 5v5, with the crate grammar picked in #17). One prototype for all three
-item-set tickets: Set A is [#24](https://github.com/ALLiDoizCode/big_back/issues/24) and Set B
-is [#25](https://github.com/ALLiDoizCode/big_back/issues/25), both on the same set switch. Set C
-([#26](https://github.com/ALLiDoizCode/big_back/issues/26)) adds its options to it. Feeds the
-grilling in [#22](https://github.com/ALLiDoizCode/big_back/issues/22).
+item-set tickets, all on the same set switch: Set A is
+[#24](https://github.com/ALLiDoizCode/big_back/issues/24), Set B is
+[#25](https://github.com/ALLiDoizCode/big_back/issues/25) and Set C is
+[#26](https://github.com/ALLiDoizCode/big_back/issues/26). Feeds the grilling in
+[#22](https://github.com/ALLiDoizCode/big_back/issues/22).
 
-Jump to [Set B (#25)](#set-b-25-team-buddies-ladder).
+Jump to [Set B (#25)](#set-b-25-team-buddies-ladder) or [Set C (#26)](#set-c-26-a-capstone-per-class).
 
 ```
 cargo run --example class_items
@@ -37,15 +38,14 @@ you already hold keep working. R restarts the match.
 
 | Key | Switch | Options now |
 |---|---|---|
-| 1 | item set (sets every slot at once) | **A: fix the placeholders**, **A + Set B's 1-crate refill**, **B: Team Buddies ladder**, **B, ambulance fires heal shots** |
-| 2 | left click (2 side by side) | A, B (shotgun / nail-mine layer / heal gun) |
-| 3 | right click (4 flat) | A and B share it |
-| 4 | 1 crate | A (throwable / kit), B (refill) |
-| 5 | all 8 | A, B (heal aura ambulance), B (heal shot ambulance) |
+| 1 | item set (sets every slot at once) | **A: fix the placeholders**, **A + Set B's 1-crate refill**, **B: Team Buddies ladder**, **B, ambulance fires heal shots**, **C: a capstone per class**, **C, sparser barrage** |
+| 2 | left click (2 side by side) | A and C share it, B (shotgun / nail-mine layer / heal gun) |
+| 3 | right click (4 flat) | A and B share it, C (grenade launcher / shield wall / shield burst) |
+| 4 | 1 crate | A (throwable / kit), B (refill), C (adrenaline / barricade / self-patch) |
+| 5 | all 8 | A, B (heal aura ambulance), B (heal shot ambulance), C (barrage / gate / rally), C (sparser barrage / gate / rally) |
 | 6 | super crates | off, upgrade (one twist) |
 
-**Enter** records the switch you're playing as your pick, and **P** prints your picks. Set C
-adds its options to keys 1–5.
+**Enter** records the switch you're playing as your pick, and **P** prints your picks.
 
 The crate grammar is fixed at what ADR 0007 picked: the kicker's class decides, recipes are
 read by shape, the readout is shown, results are instant, pads are steal only, and you hold
@@ -321,3 +321,163 @@ match, not what humans would choose.
 - Smoke runs: `CRATE_RULES=2` is Set B and `CRATE_RULES=3` the heal-shot variant.
   `CRATE_ALL8=<s>` gives your seat its class's all 8 at that match time, and `CRATE_MINES=1`
   starts you with a super nail-mine layer.
+
+---
+
+## Set C (#26): a capstone per class
+
+**Question (#26):** does **Set C, "a capstone per class"**, work? 1 crate is a short class
+self-buff, and all 8 is a loud team-wide moment in the class's job
+([research §8](https://github.com/ALLiDoizCode/big_back/blob/research/class-items/docs/research/class-items.md#set-c-each-class-its-own-capstone-1-crate-is-a-class-buff-all-8-is-a-team-moment)).
+Compare it with the variant on **key 1**: the same set with a **sparser barrage** (6 shells over
+4 s in place of 12). That tests whether the barrage can be dodged.
+
+```
+cargo run --example class_items      # then press 1 until it says "C: a capstone per class"
+```
+
+### Ruling before the build
+
+**2026-10-18: second wind is out, and ADR 0005 stands.** Second wind would bring knocked-out
+joined players back at the medic, away from the pad, and so rewrite ADR 0005. The human ruled
+for "Rally instead", so Set C's medic all 8 is **Set A's rally**, unchanged.
+
+### Set C, as built
+
+Every number is a live tunable in the panel, after the Set B ones.
+
+| | Left click (2 side by side) | Right click (4 flat) | 1 crate (Q) | All 8 |
+|---|---|---|---|---|
+| **Soldier** | **Rapid gun** (as Set A) | **Grenade launcher**: 3 charges, lobbed on a visible arc to where you aim (out to 14 m). It bounces once and goes off on the next touch, or on an enemy: 60 damage, 2 m blast | **Adrenaline**: 6 s of 1.3× fire rate. Picking up a crate ends it | **Barrage**: left click marks a 10 m circle (out to 25 m). 3 s later, 12 shells fall on it over 4 s: 50 damage each, 2 m blast |
+| *super* | Shots pierce | Splits into 3 on the bounce (each half damage, 0.75× blast) | 8 s, and a kill reloads your left-click item | Shells leave a slow zone (Set A's: 3 s, 0.6× speed) |
+| **Engineer** | **Rivet gun** (as Set A) | **Shield wall** (as Set A) | **Barricade**: a 2 m block, chest-high (1.3 m), 150 hp, 20 s, where you aim (1.5–8 m) | **Gate**: two 8 m walls (500 hp each, 45 s), placed one at a time with left click. Your team passes through them and enemies don't |
+| *super* | Rivets stagger | Allies shoot through | Your team can jump over it | Enemies pressed against it are slowed for 1.5 s |
+| **Medic** | **Heal gun** (as Set A) | **Shield burst**: 3 charges, a visible shot (10 m). The first ally it touches gets a 40 shield | **Self-patch**: +30 hp now, +30 more over 3 s | **Rally** (as Set A, by the ruling) |
+| *super* | Heals bounce | Also clears slows and roots | Adds a 25 shield | 100 shield, clears slows |
+
+**The variant (key 1, "C, sparser barrage"; or key 5's fifth option):** the barrage drops
+6 shells over 4 s, so there's a gap between shells. Everything else is the same.
+
+**How a barrage or gate is placed:** kicking it open doesn't use it. It waits, and the HUD says
+`LMB: mark the barrage circle`. While it waits, **left click places it and fires nothing**. A
+grey preview means the spot is past 25 m. If you don't place it within 30 s, or you're knocked
+out first, it's lost. The all-8 lockout holds from the kick until the last shell lands, or the
+last gate wall falls.
+
+**How to read a barrage:** both teams see the circle, in the marker's colour, from the moment
+it's marked. A ring closes in on it over the 3 s delay. Each shell is a visible ball falling
+from 16 m at 12 m/s, and a red ring under it closes as it falls. If an enemy barrage is on you,
+the HUD says `INCOMING BARRAGE: GET OUT OF THE CIRCLE`.
+
+Everything common to every set (base gun, items go to the kicker, the all-8 lockout, supers,
+ADR 0002 and 0004) is as Set A has it, above.
+
+**Calls the table didn't make, made here so they can be played (say if any is wrong):**
+
+1. **The 1-crate items wait for Q.** A self-buff that started at the pad would run out before
+   the fight on a 90 m map. So adrenaline, the barricade and the self-patch are kept, like Set
+   A's throwables, and Q uses them. They're lost on a knockout. Q doesn't work while carrying.
+2. **Barrage numbers.** The table gives no damage: 50 a shell with a 2 m blast, so two hits
+   knock a player out. Shells land at random spots spread evenly over the circle. They don't hurt
+   your own team. Super strength (1.25×) applies to shell damage too. Bots ignore the 25 m mark
+   range (they stand in for players who know the map).
+3. **Grenade launcher numbers.** The table gives none: 60 damage, 2 m blast, 14 m range. Your
+   own team doesn't set it off. The first touch, floor or wall, is the bounce. A super one's
+   3 pieces are its extra strength, so there's no 1.25× on top.
+4. **Adrenaline speeds up every gun**, the crafted ones and the standard gun. The super's
+   "reload on kill" fills your left-click item to full. With only the standard gun there's
+   nothing to reload. 8 s is the table's number, even though supers otherwise never add time.
+5. **The barricade is chest-high (1.3 m)**, so it stops shots like a shield wall. A shot fired
+   from the top of a jump goes over it. It stops bodies and crates from both teams. Nobody can
+   jump it (a jump reaches 0.9 m), except your own team over a super one.
+6. **The gate snaps across a choke.** A gate wall placed within 5 m of a choke snaps across it.
+   That's any of the three lanes where they leave each base, or one of the six jungle
+   entrances on each half. Anywhere else, it faces the axis nearest your aim. An 8 m wall shuts
+   any lane or entrance on its own, so the two walls can shut two chokes, or double one up.
+   Your team's bodies and shots pass through it. Enemy bodies, shots and grenades stop, and so
+   do crates from both teams. Enemies can shoot it down. A super gate's walls get 1.25× hp,
+   and so does a super barricade.
+7. **Shield burst stops on the first player it touches.** An ally gets the shield, up to 100.
+   An enemy gets nothing, and the charge is spent. You can't shield yourself. The super also
+   clears roots, like slows.
+8. **The super self-patch** gives 1.25× on both heals, and a 25 shield on top.
+
+### What to try (Set C)
+
+0. **Press 1 until it says "C: a capstone per class"**, and play a match as each class (C cycles
+   your class). The readout names each result:
+   `1 crate -> adrenaline (Q) > 2 side by side -> rapid gun (LMB) > 4 flat -> grenade launcher (RMB)`.
+1. **Can you dodge the barrage?** (main risk) Press **B**: red marks a barrage where you stand.
+   Get out of the circle in the 3 s. Then stand in it and try to dodge shell by shell. Press B
+   in a fight and in a narrow lane. Then press **1** for **"C, sparser barrage"** and do the
+   same. Does 12 shells in 4 s feel like a no-go zone you can only leave? Do 6 feel dodgeable
+   from inside? As a soldier, press **V** and mark one on red. Is it a loud team moment, or does
+   everyone just walk out? The match log counts `barrages`, the enemies `in the circle at the
+   mark`, those still in it `when shells began`, and those `hit`.
+2. **Do left-click items run dry before anyone reaches the pad?** (main risk) This set has no
+   refill. Play a full match as any class, opening 2 side by side for your left-click item. Does
+   it run out mid-fight, a long way from your pad? Does that make you hold off on using it? The
+   match log counts `left-click items ran dry` and `lost on knockout`, and crafted shots
+   against standard ones.
+3. **Does the gate stall a lane?** (main risk) Press **J**: red shuts its mid lane and a side
+   lane on its half. Try to reach red's pad: through the jungle, shooting the gate down
+   (500 hp a wall), or round by the other lane. Is it a puzzle or a dead end? As an engineer,
+   press **V** and shut a lane yourself. Aim near a lane's mouth and the preview snaps across
+   it. The match log counts `gate up` seconds and `players held at an enemy gate`.
+4. **The 1-crate buffs.** As each class, open 1 crate (**T** drops a crate) and use it with
+   **Q**. Is a self-buff worth a crate? Does adrenaline's "picking up a crate ends it" ever make
+   you choose? Does the barricade feel like cover? The match log counts `adrenaline cut by a
+   crate`.
+5. **The right clicks.** As a soldier, try the grenade launcher's bounce. Can you land it on
+   someone? As a medic, fire shield bursts at bots in a fight. Is aiming a shield readable? The
+   match log counts `shield burst gave`.
+6. **Supers**: drop a super crate with **Y** into a recipe and read the twist
+   (`SUPER barrage (LMB marks it) [shells leave a slow zone]`). Shift+B and Shift+J give red
+   super ones.
+
+### What it answers (Set C)
+
+On top of the Set A and Set B counts, the match-end line (also printed with **P**) logs:
+
+- each team's barrages, and the enemies in the circle at the mark, still in it when the shells
+  began, and hit by a shell;
+- each team's gate time, and the seconds each team's players were held at an enemy gate;
+- left-click items run dry, and lost on a knockout;
+- adrenaline cut short by a crate, and the shield the shield bursts gave.
+
+### What the bot matches showed (Set C, 5 min, 5v5, bots on both teams, 4× speed)
+
+Your seat was a bot, given its class's all 8 at 100 s (`CRATE_ALL8`):
+
+| | Barrage (soldier) | Sparse barrage (soldier) | Gate (engineer) | Rally (medic) |
+|---|---|---|---|---|
+| Score | 37–45 | 20–50 | 37–47 | 41–45 |
+| Kills | 8–11 | 2–6 | 7–8 | 9–9 |
+| All 8 | 1 enemy in the circle at the mark, 0 when shells began, 0 hit | 1, 0, 0 | 2 walls across chokes, up 45 s, nobody held | rally at 100 s |
+| Left-click items ran dry / lost on knockout | 0 / 2–3 | 0 / 1–1 | 0 / 3–4 | 0 / 2–0 |
+
+Bots never stand still, so every enemy left the circle before the first shell. That says the
+telegraph works on bots. It says nothing about humans in a fight, which is what B is for. No
+left-click item ran dry: bots seldom open them, and lose them to knockouts first. Bots made
+grenade launchers and shield bursts (one match: 50–40 shield given), but rarely the 1-crate
+buffs. They open the biggest recipe their pad holds.
+
+**One gate check, not shipped:** red's gates were moved onto blue's lanes for one run, where
+blue's bots walk. They held blue's mid lane, and a blue bot shot one 500 hp wall down within
+the 14 s the run lasted. That's how a gate falls, and roughly how fast against bots.
+
+### Notes on the model (Set C)
+
+- Bots:
+  - a barrage bot pushes toward the enemy pad until an enemy is in sight within 25 m, then marks
+    the circle on them;
+  - a gate bot puts its walls at once across the two chokes nearest it that aren't shut;
+  - soldiers lob launcher grenades at enemies 4–14 m away, aiming short to use the bounce;
+  - medics fire shield bursts at a teammate with no shield, who's hurt or in a fight;
+  - self-patch below 50 hp; adrenaline and a barricade when a fight is within 12 m.
+- Bots walk up to an enemy gate and shoot it down. They don't dodge shells; they just keep
+  moving.
+- Bots barely raid the far half, so they rarely meet a gate on its own side. Use **J** and go
+  there yourself.
+- Smoke runs: `CRATE_RULES=4` is Set C and `CRATE_RULES=5` the sparser barrage. `CRATE_B=<s>`
+  marks red's barrage on you at that match time, and `CRATE_J=<s>` puts up red's gates.
