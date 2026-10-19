@@ -18,6 +18,24 @@ on a lost grab), a wider grab reach, or another fix? Play each against no latenc
 and 0 ms, tried each fix, and ruled on what the spec needs (press **Enter** on the setup you
 like; **P** prints your picks and the grab stats for every setup you played).
 
+## Verdict
+
+**Picked 2026-10-19: server grabs with rewind.** The human, after playing it: "server grabs
+with rewind feels good".
+
+- **Grabs and steals are server decisions** (key 2, server decides). Your hand reaches out at
+  once, and the crate comes into your hands when the answer arrives, one round trip later.
+  There is no predicted grab, so a lost grab never snaps back out of your hands.
+- **The server judges a grab on what you saw** (key 5, rewind on). It looks back at most
+  200 ms. If the crate was loose and in reach then, you get it, out of a rival's hands if
+  they took it since, or loose again if it locked in since.
+- **Grab reach stays 1.2 m** (key 4 unchanged).
+- **Rejected:** predicted grabs with a snap-back, and judging grabs only on where things are
+  now (the spec before this).
+- **Not ruled:** throws, set-downs and kicks (key 3) were not part of the verdict, nor was a
+  wider reach. The prototype's defaults for them (server decides, 1.2 m) stand until they're
+  played on their own.
+
 ## How the latency is faked
 
 The sim is the server. You are the only player with a ping: the bots run on the server, with
