@@ -227,3 +227,21 @@ _Avoid_: split, act, episode
 **Ranked-win reward**:
 A dated season cosmetic for a tier, earned with 10 wins at that tier or above in the season.
 _Avoid_: season reward, rank reward, end-of-season chest
+
+### Matchmaking
+
+**Queue**:
+The one pool that matchmade play draws from. Solos and parties queue together across regions, and every match in it is rated.
+_Avoid_: playlist, casual queue, ranked queue, lobby
+
+**Skill band**:
+How far apart in rating the matchmaker lets players be. It starts narrow and widens while a player waits.
+_Avoid_: MMR range, search range
+
+**Short start**:
+Starting a match once every team has its starting player, before every seat is filled.
+_Avoid_: early start, partial lobby, backfill
+
+**Open seat**:
+A place on a team that a player still in the queue can take as a joined player, until the seat closes partway through the match. A seat nobody takes goes to a bot, and that match is unrated.
+_Avoid_: slot, backfill, empty spot
