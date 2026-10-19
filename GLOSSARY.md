@@ -1,6 +1,6 @@
 # big_back
 
-A competitive online team arena game inspired by Team Buddies (PS1), with matchmaking, a ranked ladder and casual modes.
+A competitive online team arena game inspired by Team Buddies (PS1), with matchmaking and a ranked ladder. Every matchmade match is rated.
 
 ## Language
 
@@ -9,8 +9,12 @@ The game's core resource loop: physical crates that a character carries with the
 _Avoid_: resources, currency, loot
 
 **Launch lineup**:
-The set of modes, queues and ladder rules that ship for ranked Season 1. Modes beyond it are only listed, not specified.
+The set of modes, queues and ladder rules that ship for Season 1: one mode, Crate Race, in one rated queue. Modes beyond it are only listed, not specified.
 _Avoid_: mode roster, full lineup
+
+**Mode**:
+A set of rules for how a match is won. Season 1 has one; any later ones share the one queue and the one rating.
+_Avoid_: playlist, game type, ruleset, casual mode
 
 ### Crate handling
 
@@ -143,6 +147,10 @@ The bigger camp in the river, north and south, that drops crates.
 _Avoid_: boss, dragon, baron
 
 ### Scoring and production loss
+
+**Crate Race**:
+The launch mode. Teams score the crates locked in on their pad, knock out the enemy base, and the higher score at the end wins.
+_Avoid_: Domination, Siege, capture
 
 **Score**:
 What decides a match: a team's locked-in pad crates, plus crates spent on its pad, plus points banked from base knockouts.
