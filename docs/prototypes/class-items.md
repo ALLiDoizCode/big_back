@@ -194,11 +194,12 @@ cargo run --example class_items      # then press 1 twice: "B: Team Buddies ladd
 
 **2026-10-18: Set B feels good.** The human, after playing it: "it feels good".
 
-Still open, for the grilling in #22:
+- **The ambulance keeps its heal aura** over the heal shot the driver fires. The human: "the
+  heal aura".
+- **The eight calls under "Set B, as built" stand.** The human: "calls are fine". That
+  includes the minimap hiding enemies out of sight, for Set A too.
 
-- **The ambulance:** the heal aura or the heal shot the driver fires.
-- **The eight calls under "Set B, as built"**, including the minimap hiding enemies out of
-  sight (which changes Set A too).
+These carry to the grilling in #22 and to Set C (#26).
 
 ### Set B, as built
 
