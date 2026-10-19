@@ -86,7 +86,9 @@ heal gun), not a super rapid gun for everyone. This applies under every set.
 
 ### Verdict
 
-**Pending.** Needs the human to play it.
+**2026-10-19: Final feels good.** The human, after playing it: "Final feels good, calls stand".
+Every call from the sets it mixes stands, and so does the super player recipe giving each joiner
+their own class's super left-click item. Recorded in ADR 0008.
 
 ## Set A, as built
 
