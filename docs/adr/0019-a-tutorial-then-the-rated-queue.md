@@ -91,5 +91,7 @@ recommendation. The tutorial's length and steps are tuning, not decisions.
 - **The account stores tutorial completion and a count of rated placements.**
 - **Custom lobbies need bots and parties** of any shape.
 - **Settles** the ranked onboarding left open by 0009.
+- **Settled by [0021](0021-one-bot-that-plays-like-an-average-player.md):** what the one bot
+  does. Practice at normal is the rated bot, and the tutorial scripts the same brain.
 - **Open:** the tutorial's exact steps and length, and the practice difficulty settings, once
   they can be played.

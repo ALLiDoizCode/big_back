@@ -117,7 +117,7 @@ A person in a match, controlling exactly one character. No player owns or comman
 _Avoid_: buddy, unit, squad member, leader
 
 **Bot**:
-An AI stand-in for a missing player, playing by a player's rules.
+An AI stand-in for a missing player, playing by a player's rules: a player's inputs, view and reaction time, at about an average player's strength. It is always shown as a bot, and a human always comes before it.
 _Avoid_: buddy, AI unit, minion
 
 **Team size**:
