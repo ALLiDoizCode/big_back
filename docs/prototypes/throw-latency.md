@@ -19,7 +19,19 @@ to compare), each under at least two of its options, and ruled on each, plus the
 
 ## Verdict
 
-Not played yet.
+**Picked 2026-10-19: predict throws and set-downs, and judge kick-opens on what you saw** (key 6,
+preset 4). The human, after playing it: "feels good".
+
+- **Throws and punts are predicted** (key 2): the crate leaves your hands at once, flying on the
+  world as you see it, and a wrong guess blends to where the server has it.
+- **Set-downs are predicted** (key 3): down at once, corrected (a level up or down) if the server
+  stacked it differently.
+- **Kick-opens: the ring is predicted, and the server opens the recipe you saw** (key 4). It
+  looks back at most the cap; the earlier kick wins, so a crate taken since comes out of the
+  taker's hands and is spent. If a crate you saw is gone, it judges on the pad now.
+- **The rewind cap stays 200 ms** (key 5), for grabs and kicks alike.
+- **Rejected:** waiting for the server on any of the three, and predicting what a kick opens
+  (with crates that come back when it's wrong).
 
 ## What's new since #36
 
