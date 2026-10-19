@@ -1,0 +1,5121 @@
+//! PROTOTYPE — throwaway. Answers #24: does class-item Set A ("fix the placeholders") work?
+//! The prototype's items are kept wherever ADR 0004 allows, each class gets a throwable (or
+//! kit) on 1 crate and a capstone on all 8. Compare it with Set A plus Set B's 1-crate
+//! refill. Not production code; lives on `prototype/class-items`, branched from
+//! `prototype/arena-map` (the lanes + jungle map, 5v5, and the crate grammar picked in #17).
+//!
+//!     cargo run --example class_items
+//!
+//! See `docs/prototypes/class-items.md` for what to try. Set B (#25) and Set C (#26) add
+//! their options to the set switch.
+//!
+//! Play: WASD / left stick move, mouse / right stick aim, Space / A jump, E / X grab or place,
+//! RMB / RB throw (empty hands: right-click item), LMB / RT shoot, Q / LB throw your 1-crate
+//! item, F / B kick (hold beside your pad, let go to open).
+//! Set switch: 1 item set, 2 left click, 3 right click, 4 1 crate, 5 all 8, 6 super crates.
+//! Live: the match keeps going; the next kick uses the new items.
+//! C changes your class. T drops a crate at your feet, Y a super crate. G gives red a bunker
+//! round its pad now (Shift+G a super one), to try raiding it.
+//! Tune: Up/Down pick, Left/Right change (Shift = x5); every item number is in the panel.
+//! R / Start resets, P prints settings, verdicts and results, H hides the rules and panel.
+//!
+//! Smoke tests: `CRATE_EXIT_AFTER=<s>`, `CRATE_SCREENSHOT=<file.png>`, `CRATE_SEAT=bot`,
+//! `CRATE_RULES=<6 digits>` (the option index of each set switch, e.g. `CRATE_RULES=000101`),
+//! `CRATE_ARENA=1` (whole-arena camera), `CRATE_SPEED=<1-4>` (time scale), `CRATE_MAP=open`,
+//! `CRATE_CLASS=<0-2>` (your class).
+
+use std::collections::VecDeque;
+use std::f32::consts::FRAC_PI_2;
+use std::sync::OnceLock;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::time::Duration;
+
+use bevy::camera::visibility::RenderLayers;
+use bevy::camera::{ScalingMode, Viewport};
+use bevy::prelude::*;
+use bevy::ui::IsDefaultUiCamera;
+use bevy::render::view::screenshot::{save_to_disk, Screenshot};
+
+const G: f32 = 20.0;
+const CRATE: f32 = 0.8;
+const HALF: f32 = CRATE / 2.0;
+const HEAD: f32 = 2.2;
+const CHEST: f32 = 1.2;
+const ACTOR_R: f32 = 0.45;
+const YOU: usize = 0;
+/// The pad is 2 x 2 crate cells (Team Buddies), at most 2 crates high.
+const PAD_HALF: f32 = CRATE;
+const CAM_OFFSET: Vec3 = Vec3::new(0.0, 21.0, 14.0);
+/// The whole-arena camera at 3v3 size; it moves out with the arena.
+const ARENA_CAM: Vec3 = Vec3::new(0.0, 46.0, 28.0);
+/// Arena half-extents at 3v3 (36 x 22 m): the shape every team size keeps.
+const BASE_ARENA: Vec2 = Vec2::new(18.0, 11.0);
+
+/// Arena half-extents, set from team size on every reset. A static so the free physics
+/// functions can read it; there's one arena at a time.
+static ARENA_BITS: AtomicU64 = AtomicU64::new(0);
+
+fn arena() -> Vec2 {
+    let b = ARENA_BITS.load(Ordering::Relaxed);
+    Vec2::new(f32::from_bits(b as u32), f32::from_bits((b >> 32) as u32))
+}
+
+/// Same floor space per player at every team size: the 3v3 shape, scaled. The lanes map
+/// is a fixed size.
+fn set_arena(team_size: usize, space_per_player: f32) {
+    let base_area = BASE_ARENA.x * BASE_ARENA.y * 4.0;
+    let k = (2.0 * team_size as f32 * space_per_player / base_area).sqrt().max(0.5);
+    let a = if map_on() { MAP_HALF } else { BASE_ARENA * k };
+    ARENA_BITS.store(a.x.to_bits() as u64 | (a.y.to_bits() as u64) << 32, Ordering::Relaxed);
+}
+
+/// How far the arena is scaled from the 3v3 size.
+fn arena_scale() -> f32 {
+    arena().x / BASE_ARENA.x
+}
+
+/// Team pad centres, about 3.6 m in from each end. A pad's centre sits between crate
+/// grid cells, so its 4 cells are on the grid.
+fn pads() -> [Vec2; 2] {
+    let x = ((arena().x - 3.6) / CRATE).round() * CRATE + HALF;
+    [Vec2::new(-x, HALF), Vec2::new(x, HALF)]
+}
+
+/// The centres of a pad's 4 cells, indexed x + 2z.
+fn pad_cells(team: usize) -> [Vec2; 4] {
+    let p = pads()[team];
+    [Vec2::new(-HALF, -HALF), Vec2::new(HALF, -HALF), Vec2::new(-HALF, HALF), Vec2::new(HALF, HALF)].map(|o| p + o)
+}
+
+// ---------------------------------------------------------------------------------------
+// The lanes + jungle map (#20): bases at each end, three lanes, four walled jungle quadrants
+// with a river between them. Walls are tall: players, crates and shots don't pass.
+// ---------------------------------------------------------------------------------------
+
+/// Whether the lanes map is on (else the open #10 arena). A static so the free physics
+/// functions can read it.
+static MAP_ON: AtomicBool = AtomicBool::new(false);
+/// Lanes map half-extents: 90 x 50 m.
+const MAP_HALF: Vec2 = Vec2::new(45.0, 25.0);
+const BLOCK_H: f32 = 2.6;
+
+fn map_on() -> bool {
+    MAP_ON.load(Ordering::Relaxed)
+}
+
+/// A jungle wall, as a box on the floor.
+#[derive(Clone, Copy)]
+struct Block {
+    min: Vec2,
+    max: Vec2,
+}
+
+impl Block {
+    fn hits(&self, p: Vec2, r: f32) -> bool {
+        p.x > self.min.x - r && p.x < self.max.x + r && p.y > self.min.y - r && p.y < self.max.y + r
+    }
+    /// Pushes a circle of radius `r` at `p` out of the block. Returns the push normal.
+    fn push_out(&self, p: &mut Vec2, r: f32) -> Option<Vec2> {
+        if !self.hits(*p, r) {
+            return None;
+        }
+        let pens = [
+            (p.x - (self.min.x - r), Vec2::NEG_X),
+            ((self.max.x + r) - p.x, Vec2::X),
+            (p.y - (self.min.y - r), Vec2::NEG_Y),
+            ((self.max.y + r) - p.y, Vec2::Y),
+        ];
+        let (pen, n) = pens.into_iter().min_by(|a, b| a.0.total_cmp(&b.0)).unwrap();
+        *p += n * pen;
+        Some(n)
+    }
+}
+
+/// One quadrant's walls in +x, +z, mirrored into all four.
+fn build_blocks() -> Vec<Block> {
+    // (x0, x1, z0, z1) in the +x +z quadrant.
+    let walls = [
+        // Facing mid lane, with an entrance at x 14-18.
+        (4.0, 14.0, 4.0, 5.0),
+        (18.0, 30.0, 4.0, 5.0),
+        // Facing the side lane, with an entrance at x 20-24.
+        (4.0, 20.0, 17.0, 18.0),
+        (24.0, 30.0, 17.0, 18.0),
+        // Facing the base, with an entrance at z 10-12.
+        (30.0, 31.0, 4.0, 10.0),
+        (30.0, 31.0, 12.0, 18.0),
+        // Pillars inside.
+        (8.0, 11.0, 8.0, 10.0),
+        (22.0, 25.0, 12.5, 14.0),
+        (24.0, 26.0, 7.0, 9.0),
+    ];
+    let mut out = Vec::new();
+    for sx in [-1.0f32, 1.0] {
+        for sz in [-1.0f32, 1.0] {
+            for (x0, x1, z0, z1) in walls {
+                let (a, b) = (Vec2::new(x0 * sx, z0 * sz), Vec2::new(x1 * sx, z1 * sz));
+                out.push(Block { min: a.min(b), max: a.max(b) });
+            }
+        }
+    }
+    out
+}
+
+fn blocks() -> &'static [Block] {
+    static B: OnceLock<Vec<Block>> = OnceLock::new();
+    if !map_on() {
+        return &[];
+    }
+    B.get_or_init(build_blocks)
+}
+
+fn blocked(p: Vec2, r: f32) -> bool {
+    blocks().iter().any(|b| b.hits(p, r))
+}
+
+/// Whether a circle of radius `r` can go straight from `a` to `b`.
+fn clear(a: Vec2, b: Vec2, r: f32) -> bool {
+    if !map_on() {
+        return true;
+    }
+    let n = (a.distance(b) / 0.5).ceil().max(1.0) as usize;
+    (0..=n).all(|k| !blocked(a.lerp(b, k as f32 / n as f32), r))
+}
+
+/// Navigation grid for bots: a node every 2.5 m off the walls, linked to its 8 neighbours
+/// when the way is clear.
+struct Nav {
+    nodes: Vec<Vec2>,
+    links: Vec<Vec<(usize, f32)>>,
+}
+
+fn nav() -> &'static Nav {
+    static N: OnceLock<Nav> = OnceLock::new();
+    N.get_or_init(|| {
+        let step = 2.5;
+        let mut nodes = Vec::new();
+        let (nx, nz) = ((MAP_HALF.x * 2.0 / step) as i32, (MAP_HALF.y * 2.0 / step) as i32);
+        let mut index = std::collections::HashMap::new();
+        for i in 0..=nx {
+            for j in 0..=nz {
+                let p = Vec2::new(-MAP_HALF.x + 1.0 + i as f32 * step * 0.98, -MAP_HALF.y + 1.0 + j as f32 * step * 0.96);
+                if !build_blocks().iter().any(|b| b.hits(p, 0.8)) {
+                    index.insert((i, j), nodes.len());
+                    nodes.push(p);
+                }
+            }
+        }
+        let walls = build_blocks();
+        let free = |a: Vec2, b: Vec2| (0..=8).all(|k| !walls.iter().any(|w| w.hits(a.lerp(b, k as f32 / 8.0), 0.6)));
+        let mut links = vec![Vec::new(); nodes.len()];
+        for (&(i, j), &a) in &index {
+            for (di, dj) in [(1, 0), (0, 1), (1, 1), (1, -1)] {
+                if let Some(&b) = index.get(&(i + di, j + dj))
+                    && free(nodes[a], nodes[b])
+                {
+                    let d = nodes[a].distance(nodes[b]);
+                    links[a].push((b, d));
+                    links[b].push((a, d));
+                }
+            }
+        }
+        Nav { nodes, links }
+    })
+}
+
+/// The next point to walk to on the way from `from` to `goal`, around the walls.
+fn route(from: Vec2, goal: Vec2) -> Vec2 {
+    if clear(from, goal, ACTOR_R) {
+        return goal;
+    }
+    let nav = nav();
+    let nearest = |p: Vec2| {
+        (0..nav.nodes.len())
+            .filter(|&k| nav.nodes[k].distance(p) < 6.0 && clear(p, nav.nodes[k], ACTOR_R * 0.8))
+            .min_by(|&a, &b| nav.nodes[a].distance(p).total_cmp(&nav.nodes[b].distance(p)))
+    };
+    let (Some(start), Some(end)) = (nearest(from), nearest(goal)) else { return goal };
+    // A* over the grid.
+    let n = nav.nodes.len();
+    let mut cost = vec![f32::INFINITY; n];
+    let mut prev = vec![usize::MAX; n];
+    let mut open = std::collections::BinaryHeap::new();
+    cost[start] = 0.0;
+    open.push((std::cmp::Reverse((nav.nodes[start].distance(goal) * 100.0) as u32), start));
+    while let Some((_, k)) = open.pop() {
+        if k == end {
+            break;
+        }
+        for &(m, d) in &nav.links[k] {
+            let c = cost[k] + d;
+            if c < cost[m] {
+                cost[m] = c;
+                prev[m] = k;
+                open.push((std::cmp::Reverse(((c + nav.nodes[m].distance(goal)) * 100.0) as u32), m));
+            }
+        }
+    }
+    if cost[end].is_infinite() {
+        return goal;
+    }
+    let mut path = vec![end];
+    while let Some(&k) = path.last() {
+        if k == start {
+            break;
+        }
+        path.push(prev[k]);
+    }
+    // The furthest point along the path that's in a straight line from here.
+    path.iter().map(|&k| nav.nodes[k]).find(|&p| clear(from, p, ACTOR_R)).unwrap_or(nav.nodes[start])
+}
+
+/// A random spot on the floor, off the walls.
+fn open_spot(mut rand: impl FnMut() -> f32, span: Vec2) -> Vec2 {
+    for _ in 0..30 {
+        let p = Vec2::new((rand() * 2.0 - 1.0) * span.x, (rand() * 2.0 - 1.0) * span.y);
+        if !blocked(p, 1.0) {
+            return p;
+        }
+    }
+    Vec2::ZERO
+}
+
+/// A recipe: what a pad's crates make when kicked open. The two player recipes are fixed
+/// by ADR-0005; the others are what #17 is choosing.
+#[derive(Clone, Copy, PartialEq, Debug)]
+enum Slot {
+    /// 1 crate (count only: 1).
+    Small,
+    /// 2 side by side (count only: 3).
+    Pair,
+    /// 2 stacked: 1 new player (count only: 2).
+    Player1,
+    /// 2 wide x 2 high: 2 new players (count only: 4).
+    Player2,
+    /// 4 flat (count only: 5-7).
+    Flat4,
+    /// All 8 (count only: 8).
+    All8,
+}
+
+/// What a pad's crates are right now.
+#[derive(Clone, Copy, PartialEq)]
+enum Shape {
+    Empty,
+    Recipe(Slot),
+    /// Lined up, but no recipe has this shape: add crates.
+    Odd,
+    /// A crate on the pad isn't sitting in a cell (or is still moving).
+    Unaligned,
+    /// Kicked open and building (build timer).
+    Busy,
+}
+
+impl Shape {
+    fn players(self) -> usize {
+        match self {
+            Shape::Recipe(Slot::Player1) => 1,
+            Shape::Recipe(Slot::Player2) => 2,
+            _ => 0,
+        }
+    }
+}
+
+impl Slot {
+    fn label(self, count_only: bool) -> &'static str {
+        match (self, count_only) {
+            (Slot::Small, false) => "1 crate",
+            (Slot::Pair, false) => "2 side by side",
+            (Slot::Player1, false) => "2 stacked",
+            (Slot::Player2, false) => "2 wide x 2 high",
+            (Slot::Flat4, false) => "4 flat",
+            (Slot::All8, false) => "all 8",
+            (Slot::Small, true) => "1 crate",
+            (Slot::Player1, true) => "2 crates",
+            (Slot::Pair, true) => "3 crates",
+            (Slot::Player2, true) => "4 crates",
+            (Slot::Flat4, true) => "5-7 crates",
+            (Slot::All8, true) => "8 crates",
+        }
+    }
+}
+
+/// What kicking a recipe open gives.
+#[derive(Clone, Copy, PartialEq, Debug)]
+enum Make {
+    Players(usize),
+    /// A left-click item (1 x 2): replaces the gun until its ammo runs out.
+    Gun(GunKind),
+    /// A right-click item (2 x 2 flat): used with empty hands, by charges.
+    Alt(AltKind),
+    /// 1 crate, Set A: a thrown item, kept until you throw it with Q.
+    Toss(TossKind),
+    /// 1 crate, Set A engineer: +1 right-click charge, or hp back on your nearest wall.
+    PatchKit,
+    /// 1 crate, Set B: tops up what you hold (left click to full, right click +1), else +25 hp.
+    Refill,
+    /// All 8, Set A soldier.
+    Tank,
+    /// All 8, Set A engineer: a horseshoe of walls round your pad, with one gap.
+    Bunker,
+    /// All 8, Set A medic: every living teammate to full health with a shield.
+    Rally,
+}
+
+impl Make {
+    fn name(self) -> &'static str {
+        match self {
+            Make::Players(1) => "1 new player",
+            Make::Players(_) => "2 new players",
+            Make::Gun(GunKind::Rapid) => "rapid gun (LMB)",
+            Make::Gun(GunKind::Rivet) => "rivet gun (LMB)",
+            Make::Gun(GunKind::Heal) => "heal gun (LMB)",
+            Make::Alt(AltKind::Rockets) => "rockets (RMB)",
+            Make::Alt(AltKind::ShieldWall) => "shield wall (RMB)",
+            Make::Alt(AltKind::Pulse) => "heal pulse (RMB)",
+            Make::Toss(TossKind::Grenade) => "grenade (Q)",
+            Make::Toss(TossKind::MedPack) => "med pack (Q)",
+            Make::PatchKit => "patch kit",
+            Make::Refill => "refill",
+            Make::Tank => "tank",
+            Make::Bunker => "bunker",
+            Make::Rally => "rally",
+        }
+    }
+    /// What a super crate adds: one behaviour twist (research section 7). The pad readout
+    /// names it so the enemy can read the threat.
+    fn twist(self) -> &'static str {
+        match self {
+            Make::Players(_) => "they join with a rapid gun",
+            Make::Gun(GunKind::Rapid) => "shots pierce one target",
+            Make::Gun(GunKind::Rivet) => "rivets stagger",
+            Make::Gun(GunKind::Heal) => "heals bounce to a 2nd ally",
+            Make::Alt(AltKind::Rockets) => "rockets split into 3",
+            Make::Alt(AltKind::ShieldWall) => "allies shoot through",
+            Make::Alt(AltKind::Pulse) => "pulse adds a 25 shield",
+            Make::Toss(TossKind::Grenade) => "sticks to what it touches",
+            Make::Toss(TossKind::MedPack) => "adds a 25 shield",
+            Make::PatchKit => "+2 charges",
+            Make::Refill => "both to full",
+            Make::Tank => "cannon leaves a slow zone, 450 hp",
+            Make::Bunker => "the gap is one-way",
+            Make::Rally => "100 shield, clears slows",
+        }
+    }
+    /// The pad readout's name: "SUPER rockets (RMB) [rockets split into 3]".
+    fn label(self, gold: bool) -> String {
+        if gold { format!("SUPER {} [{}]", self.name(), self.twist()) } else { self.name().to_string() }
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Debug)]
+enum GunKind {
+    /// Soldier: 6 shots/s.
+    Rapid,
+    /// Engineer: slow, hard-hitting; a hit on a friendly wall repairs it.
+    Rivet,
+    /// Medic: a heal shot that heals the first hurt teammate it touches, weak against enemies.
+    Heal,
+}
+
+/// A right-click item from the class loadout (2 x 2 flat).
+#[derive(Clone, Copy, PartialEq, Debug)]
+enum AltKind {
+    /// Soldier: rockets.
+    Rockets,
+    /// Engineer: a 4 m wall where you aim.
+    ShieldWall,
+    /// Medic: heals you and every teammate close by.
+    Pulse,
+}
+
+/// A 1-crate item thrown with Q, on the jump-throw arc.
+#[derive(Clone, Copy, PartialEq, Debug)]
+enum TossKind {
+    Grenade,
+    MedPack,
+}
+
+#[derive(Clone, Copy)]
+struct Alt {
+    kind: AltKind,
+    charges: u32,
+    max: u32,
+    gold: bool,
+}
+
+/// A player's class: the class of whoever kicks the pad open decides what it makes.
+#[derive(Clone, Copy, PartialEq, Debug)]
+enum Class {
+    Soldier,
+    Engineer,
+    Medic,
+}
+
+const CLASSES: [Class; 3] = [Class::Soldier, Class::Engineer, Class::Medic];
+
+impl Class {
+    fn name(self) -> &'static str {
+        match self {
+            Class::Soldier => "soldier",
+            Class::Engineer => "engineer",
+            Class::Medic => "medic",
+        }
+    }
+    fn next(self) -> Class {
+        CLASSES[(self as usize + 1) % 3]
+    }
+}
+
+// ---------------------------------------------------------------------------------------
+// The item sets (#24-#26). Each slot picks which set its items come from; key 1 picks a
+// whole set at once. Set B and Set C add their options to these lists.
+// ---------------------------------------------------------------------------------------
+
+/// Whole sets for key 1: (name, option index for left click, right click, 1 crate, all 8).
+const SETS: [(&str, [usize; 4]); 2] = [
+    ("A: fix the placeholders", [0, 0, 0, 0]),
+    ("A + Set B's 1-crate refill", [0, 0, 1, 0]),
+];
+const SET_NAMES: [&str; 2] = [SETS[0].0, SETS[1].0];
+const LEFT_OPTS: [&str; 1] = ["A: rapid / rivet / heal gun"];
+const RIGHT_OPTS: [&str; 1] = ["A: rockets / shield wall / heal pulse"];
+const SMALL_OPTS: [&str; 2] = ["A: grenade / patch kit / med pack", "B: refill"];
+const ALL8_OPTS: [&str; 1] = ["A: tank / bunker / rally"];
+
+/// What a class makes from a recipe, given which set each slot is on.
+fn item_of(slot: Slot, class: Class, sets: [usize; 4]) -> Make {
+    use Class::*;
+    match slot {
+        Slot::Player1 => Make::Players(1),
+        Slot::Player2 => Make::Players(2),
+        Slot::Pair => match (sets[0], class) {
+            (_, Soldier) => Make::Gun(GunKind::Rapid),
+            (_, Engineer) => Make::Gun(GunKind::Rivet),
+            (_, Medic) => Make::Gun(GunKind::Heal),
+        },
+        Slot::Flat4 => match (sets[1], class) {
+            (_, Soldier) => Make::Alt(AltKind::Rockets),
+            (_, Engineer) => Make::Alt(AltKind::ShieldWall),
+            (_, Medic) => Make::Alt(AltKind::Pulse),
+        },
+        Slot::Small => match (sets[2], class) {
+            (1, _) => Make::Refill,
+            (_, Soldier) => Make::Toss(TossKind::Grenade),
+            (_, Engineer) => Make::PatchKit,
+            (_, Medic) => Make::Toss(TossKind::MedPack),
+        },
+        Slot::All8 => match (sets[3], class) {
+            (_, Soldier) => Make::Tank,
+            (_, Engineer) => Make::Bunker,
+            (_, Medic) => Make::Rally,
+        },
+    }
+}
+
+fn adjacent(a: usize, b: usize) -> bool {
+    ((a % 2) == (b % 2)) != ((a / 2) == (b / 2))
+}
+
+/// The recipe a set of cell heights makes: by shape (Team Buddies), or by count only.
+fn shape_of(h: [u8; 4], count_only: bool) -> Shape {
+    let total: u8 = h.iter().sum();
+    if total == 0 {
+        return Shape::Empty;
+    }
+    if count_only {
+        return Shape::Recipe(match total {
+            1 => Slot::Small,
+            2 => Slot::Player1,
+            3 => Slot::Pair,
+            4 => Slot::Player2,
+            5..=7 => Slot::Flat4,
+            _ => Slot::All8,
+        });
+    }
+    let cells = |n: u8| (0..4).filter(|&i| h[i] == n).collect::<Vec<_>>();
+    match total {
+        1 => Shape::Recipe(Slot::Small),
+        2 if cells(2).len() == 1 => Shape::Recipe(Slot::Player1),
+        2 if cells(1).len() == 2 && adjacent(cells(1)[0], cells(1)[1]) => Shape::Recipe(Slot::Pair),
+        4 if cells(1).len() == 4 => Shape::Recipe(Slot::Flat4),
+        4 if cells(2).len() == 2 && adjacent(cells(2)[0], cells(2)[1]) => Shape::Recipe(Slot::Player2),
+        8 => Shape::Recipe(Slot::All8),
+        _ => Shape::Odd,
+    }
+}
+
+/// Hold-to-choose kick (rule 7): the first recipe is ready after this long, and each
+/// further second step up to the next bigger one.
+const HOLD_FIRST: f32 = 0.75;
+const HOLD_STEP: f32 = 0.6;
+
+/// The recipes that fit inside a pad, smallest first, each with how many crates it uses
+/// from the top of each cell.
+fn sub_recipes(h: [u8; 4], count_only: bool) -> Vec<(Slot, [u8; 4])> {
+    let total: u8 = h.iter().sum();
+    let mut out = Vec::new();
+    if count_only {
+        let five = total.min(7);
+        for (slot, n) in [(Slot::Small, 1), (Slot::Player1, 2), (Slot::Pair, 3), (Slot::Player2, 4), (Slot::Flat4, five.max(5)), (Slot::All8, 8)] {
+            if n > total {
+                continue;
+            }
+            // From the top: the tallest cells first.
+            let mut take = [0u8; 4];
+            for _ in 0..n {
+                let k = (0..4).filter(|&k| h[k] > take[k]).max_by_key(|&k| h[k] - take[k]).unwrap();
+                take[k] += 1;
+            }
+            out.push((slot, take));
+        }
+        return out;
+    }
+    let one = |k: usize, n: u8| {
+        let mut t = [0u8; 4];
+        t[k] = n;
+        t
+    };
+    const PAIRS: [(usize, usize); 4] = [(0, 1), (0, 2), (1, 3), (2, 3)];
+    if let Some(k) = (0..4).filter(|&k| h[k] >= 1).min_by_key(|&k| h[k]) {
+        out.push((Slot::Small, one(k, 1)));
+    }
+    if let Some(k) = (0..4).find(|&k| h[k] == 2) {
+        out.push((Slot::Player1, one(k, 2)));
+    }
+    if let Some(&(a, b)) = PAIRS.iter().filter(|(a, b)| h[*a] >= 1 && h[*b] >= 1).min_by_key(|(a, b)| h[*a] + h[*b]) {
+        let mut t = one(a, 1);
+        t[b] = 1;
+        out.push((Slot::Pair, t));
+    }
+    if let Some(&(a, b)) = PAIRS.iter().find(|(a, b)| h[*a] == 2 && h[*b] == 2) {
+        let mut t = one(a, 2);
+        t[b] = 2;
+        out.push((Slot::Player2, t));
+    }
+    if h.iter().all(|&n| n >= 1) {
+        out.push((Slot::Flat4, [1; 4]));
+    }
+    if h.iter().all(|&n| n == 2) {
+        out.push((Slot::All8, [2; 4]));
+    }
+    out
+}
+
+const PLACE_REACH: f32 = 1.6;
+
+// The core-feel baseline picked by play in #9 (docs/prototypes/core-feel.md), fixed here.
+const MOVE_SPEED: f32 = 6.0;
+const CARRY_SPEED: f32 = 0.6;
+const JUMP_VEL: f32 = 6.0;
+const THROW_ANGLE: f32 = 35.0;
+const THROW_DIST: f32 = 9.0;
+const JUMP_BOOST: f32 = 1.5;
+const SLIDE_KEEP: f32 = 0.8;
+const SLIDE_FRICTION: f32 = 4.0;
+const SNAP_RADIUS: f32 = 0.35;
+const FIRE_RATE: f32 = 3.0;
+const PROJ_SPEED: f32 = 18.0;
+/// 4 shots kill a 100 hp player.
+const SHOT_DMG: f32 = 25.0;
+const KICK_TIME: f32 = 1.5;
+const GRAB_LATENCY: f32 = 0.12;
+const GRAB_REACH: f32 = 1.2;
+
+const TEAM_COLOR: [Color; 2] = [Color::srgb(0.3, 0.55, 1.0), Color::srgb(1.0, 0.35, 0.3)];
+/// Player colours by slot, worn as a band: tells teammates apart.
+const PLAYER_COLOR: [Color; 8] = [
+    Color::srgb(1.0, 0.9, 0.15),
+    Color::srgb(0.25, 1.0, 0.35),
+    Color::srgb(0.97, 0.97, 0.97),
+    Color::srgb(0.85, 0.3, 1.0),
+    Color::srgb(1.0, 0.55, 0.1),
+    Color::srgb(0.2, 0.95, 0.95),
+    Color::srgb(1.0, 0.5, 0.75),
+    Color::srgb(0.15, 0.15, 0.15),
+];
+
+// ---------------------------------------------------------------------------------------
+// Tunables
+// ---------------------------------------------------------------------------------------
+
+#[derive(Clone, Copy, PartialEq)]
+#[repr(usize)]
+enum P {
+    // The set switch (keys 1-6). Keep these first, in this order.
+    Set,
+    LeftSet,
+    RightSet,
+    SmallSet,
+    All8Set,
+    Super,
+    // The rest.
+    Map,
+    TeamSize,
+    AllyStacks,
+    OnlineDelay,
+    Seat,
+    MatchLength,
+    TimeScale,
+    Camera,
+    // Item numbers (research section 8: starting points, not tuning).
+    SuperStrength,
+    RapidRate,
+    RapidRounds,
+    RapidDmg,
+    RocketCharges,
+    RocketDmg,
+    RocketBlast,
+    GrenadeFuse,
+    GrenadeBlast,
+    GrenadeDmg,
+    TankTime,
+    TankHp,
+    SlowZone,
+    RivetRate,
+    Rivets,
+    RivetDmg,
+    RivetRepair,
+    WallCharges,
+    WallLen,
+    WallHp,
+    WallLife,
+    PatchHp,
+    BunkerHp,
+    BunkerLife,
+    HealShot,
+    HealShots,
+    HealRange,
+    PulseCharges,
+    PulseHp,
+    PulseRadius,
+    MedPackHp,
+    RallyShield,
+    RallyInvuln,
+    RefillHp,
+}
+
+/// How many of the params are the set switch (keys 1-6).
+const RULES: usize = 6;
+
+#[derive(Clone)]
+enum Value {
+    Num { v: f32, min: f32, max: f32, step: f32, unit: &'static str },
+    Choice { i: usize, opts: &'static [&'static str] },
+}
+
+#[derive(Clone)]
+struct Param {
+    name: &'static str,
+    value: Value,
+}
+
+fn num(name: &'static str, v: f32, min: f32, max: f32, step: f32, unit: &'static str) -> Param {
+    Param { name, value: Value::Num { v, min, max, step, unit } }
+}
+
+fn choice(name: &'static str, i: usize, opts: &'static [&'static str]) -> Param {
+    Param { name, value: Value::Choice { i, opts } }
+}
+
+fn defaults() -> Vec<Param> {
+    // Order must match `P`.
+    vec![
+        choice("1 item set", 0, &SET_NAMES),
+        choice("2 left click", 0, &LEFT_OPTS),
+        choice("3 right click", 0, &RIGHT_OPTS),
+        choice("4 1 crate", 0, &SMALL_OPTS),
+        choice("5 all 8", 0, &ALL8_OPTS),
+        // ADR 0007: a super crate upgrades the result.
+        choice("6 super crates", 1, &["off", "upgrade (one twist)"]),
+        choice("map", 0, &["lanes + jungle (90 x 50 m)", "open arena (#10)"]),
+        num("team size", 5.0, 1.0, 8.0, 1.0, "v"),
+        // Off: only you build and open blue's pad.
+        choice("blue bots build", 1, &["off (only you)", "on"]),
+        num("online delay", 0.0, 0.0, 250.0, 25.0, "ms"),
+        choice("your seat", 0, &["you play", "bot (watch)"]),
+        num("match length", 300.0, 30.0, 600.0, 30.0, "s"),
+        num("time scale", 1.0, 1.0, 4.0, 1.0, "x"),
+        choice("camera", 0, &["follow you", "whole arena"]),
+        num("super strength", 1.25, 1.0, 2.0, 0.05, "x"),
+        num("rapid: rate", 6.0, 3.0, 12.0, 1.0, "/s"),
+        num("rapid: rounds", 60.0, 10.0, 200.0, 10.0, ""),
+        num("rapid: damage", 15.0, 5.0, 40.0, 1.0, ""),
+        num("rockets: charges", 4.0, 1.0, 10.0, 1.0, ""),
+        num("rockets: damage", 70.0, 20.0, 150.0, 5.0, ""),
+        num("rockets: blast", 2.5, 1.0, 5.0, 0.25, "m"),
+        num("grenade: fuse", 1.5, 0.5, 4.0, 0.25, "s"),
+        num("grenade: blast", 2.0, 1.0, 5.0, 0.25, "m"),
+        num("grenade: damage", 70.0, 20.0, 150.0, 5.0, ""),
+        num("tank: time", 45.0, 10.0, 120.0, 5.0, "s"),
+        num("tank: hp", 300.0, 100.0, 1000.0, 25.0, ""),
+        num("tank: slow zone", 3.0, 1.0, 8.0, 0.5, "s"),
+        num("rivet: rate", 2.0, 1.0, 6.0, 0.5, "/s"),
+        num("rivet: rivets", 40.0, 10.0, 100.0, 5.0, ""),
+        num("rivet: damage", 30.0, 10.0, 60.0, 1.0, ""),
+        num("rivet: wall repair", 20.0, 0.0, 60.0, 5.0, "hp"),
+        num("wall: charges", 2.0, 1.0, 6.0, 1.0, ""),
+        num("wall: length", 4.0, 2.0, 8.0, 0.5, "m"),
+        num("wall: hp", 250.0, 50.0, 800.0, 25.0, ""),
+        num("wall: life", 20.0, 5.0, 60.0, 5.0, "s"),
+        num("patch kit: wall hp", 60.0, 10.0, 200.0, 10.0, ""),
+        num("bunker: hp each wall", 600.0, 100.0, 2000.0, 50.0, ""),
+        num("bunker: life", 40.0, 10.0, 90.0, 5.0, "s"),
+        num("heal gun: per shot", 8.0, 2.0, 20.0, 1.0, "hp"),
+        num("heal gun: shots", 80.0, 20.0, 200.0, 10.0, ""),
+        num("heal gun: range", 10.0, 4.0, 20.0, 1.0, "m"),
+        num("pulse: charges", 3.0, 1.0, 8.0, 1.0, ""),
+        num("pulse: heal", 40.0, 10.0, 100.0, 5.0, "hp"),
+        num("pulse: radius", 7.0, 3.0, 12.0, 0.5, "m"),
+        num("med pack: heal", 40.0, 10.0, 100.0, 5.0, "hp"),
+        num("rally: shield", 50.0, 0.0, 100.0, 5.0, ""),
+        num("rally: invulnerable", 4.0, 0.0, 10.0, 0.5, "s"),
+        num("refill: hp if empty", 25.0, 0.0, 100.0, 5.0, ""),
+    ]
+}
+
+#[derive(Resource)]
+struct Tune {
+    vals: Vec<Param>,
+    selected: usize,
+    panel: bool,
+    /// Team sizes picked with Enter, printed with P.
+    verdicts: Vec<String>,
+}
+
+impl Tune {
+    fn f(&self, p: P) -> f32 {
+        match self.vals[p as usize].value {
+            Value::Num { v, .. } => v,
+            Value::Choice { i, .. } => i as f32,
+        }
+    }
+    fn c(&self, p: P) -> usize {
+        self.f(p) as usize
+    }
+    fn delay(&self) -> f32 {
+        self.f(P::OnlineDelay) / 1000.0
+    }
+}
+
+fn set(vals: &mut [Param], p: P, x: f32) {
+    match &mut vals[p as usize].value {
+        Value::Num { v, min, max, .. } => *v = x.clamp(*min, *max),
+        Value::Choice { i, opts } => *i = (x as usize).min(opts.len() - 1),
+    }
+}
+
+fn fmt_value(v: &Value) -> String {
+    match v {
+        Value::Num { v, step, unit, .. } => {
+            if *step < 1.0 { format!("{v:.2} {unit}") } else { format!("{v:.0} {unit}") }
+        }
+        Value::Choice { i, opts } => opts[*i].to_string(),
+    }
+}
+
+/// The rules being played, on one line.
+fn rules_desc(tune: &Tune) -> String {
+    tune.vals[..RULES]
+        .iter()
+        .map(|p| format!("{}: {}", &p.name[2..], fmt_value(&p.value)))
+        .collect::<Vec<_>>()
+        .join(" | ")
+}
+
+fn init_from_env(mut tune: ResMut<Tune>, mut sim: ResMut<Sim>) {
+    if let Ok(rules) = std::env::var("CRATE_RULES") {
+        for (k, ch) in rules.chars().take(RULES).enumerate() {
+            if let Some(d) = ch.to_digit(10) {
+                let p = [P::Set, P::LeftSet, P::RightSet, P::SmallSet, P::All8Set, P::Super][k];
+                if p == P::Set {
+                    apply_set(&mut tune.vals, d as usize);
+                }
+                set(&mut tune.vals, p, d as f32);
+            }
+        }
+    }
+    if let Some(x) = std::env::var("CRATE_SPEED").ok().and_then(|v| v.parse::<f32>().ok()) {
+        set(&mut tune.vals, P::TimeScale, x);
+    }
+    if std::env::var("CRATE_MAP").as_deref() == Ok("open") {
+        set(&mut tune.vals, P::Map, 1.0);
+    }
+    if std::env::var("CRATE_ARENA").is_ok() {
+        set(&mut tune.vals, P::Camera, 1.0);
+    }
+    if std::env::var("CRATE_SEAT").as_deref() == Ok("bot") {
+        set(&mut tune.vals, P::Seat, 1.0);
+    }
+    if let Some(c) = std::env::var("CRATE_CLASS").ok().and_then(|v| v.parse::<usize>().ok()) {
+        sim.your_class = CLASSES[c.min(2)];
+    }
+    sim.reset(&tune);
+}
+
+/// Key 1: puts every slot on the chosen set's options.
+fn apply_set(vals: &mut [Param], i: usize) {
+    let (_, opts) = SETS[i.min(SETS.len() - 1)];
+    for (p, o) in [P::LeftSet, P::RightSet, P::SmallSet, P::All8Set].into_iter().zip(opts) {
+        set(vals, p, o as f32);
+    }
+}
+
+// ---------------------------------------------------------------------------------------
+// Simulation state (plain data; entities only mirror it)
+// ---------------------------------------------------------------------------------------
+
+#[derive(Clone, Copy, PartialEq)]
+enum Kind {
+    Normal,
+    /// Rare: upgrades or branches the recipe it joins.
+    Super,
+    Loot,
+}
+
+impl Kind {
+    /// Crates that count on a pad.
+    fn builds(self) -> bool {
+        self != Kind::Loot
+    }
+}
+
+#[derive(Clone, Copy, PartialEq)]
+enum CrateState {
+    Free,
+    Carried { by: usize, lift_from: Vec3, lift_t: f32 },
+}
+
+struct Crate {
+    id: u32,
+    kind: Kind,
+    pos: Vec3,
+    vel: Vec3,
+    state: CrateState,
+    kick: f32,
+    thrown_by: Option<usize>,
+    /// Who last set this crate down: the one who completes a stack.
+    placed_by: Option<usize>,
+    settling: bool,
+    /// Locked into the pad: it can't be taken, knocked or moved, only kicked open.
+    locked: bool,
+    ent: Option<Entity>,
+}
+
+impl Crate {
+    /// Free and not locked: can be grabbed, knocked and blown about.
+    fn loose(&self) -> bool {
+        self.state == CrateState::Free && !self.locked
+    }
+}
+
+#[derive(Clone, Copy)]
+struct Gun {
+    kind: GunKind,
+    ammo: u32,
+    max: u32,
+    /// From a super crate: its twist and more strength, never more ammo.
+    gold: bool,
+}
+
+#[derive(Clone, Copy)]
+struct Tank {
+    hp: f32,
+    max: f32,
+    life: f32,
+    gold: bool,
+}
+
+/// A player: you, or a bot standing in for another player.
+struct Actor {
+    team: usize,
+    /// Slot in the team: picks the player colour.
+    slot: usize,
+    pos: Vec3,
+    vel: Vec3,
+    facing: Vec3,
+    grounded: bool,
+    carrying: Option<u32>,
+    /// The crate this bot is heading for, so teammates pick different ones.
+    claim: Option<u32>,
+    fire_cd: f32,
+    hp: f32,
+    dead: f32,
+    stun: f32,
+    gun: Option<Gun>,
+    /// Right-click item from the class loadout.
+    alt: Option<Alt>,
+    alt_cd: f32,
+    /// 1-crate item to throw with Q (grenade or med pack), and whether it's super.
+    toss: Option<(TossKind, bool)>,
+    tank: Option<Tank>,
+    class: Class,
+    /// Slowed while this is above 0 (a super tank's slow zone).
+    slow: f32,
+    /// Immune to slows (super rally).
+    slow_immune: f32,
+    /// Takes no damage (the medic after a rally).
+    invuln: f32,
+    /// Absorbs damage before hp (from shield camps).
+    shield: f32,
+    /// Bots: the goal they're routing to, the next waypoint, and how old it is.
+    nav: Option<(Vec2, Vec2, f32)>,
+    /// Recent positions, to show other players slightly in the past (online interpolation).
+    hist: VecDeque<(f32, Vec3)>,
+    ent: Option<Entity>,
+}
+
+impl Actor {
+    fn new(team: usize, slot: usize) -> Self {
+        Actor {
+            team,
+            slot,
+            pos: Vec3::ZERO,
+            vel: Vec3::ZERO,
+            facing: Vec3::X,
+            grounded: true,
+            carrying: None,
+            claim: None,
+            fire_cd: 0.5,
+            hp: 100.0,
+            dead: 0.0,
+            stun: 0.0,
+            gun: None,
+            alt: None,
+            alt_cd: 0.0,
+            toss: None,
+            tank: None,
+            slow: 0.0,
+            slow_immune: 0.0,
+            invuln: 0.0,
+            // Bots by slot: 1st soldier, 2nd engineer, 3rd medic.
+            class: CLASSES[slot % 3],
+            shield: 0.0,
+            nav: None,
+            hist: VecDeque::new(),
+            ent: None,
+        }
+    }
+    fn alive(&self) -> bool {
+        self.dead <= 0.0
+    }
+}
+
+struct Pending {
+    crate_id: u32,
+    left: f32,
+    total: f32,
+}
+
+/// A wall: a static object with hp and a timer (allowed by the ADR 0004 ruling). A shield
+/// wall goes where the engineer aims; a bunker is a horseshoe of them round the pad. Walls
+/// block players, crates and shots from both teams (a super shield wall lets its own team's
+/// shots through). A bunker gate fills the gap of a super bunker: it stops enemies walking in
+/// and nothing else.
+struct Wall {
+    team: usize,
+    /// Centre, on the floor.
+    pos: Vec3,
+    /// The way the wall faces (unit, flat). The wall runs across it.
+    normal: Vec3,
+    half_len: f32,
+    hp: f32,
+    max_hp: f32,
+    life: f32,
+    gold: bool,
+    bunker: bool,
+    gate: bool,
+    ent: Option<Entity>,
+}
+
+const WALL_H: f32 = 2.0;
+const WALL_HALF_T: f32 = 0.2;
+/// Bunker walls stand this far from the pad's centre.
+const BUNKER_R: f32 = 2.6;
+/// The bunker's gap, in the side facing the arena.
+const GAP_HALF: f32 = 1.0;
+
+impl Wall {
+    /// (along the wall, out from its face) for a floor point.
+    fn local(&self, p: Vec2) -> (f32, f32) {
+        let d = p - self.pos.xz();
+        let n = self.normal.xz();
+        (d.dot(Vec2::new(-n.y, n.x)), d.dot(n))
+    }
+    fn touches(&self, p: Vec2, r: f32) -> bool {
+        let (along, across) = self.local(p);
+        along.abs() < self.half_len + r * 0.5 && across.abs() < WALL_HALF_T + r
+    }
+    /// Pushes a circle out of the wall's face. Returns the push normal.
+    fn push_out(&self, p: &mut Vec2, r: f32) -> Option<Vec2> {
+        if !self.touches(*p, r) {
+            return None;
+        }
+        let (_, across) = self.local(*p);
+        let n = self.normal.xz() * if across >= 0.0 { 1.0 } else { -1.0 };
+        *p += n * (WALL_HALF_T + r - across.abs());
+        Some(n)
+    }
+    /// Whether it stops a body on `team`.
+    fn blocks_body(&self, team: usize) -> bool {
+        !self.gate || team != self.team
+    }
+    /// Whether the straight walk from `a` to `b` crosses it.
+    fn crosses(&self, a: Vec2, b: Vec2, r: f32) -> bool {
+        let n = (a.distance(b) / 0.3).ceil().max(1.0) as usize;
+        (0..=n).any(|k| self.touches(a.lerp(b, k as f32 / n as f32), r))
+    }
+    /// Distance from a floor point to the wall.
+    fn dist(&self, p: Vec2) -> f32 {
+        let (along, across) = self.local(p);
+        Vec2::new((along.abs() - self.half_len).max(0.0), (across.abs() - WALL_HALF_T).max(0.0)).length()
+    }
+}
+
+/// A kicked-open pad that's still building (build timer). Its crates are merged into one
+/// locked lump: enemy shots wear it down, and if it breaks the crates spill out.
+struct Build {
+    by: usize,
+    make: Make,
+    gold: bool,
+    ids: Vec<u32>,
+    left: f32,
+    total: f32,
+    hp: f32,
+    max_hp: f32,
+}
+
+/// Build hp per crate in it.
+const BUILD_HP: f32 = 30.0;
+
+struct Shot {
+    pos: Vec3,
+    vel: Vec3,
+    owner: Option<usize>,
+    team: usize,
+    dmg: f32,
+    /// Rockets: blast radius (0 for bullets).
+    splash: f32,
+    life: f32,
+    /// Super rapid gun: passes through this many more players.
+    pierce: u8,
+    /// The last player it hit, so a piercing shot doesn't hit them twice.
+    last: Option<usize>,
+    /// Heal shots: heal the first hurt teammate they touch (enemies take `dmg`).
+    heal: f32,
+    /// Super heal shot: bounces on to a second ally.
+    bounce: bool,
+    /// Rivets repair friendly walls.
+    rivet: bool,
+    /// Extra stun on a hit (super rivets).
+    stagger: f32,
+    /// Super rockets: split into 3 small blasts.
+    split: bool,
+    /// Super tank cannon: leaves a slow zone.
+    slow: bool,
+    ent: Option<Entity>,
+}
+
+impl Shot {
+    fn new(pos: Vec3, vel: Vec3, owner: Option<usize>, team: usize, dmg: f32, life: f32) -> Shot {
+        Shot {
+            pos,
+            vel,
+            owner,
+            team,
+            dmg,
+            splash: 0.0,
+            life,
+            pierce: 0,
+            last: None,
+            heal: 0.0,
+            bounce: false,
+            rivet: false,
+            stagger: 0.0,
+            split: false,
+            slow: false,
+            ent: None,
+        }
+    }
+}
+
+/// A grenade or med pack in flight (or a grenade lying or stuck, waiting to go off).
+struct Lob {
+    kind: TossKind,
+    pos: Vec3,
+    vel: Vec3,
+    team: usize,
+    owner: usize,
+    gold: bool,
+    fuse: f32,
+    /// A super grenade sticks to the first thing it touches: a player (and their offset),
+    /// or the floor or a wall.
+    stuck: Option<Option<(usize, Vec3)>>,
+}
+
+/// A blast: rockets, grenades and the tank cannon.
+struct Boom {
+    at: Vec3,
+    team: usize,
+    dmg: f32,
+    r: f32,
+    owner: Option<usize>,
+    split: bool,
+    slow: bool,
+}
+
+/// What a PvE camp drops when cleared.
+#[derive(Clone, Copy, PartialEq)]
+enum Drop {
+    Heal,
+    Shield,
+    /// A thrown med pack (super: it adds a shield).
+    MedPack(bool),
+    /// River objectives: a super crate (3 crates when super crates are off).
+    Super,
+}
+
+/// A neutral PvE monster guarding a camp. It fights whoever comes close or shoots it, chases
+/// within its leash, then goes home and heals.
+struct Monster {
+    home: Vec3,
+    pos: Vec3,
+    hp: f32,
+    max: f32,
+    dmg: f32,
+    drop: Drop,
+    cd: f32,
+    /// Seconds until it respawns (0 while alive).
+    respawn: f32,
+    target: Option<usize>,
+    ent: Option<Entity>,
+}
+
+impl Monster {
+    fn alive(&self) -> bool {
+        self.respawn <= 0.0
+    }
+}
+
+const LEASH: f32 = 9.0;
+
+/// A heal or shield dropped by a camp, picked up by walking over it.
+struct Pickup {
+    pos: Vec3,
+    drop: Drop,
+    life: f32,
+}
+
+/// What the pad holds right now.
+struct PadState {
+    h: [u8; 4],
+    shape: Shape,
+    ids: Vec<u32>,
+    supers: usize,
+}
+
+#[derive(Resource)]
+struct Sim {
+    /// Rule 7: holding the kick longer steps up through the recipes inside the pad.
+    hold_kick: bool,
+    /// Who's holding the kick on each pad (hold-to-choose fires on release).
+    kick_by: [Option<usize>; 2],
+    actors: Vec<Actor>,
+    crates: Vec<Crate>,
+    shots: Vec<Shot>,
+    lobs: Vec<Lob>,
+    walls: Vec<Wall>,
+    /// Slow zones from a super tank's cannon: where, radius, time left, whose.
+    zones: Vec<(Vec3, f32, f32, usize)>,
+    /// Each team's rally: seconds left (it locks out all 8 while it lasts).
+    rally: [f32; 2],
+    monsters: Vec<Monster>,
+    pickups: Vec<Pickup>,
+    /// The lanes map is on.
+    map: bool,
+    builds: [Option<Build>; 2],
+    pending: Option<Pending>,
+    next_id: u32,
+    rng: u32,
+    t: f32,
+    loot_respawn: f32,
+    super_respawn: f32,
+    msgs: Vec<(String, f32)>,
+    despawn: Vec<Entity>,
+    /// Rocket blasts to draw: where, radius, time left.
+    booms: Vec<(Vec3, f32, f32)>,
+    /// Players per team.
+    team_size: usize,
+    /// The tunables, copied from `Tune` each tick (read with `n`).
+    tv: Vec<f32>,
+    /// Which set each slot's items come from: left click, right click, 1 crate, all 8.
+    sets: [usize; 4],
+    /// The crate grammar picked in #17 (ADR 0007), fixed: by shape, readout shown, instant,
+    /// steal only, hold to choose.
+    count_only: bool,
+    shown: bool,
+    super_mode: usize,
+    build_time: f32,
+    vuln: usize,
+    /// The class you play (C cycles it); survives resets.
+    your_class: Class,
+    /// Blue's bots build pad shapes and kick them open too.
+    ally_stacks: bool,
+    /// You're in your seat (not watching a bot play it).
+    you_play: bool,
+    /// Kick-open progress on each pad, and who kicked it this tick.
+    pad_kick: [f32; 2],
+    kicking: [Option<usize>; 2],
+    /// How long each pad has held crates that make no recipe.
+    odd_t: [f32; 2],
+    /// How long each pad's recipe has stayed the same, and what it was.
+    pad_t: [f32; 2],
+    last_shape: [Shape; 2],
+    /// Crates spent on pad recipes: they still count for the score.
+    banked: [usize; 2],
+    /// What each team made this match.
+    made: [Vec<String>; 2],
+    match_left: f32,
+    /// Counts down the end-of-match result screen.
+    over: f32,
+    /// Match results, printed with P. Survives resets.
+    log: Vec<String>,
+    // Stats.
+    fired: u32,
+    hits: u32,
+    kills: [u32; 2],
+    /// Crates knocked or spilled off each team's pad by enemy hits.
+    lost: [u32; 2],
+    /// Builds broken on each team's pad.
+    broken: [u32; 2],
+    /// Players each team lost to PvE monsters.
+    pve_deaths: [u32; 2],
+    /// Crates stolen off each team's pad, and how many of those while its bunker was up.
+    stolen: [u32; 2],
+    stolen_bunkered: [u32; 2],
+    /// Seconds each team's bunker stood, and the damage its walls took.
+    bunker_time: [f32; 2],
+    wall_dmg: [f32; 2],
+    /// Wall hp repaired by rivets and patch kits.
+    repaired: [f32; 2],
+    /// Heals picked up from heal camps, and from med packs.
+    camp_heals: [u32; 2],
+    pack_heals: [u32; 2],
+    /// Shots fired with each team's crafted left-click guns, and with the standard gun.
+    crafted_shots: [u32; 2],
+    plain_shots: [u32; 2],
+}
+
+/// Vulnerability options (key 6).
+const STEAL: usize = 0;
+const SPLIT: usize = 1;
+const SPILL: usize = 2;
+const LOCK: usize = 3;
+
+impl Sim {
+    fn new(tune: &Tune) -> Self {
+        let mut s = Sim {
+            actors: Vec::new(),
+            crates: Vec::new(),
+            shots: Vec::new(),
+            lobs: Vec::new(),
+            walls: Vec::new(),
+            zones: Vec::new(),
+            rally: [0.0; 2],
+            monsters: Vec::new(),
+            pickups: Vec::new(),
+            map: true,
+            builds: [None, None],
+            pending: None,
+            next_id: 1,
+            rng: 0x2545_f491,
+            t: 0.0,
+            loot_respawn: 0.0,
+            super_respawn: 0.0,
+            msgs: Vec::new(),
+            despawn: Vec::new(),
+            booms: Vec::new(),
+            team_size: 0,
+            tv: Vec::new(),
+            sets: [0; 4],
+            count_only: false,
+            shown: true,
+            super_mode: 0,
+            build_time: 0.0,
+            vuln: STEAL,
+            your_class: Class::Soldier,
+            ally_stacks: false,
+            you_play: true,
+            pad_kick: [0.0; 2],
+            hold_kick: false,
+            kick_by: [None; 2],
+            kicking: [None; 2],
+            odd_t: [0.0; 2],
+            pad_t: [0.0; 2],
+            last_shape: [Shape::Empty; 2],
+            banked: [0; 2],
+            made: [Vec::new(), Vec::new()],
+            match_left: 0.0,
+            over: 0.0,
+            log: Vec::new(),
+            fired: 0,
+            hits: 0,
+            kills: [0; 2],
+            lost: [0; 2],
+            broken: [0; 2],
+            pve_deaths: [0; 2],
+            stolen: [0; 2],
+            stolen_bunkered: [0; 2],
+            bunker_time: [0.0; 2],
+            wall_dmg: [0.0; 2],
+            repaired: [0.0; 2],
+            camp_heals: [0; 2],
+            pack_heals: [0; 2],
+            crafted_shots: [0; 2],
+            plain_shots: [0; 2],
+        };
+        s.reset(tune);
+        s
+    }
+
+    fn rules(&mut self, tune: &Tune) {
+        self.tv = tune.vals.iter().map(|p| match p.value {
+            Value::Num { v, .. } => v,
+            Value::Choice { i, .. } => i as f32,
+        }).collect();
+        self.sets = [P::LeftSet, P::RightSet, P::SmallSet, P::All8Set].map(|p| tune.c(p));
+        self.count_only = false;
+        self.shown = true;
+        self.super_mode = tune.c(P::Super);
+        self.build_time = 0.0;
+        self.vuln = STEAL;
+        self.hold_kick = true;
+    }
+
+    /// A tunable's value.
+    fn n(&self, p: P) -> f32 {
+        self.tv[p as usize]
+    }
+
+    /// Super strength, for a super item.
+    fn k(&self, gold: bool) -> f32 {
+        if gold { self.n(P::SuperStrength) } else { 1.0 }
+    }
+
+    fn reset(&mut self, tune: &Tune) {
+        for c in self.crates.drain(..) {
+            self.despawn.extend(c.ent);
+        }
+        self.lobs.clear();
+        self.zones.clear();
+        self.rally = [0.0; 2];
+        for w in self.walls.drain(..) {
+            self.despawn.extend(w.ent);
+        }
+        for m in self.monsters.drain(..) {
+            self.despawn.extend(m.ent);
+        }
+        self.pickups.clear();
+        self.map = tune.c(P::Map) == 0;
+        MAP_ON.store(self.map, Ordering::Relaxed);
+        for sh in self.shots.drain(..) {
+            self.despawn.extend(sh.ent);
+        }
+        for a in self.actors.drain(..) {
+            self.despawn.extend(a.ent);
+        }
+        self.rules(tune);
+        self.builds = [None, None];
+        self.pending = None;
+        self.team_size = tune.c(P::TeamSize);
+        set_arena(self.team_size, 130.0);
+        self.banked = [0; 2];
+        self.made = [Vec::new(), Vec::new()];
+        self.pad_kick = [0.0; 2];
+        self.odd_t = [0.0; 2];
+        self.pad_t = [0.0; 2];
+        self.super_respawn = 15.0;
+        for team in 0..2 {
+            for slot in 0..self.team_size {
+                self.actors.push(Actor::new(team, slot));
+            }
+        }
+        for i in 0..self.actors.len() {
+            let p = self.spawn_point(i);
+            let a = &mut self.actors[i];
+            a.pos = p;
+            a.facing = Vec3::X * toward_centre(a.team);
+            // Each team starts with one player; the rest join from pad recipes.
+            if a.slot > 0 {
+                a.dead = f32::INFINITY;
+            }
+        }
+        self.actors[YOU].class = self.your_class;
+        if self.map {
+            self.reset_map();
+        } else {
+            self.reset_open();
+        }
+        self.match_left = tune.f(P::MatchLength);
+        self.over = 0.0;
+        self.fired = 0;
+        self.hits = 0;
+        self.kills = [0; 2];
+        self.lost = [0; 2];
+        self.broken = [0; 2];
+        self.pve_deaths = [0; 2];
+        self.stolen = [0; 2];
+        self.stolen_bunkered = [0; 2];
+        self.bunker_time = [0.0; 2];
+        self.wall_dmg = [0.0; 2];
+        self.repaired = [0.0; 2];
+        self.camp_heals = [0; 2];
+        self.pack_heals = [0; 2];
+        self.crafted_shots = [0; 2];
+        self.plain_shots = [0; 2];
+    }
+
+    /// Lanes map: crates along the lanes, in the river and by the camps; a camp in each
+    /// jungle quadrant (heal on the north side, shield on the south) and a river objective
+    /// north and south.
+    fn reset_map(&mut self) {
+        let mut spots = Vec::new();
+        for x in [-24.0, -12.0, 0.0, 12.0, 24.0] {
+            spots.push(Vec2::new(x, 21.6));
+            spots.push(Vec2::new(x, -21.6));
+        }
+        for x in [-22.0, -11.0, 11.0, 22.0] {
+            spots.push(Vec2::new(x, 0.0));
+        }
+        for sx in [-1.0, 1.0] {
+            for sz in [-1.0, 1.0] {
+                spots.push(Vec2::new(14.0 * sx, 13.0 * sz));
+                spots.push(Vec2::new(19.0 * sx, 8.0 * sz));
+            }
+        }
+        spots.extend([Vec2::new(0.0, 6.0), Vec2::new(0.0, -6.0), Vec2::new(-1.6, 1.6), Vec2::new(1.6, -1.6)]);
+        for p in spots {
+            let p = (p / CRATE).round() * CRATE;
+            self.spawn_crate(Kind::Normal, p.extend(HALF).xzy());
+        }
+        self.spawn_crate(Kind::Loot, Vec3::new(0.0, HALF, 12.0));
+        self.spawn_crate(Kind::Loot, Vec3::new(0.0, HALF, -12.0));
+        for sx in [-1.0f32, 1.0] {
+            for sz in [-1.0f32, 1.0] {
+                let drop = if sz > 0.0 { Drop::Heal } else { Drop::Shield };
+                self.add_monster(Vec3::new(17.0 * sx, 0.0, 11.0 * sz), 200.0, 8.0, drop);
+            }
+        }
+        self.add_monster(Vec3::new(0.0, 0.0, 15.0), 320.0, 12.0, Drop::Super);
+        self.add_monster(Vec3::new(0.0, 0.0, -15.0), 320.0, 12.0, Drop::Super);
+    }
+
+    fn add_monster(&mut self, home: Vec3, hp: f32, dmg: f32, drop: Drop) {
+        self.monsters.push(Monster { home, pos: home, hp, max: hp, dmg, drop, cd: 0.0, respawn: 0.0, target: None, ent: None });
+    }
+
+    /// Open arena (#10): starting crates in a grid across the middle.
+    fn reset_open(&mut self) {
+        let (k, a) = (arena_scale(), arena());
+        let count = 6 + 3 * self.team_size;
+        let rows = count.div_ceil(6);
+        let dz = (3.2 * k).min(a.y * 1.6 / rows as f32);
+        for i in 0..count {
+            let x = ((i % 6) as f32 - 2.5) * 3.2 * k;
+            let z = ((i / 6) as f32 - (rows as f32 - 1.0) / 2.0) * dz;
+            self.spawn_crate(Kind::Normal, Vec3::new(x, HALF, z));
+        }
+        self.spawn_crate(Kind::Loot, Vec3::new(0.0, HALF, -0.4));
+        self.spawn_crate(Kind::Loot, Vec3::new(0.0, HALF, a.y * 0.75));
+    }
+
+    /// Players start in a line in front of their pad.
+    fn spawn_point(&self, i: usize) -> Vec3 {
+        let a = &self.actors[i];
+        let n = self.team_size.max(1) as f32;
+        let gap = (arena().y * 1.6 / n).min(3.2);
+        let lane = (a.slot as f32 - (n - 1.0) / 2.0) * gap;
+        Vec3::new(pads()[a.team].x + toward_centre(a.team) * 4.0, 0.0, lane)
+    }
+
+    fn rand(&mut self) -> f32 {
+        self.rng ^= self.rng << 13;
+        self.rng ^= self.rng >> 17;
+        self.rng ^= self.rng << 5;
+        (self.rng % 10_000) as f32 / 10_000.0
+    }
+
+    fn spawn_crate(&mut self, kind: Kind, pos: Vec3) -> u32 {
+        let id = self.next_id;
+        self.next_id += 1;
+        self.crates.push(Crate {
+            id,
+            kind,
+            pos,
+            vel: Vec3::ZERO,
+            state: CrateState::Free,
+            kick: 0.0,
+            thrown_by: None,
+            placed_by: None,
+            settling: false,
+            locked: false,
+            ent: None,
+        });
+        id
+    }
+
+    fn crate_mut(&mut self, id: u32) -> Option<&mut Crate> {
+        self.crates.iter_mut().find(|c| c.id == id)
+    }
+
+    fn say(&mut self, s: impl Into<String>) {
+        self.msgs.push((s.into(), 3.5));
+        if self.msgs.len() > 6 {
+            self.msgs.remove(0);
+        }
+    }
+
+    fn release(&mut self, who: usize, vel: Vec3, offset: Vec3) {
+        let Some(id) = self.actors[who].carrying.take() else { return };
+        let head = self.actors[who].pos + Vec3::Y * HEAD + offset;
+        if let Some(c) = self.crate_mut(id) {
+            c.state = CrateState::Free;
+            c.pos = head;
+            c.vel = vel;
+            c.thrown_by = if vel.length() > 4.0 { Some(who) } else { None };
+            c.placed_by = Some(who);
+        }
+    }
+
+    fn place_target(&self, who: usize) -> Vec3 {
+        let a = &self.actors[who];
+        self.target_at((a.pos + a.facing * 1.1).xz())
+    }
+
+    /// The landing centre for a crate aimed at `want`: its grid cell, on top of whatever is in it.
+    fn target_at(&self, want: Vec2) -> Vec3 {
+        let free = || self.crates.iter().filter(|c| c.state == CrateState::Free);
+        let cell = (want / CRATE).round() * CRATE;
+        let xz = free()
+            .map(|c| c.pos.xz())
+            .filter(|p| p.distance(want) < HALF && p.distance(cell) > 0.05)
+            .min_by(|x, y| x.distance(want).total_cmp(&y.distance(want)))
+            .unwrap_or(cell);
+        let top = free()
+            .filter(|c| (c.pos.x - xz.x).abs() < CRATE * 0.9 && (c.pos.z - xz.y).abs() < CRATE * 0.9)
+            .map(|c| c.pos.y + HALF)
+            .fold(0.0, f32::max);
+        Vec3::new(xz.x, top + HALF, xz.y)
+    }
+
+    /// The heights of a pad's 4 cells, the recipe they make, and the crates in it.
+    fn pad_state(&self, team: usize) -> PadState {
+        let cells = pad_cells(team);
+        let mut st = PadState { h: [0; 4], shape: Shape::Empty, ids: Vec::new(), supers: 0 };
+        if self.builds[team].is_some() {
+            st.shape = Shape::Busy;
+            return st;
+        }
+        let mut odd = false;
+        for c in self.crates.iter().filter(|c| c.state == CrateState::Free && c.kind.builds()) {
+            if !pad_contains(pads()[team], c.pos) {
+                continue;
+            }
+            st.ids.push(c.id);
+            if c.kind == Kind::Super {
+                st.supers += 1;
+            }
+            let cell = cells.iter().position(|q| q.distance(c.pos.xz()) < 0.1);
+            let level = ((c.pos.y - HALF) / CRATE).round() as u8;
+            match cell {
+                Some(k) if c.vel.length() < 0.1 && (c.pos.y - HALF - level as f32 * CRATE).abs() < 0.05 && level < 2 => {
+                    st.h[k] += 1;
+                }
+                _ => odd = true,
+            }
+        }
+        st.shape = if odd { Shape::Unaligned } else { shape_of(st.h, self.count_only) };
+        st
+    }
+
+    /// What `team`'s pad makes if `by` kicks it open now, and whether a super crate
+    /// upgrades it.
+    fn pad_make(&self, team: usize, by: usize) -> Option<(Make, bool)> {
+        self.pad_make_as(team, self.actors[by].class)
+    }
+
+    /// What the pad makes if a player of `class` kicks it (the class only matters when
+    /// stacks build by class).
+    fn pad_make_as(&self, team: usize, class: Class) -> Option<(Make, bool)> {
+        let st = self.pad_state(team);
+        let Shape::Recipe(slot) = st.shape else { return None };
+        Some(self.make_for(slot, st.supers, class))
+    }
+
+    /// What a recipe makes for a kicker of `class`, and whether a super crate upgrades it.
+    fn make_for(&self, slot: Slot, supers: usize, class: Class) -> (Make, bool) {
+        (item_of(slot, class, self.sets), supers > 0 && self.super_mode > 0)
+    }
+
+    /// The team's all 8 that's still out, if any: no new all 8 until it ends.
+    fn capstone(&self, team: usize) -> Option<String> {
+        if let Some(t) = self.actors.iter().filter(|a| a.team == team && a.alive()).find_map(|a| a.tank) {
+            return Some(format!("tank {:.0} s", t.life.max(0.0)));
+        }
+        if let Some(w) = self.walls.iter().find(|w| w.team == team && w.bunker) {
+            return Some(format!("bunker {:.0} s", w.life.max(0.0)));
+        }
+        (self.rally[team] > 0.0).then(|| format!("rally {:.0} s", self.rally[team]))
+    }
+
+    /// Hold-to-choose (rule 7): the recipes inside `team`'s pad that can open now, smallest
+    /// first (player recipes only while the team has room).
+    fn stages(&self, team: usize) -> Vec<(Slot, [u8; 4])> {
+        let st = self.pad_state(team);
+        if matches!(st.shape, Shape::Empty | Shape::Unaligned | Shape::Busy) {
+            return Vec::new();
+        }
+        let room = self.players(team) < self.team_size;
+        let locked = self.capstone(team).is_some();
+        sub_recipes(st.h, self.count_only)
+            .into_iter()
+            .filter(|(slot, _)| room || !matches!(slot, Slot::Player1 | Slot::Player2))
+            .filter(|(slot, _)| !(locked && *slot == Slot::All8))
+            .collect()
+    }
+
+    /// The crates a stage uses: the top `take[k]` crates of each cell.
+    fn stage_ids(&self, team: usize, take: [u8; 4]) -> Vec<u32> {
+        let cells = pad_cells(team);
+        let mut ids = Vec::new();
+        for k in 0..4 {
+            let mut here: Vec<&Crate> = self
+                .crates
+                .iter()
+                .filter(|c| c.state == CrateState::Free && c.kind.builds() && c.pos.xz().distance(cells[k]) < 0.1)
+                .collect();
+            here.sort_by(|a, b| b.pos.y.total_cmp(&a.pos.y));
+            ids.extend(here.iter().take(take[k] as usize).map(|c| c.id));
+        }
+        ids
+    }
+
+    /// Which stage a held kick has reached, if any.
+    fn stage_at(&self, team: usize, n: usize) -> Option<usize> {
+        let t = self.pad_kick[team];
+        (n > 0 && t >= HOLD_FIRST).then(|| (((t - HOLD_FIRST) / HOLD_STEP) as usize).min(n - 1))
+    }
+
+    /// Whether `team` can open its pad: the shape is a recipe, and there's room for any
+    /// players it brings.
+    fn can_open(&self, team: usize, shape: Shape) -> bool {
+        matches!(shape, Shape::Recipe(_)) && (shape.players() == 0 || self.players(team) < self.team_size)
+    }
+
+    /// Where bot `i` sets its crate down on its pad: the cell that best builds toward a
+    /// recipe (players while the team has room, else a big recipe). None when the pad is full.
+    fn pad_cell(&self, i: usize) -> Option<Vec3> {
+        let team = self.actors[i].team;
+        let st = self.pad_state(team);
+        if matches!(st.shape, Shape::Unaligned | Shape::Busy) {
+            return None;
+        }
+        let h = st.h;
+        let builds = team == 1 || self.ally_stacks || i == YOU;
+        let room = if builds { self.team_size - self.players(team) } else { 0 };
+        let co = self.count_only;
+        let score = |h: [u8; 4]| -> i32 {
+            let total: u8 = h.iter().sum();
+            match shape_of(h, co) {
+                Shape::Recipe(Slot::Player1) if room >= 1 => 100,
+                Shape::Recipe(Slot::Player2) if room >= 2 => 95,
+                Shape::Recipe(Slot::All8) => 70,
+                Shape::Recipe(Slot::Flat4) => 60,
+                Shape::Recipe(Slot::Pair) => 20,
+                Shape::Recipe(Slot::Small) => 10,
+                _ if total == 3 && !co => {
+                    let twos: Vec<usize> = (0..4).filter(|&k| h[k] == 2).collect();
+                    let ones: Vec<usize> = (0..4).filter(|&k| h[k] == 1).collect();
+                    match (twos.as_slice(), ones.as_slice()) {
+                        ([t], [o]) if room >= 2 && adjacent(*t, *o) => 50,
+                        ([], [_, _, _]) => 40,
+                        _ => 1,
+                    }
+                }
+                _ if total > 4 => 30 + total as i32,
+                _ => 1,
+            }
+        };
+        let cells = pad_cells(team);
+        (0..4)
+            .filter(|&k| h[k] < 2)
+            .max_by_key(|&k| {
+                let mut next = h;
+                next[k] += 1;
+                score(next)
+            })
+            .map(|k| Vec3::new(cells[k].x, HALF + h[k] as f32 * CRATE, cells[k].y))
+    }
+
+    /// Kicks `team`'s pad open. A recipe builds (instantly, or over the build timer); a pad
+    /// with a crate out of line just breaks.
+    fn open_pad(&mut self, team: usize, by: usize) {
+        let st = self.pad_state(team);
+        let side = ["BLUE", "RED"][team];
+        let who = if by == YOU { "YOU".to_string() } else { self.describe(by) };
+        let Some((make, gold)) = self.pad_make(team, by) else {
+            // Unaligned: the crates are broken and used up.
+            self.use_up(&st.ids, team);
+            self.say(format!("{side} pad kicked by {who}: crates out of line, broken for nothing"));
+            return;
+        };
+        let Shape::Recipe(slot) = st.shape else { return };
+        self.open_recipe(team, by, slot, st.ids, make, gold);
+    }
+
+    /// Hold-to-choose (rule 7): opens one recipe inside the pad, using only its crates.
+    fn open_stage(&mut self, team: usize, by: usize, slot: Slot, take: [u8; 4]) {
+        let ids = self.stage_ids(team, take);
+        let supers = self.crates.iter().filter(|c| ids.contains(&c.id) && c.kind == Kind::Super).count();
+        let (make, gold) = self.make_for(slot, supers, self.actors[by].class);
+        self.open_recipe(team, by, slot, ids, make, gold);
+    }
+
+    fn open_recipe(&mut self, team: usize, by: usize, slot: Slot, ids: Vec<u32>, make: Make, gold: bool) {
+        let side = ["BLUE", "RED"][team];
+        let who = if by == YOU { "YOU".to_string() } else { self.describe(by) };
+        let label = slot.label(self.count_only);
+        let class = if !matches!(make, Make::Players(_)) { format!("{} ", self.actors[by].class.name()) } else { String::new() };
+        let what = format!("{class}{}", make.label(gold));
+        if self.build_time > 0.0 {
+            let n = ids.len() as f32;
+            for c in self.crates.iter_mut().filter(|c| ids.contains(&c.id)) {
+                c.locked = true;
+                c.vel = Vec3::ZERO;
+            }
+            let total = self.build_time * n;
+            self.builds[team] = Some(Build {
+                by,
+                make,
+                gold,
+                ids,
+                left: total,
+                total,
+                hp: BUILD_HP * n,
+                max_hp: BUILD_HP * n,
+            });
+            let msg = format!("{side} pad kicked open by {who}: {label} -> building {what} ({total:.0} s)");
+            println!("t={:.1}s {msg}", self.t);
+            self.say(msg);
+            return;
+        }
+        self.use_up(&ids, team);
+        self.made[team].push(what.clone());
+        let msg = format!("{side} pad kicked open by {who}: {label} -> {what}");
+        println!("t={:.1}s {msg}", self.t);
+        self.say(msg);
+        self.apply(team, by, make, gold);
+    }
+
+    /// Removes a pad's crates once they're spent; they still count for the score.
+    fn use_up(&mut self, ids: &[u32], team: usize) {
+        self.crates.retain(|c| {
+            let used = ids.contains(&c.id);
+            if used {
+                self.despawn.extend(c.ent);
+            }
+            !used
+        });
+        self.banked[team] += ids.len();
+    }
+
+    /// A build timer finished: the result comes out.
+    fn finish_build(&mut self, team: usize) {
+        let Some(b) = self.builds[team].take() else { return };
+        self.use_up(&b.ids, team);
+        let class = if !matches!(b.make, Make::Players(_)) { format!("{} ", self.actors[b.by].class.name()) } else { String::new() };
+        let what = format!("{class}{}", b.make.label(b.gold));
+        self.made[team].push(what.clone());
+        let msg = format!("{} pad finished building: {what}", ["BLUE", "RED"][team]);
+        println!("t={:.1}s {msg}", self.t);
+        self.say(msg);
+        self.apply(team, b.by, b.make, b.gold);
+    }
+
+    /// A build was shot apart: its crates spill out, loose.
+    fn break_build(&mut self, team: usize) {
+        let Some(b) = self.builds[team].take() else { return };
+        self.broken[team] += 1;
+        let pad = pads()[team];
+        for k in 0..b.ids.len() {
+            let a = k as f32 * 2.4 + self.rand();
+            if let Some(c) = self.crate_mut(b.ids[k]) {
+                c.locked = false;
+                let out = (c.pos.xz() - pad).normalize_or(Vec2::from_angle(a));
+                c.vel = Vec3::new(out.x * 4.0, 4.0, out.y * 4.0);
+            }
+        }
+        let msg = format!("{} build BROKEN before it finished ({} lost): crates spilled", ["BLUE", "RED"][team], b.make.name());
+        println!("t={:.1}s {msg}", self.t);
+        self.say(msg);
+    }
+
+    /// Gives `team` what a recipe makes. Items go to whoever kicked it open (or a living
+    /// teammate if they're down).
+    fn apply(&mut self, team: usize, by: usize, make: Make, gold: bool) {
+        let by = if self.actors[by].alive() {
+            Some(by)
+        } else {
+            (0..self.actors.len()).find(|&j| self.actors[j].team == team && self.actors[j].alive())
+        };
+        let pad = pads()[team];
+        let front = Vec3::new(pad.x + toward_centre(team) * 1.6, 0.0, pad.y);
+        let k = self.k(gold);
+        let Some(b) = by else { return self.join_players(team, front, make, gold) };
+        match make {
+            Make::Players(_) => self.join_players(team, front, make, gold),
+            Make::Gun(kind) => self.actors[b].gun = Some(self.new_gun(kind, gold)),
+            Make::Alt(kind) => self.actors[b].alt = Some(self.new_alt(kind, gold)),
+            Make::Toss(kind) => self.actors[b].toss = Some((kind, gold)),
+            Make::PatchKit => {
+                // +1 right-click charge if one is missing, else hp back on your nearest wall.
+                let pos = self.actors[b].pos;
+                let charges = if gold { 2 } else { 1 };
+                let wall = (0..self.walls.len())
+                    .filter(|&w| self.walls[w].team == team && !self.walls[w].gate && self.walls[w].hp < self.walls[w].max_hp)
+                    .min_by(|&x, &y| self.walls[x].dist(pos.xz()).total_cmp(&self.walls[y].dist(pos.xz())));
+                let what = match (&mut self.actors[b].alt, wall) {
+                    (Some(alt), _) if alt.charges < alt.max => {
+                        alt.charges = (alt.charges + charges).min(alt.max);
+                        format!("+{charges} right-click charge")
+                    }
+                    (_, Some(w)) => {
+                        let w = &mut self.walls[w];
+                        let add = (self.tv[P::PatchHp as usize] * k).min(w.max_hp - w.hp);
+                        w.hp += add;
+                        self.repaired[team] += add;
+                        format!("+{add:.0} hp on a wall")
+                    }
+                    (Some(alt), None) => {
+                        // Nothing to fix: the charge goes over the top.
+                        alt.charges += charges;
+                        format!("+{charges} right-click charge (over full)")
+                    }
+                    (None, None) => "nothing to patch: no right-click item and no hurt wall".to_string(),
+                };
+                let who = if b == YOU { "you".to_string() } else { self.describe(b) };
+                self.say(format!("patch kit ({who}): {what}"));
+            }
+            Make::Refill => {
+                // Set B: left click to full, right click +1 (super: both to full); +25 hp if
+                // you hold neither.
+                let a = &mut self.actors[b];
+                let held = a.gun.is_some() || a.alt.is_some();
+                if let Some(g) = &mut a.gun {
+                    g.ammo = g.max;
+                }
+                if let Some(alt) = &mut a.alt {
+                    alt.charges = if gold { alt.max } else { (alt.charges + 1).min(alt.max) };
+                }
+                if !held {
+                    a.hp = (a.hp + self.tv[P::RefillHp as usize] * k).min(100.0);
+                }
+            }
+            Make::Tank => {
+                let hp = self.n(P::TankHp) * if gold { 1.5 } else { 1.0 };
+                let life = self.n(P::TankTime);
+                let a = &mut self.actors[b];
+                a.tank = Some(Tank { hp, max: hp, life, gold });
+                a.gun = None;
+                if a.carrying.is_some() {
+                    self.release(b, Vec3::Y, Vec3::ZERO);
+                }
+            }
+            Make::Bunker => self.add_bunker(team, gold),
+            Make::Rally => {
+                let shield = if gold { 100.0 } else { self.n(P::RallyShield) };
+                let t = self.n(P::RallyInvuln);
+                for a in self.actors.iter_mut().filter(|a| a.team == team && a.alive()) {
+                    a.hp = 100.0;
+                    a.shield = a.shield.max(shield);
+                    if gold {
+                        a.slow = 0.0;
+                        a.slow_immune = t;
+                    }
+                    self.booms.push((a.pos + Vec3::Y, 1.2, 0.5));
+                }
+                self.actors[b].invuln = t;
+                // The rally's lockout lasts as long as the medic is invulnerable.
+                self.rally[team] = t.max(0.5);
+            }
+        }
+    }
+
+    fn join_players(&mut self, team: usize, front: Vec3, make: Make, gold: bool) {
+        let Make::Players(n) = make else { return };
+        for m in 0..n {
+            let Some(slot) = (0..self.actors.len()).find(|&j| self.actors[j].team == team && self.actors[j].dead.is_infinite())
+            else {
+                break;
+            };
+            let gun = gold.then(|| self.new_gun(GunKind::Rapid, true));
+            let p = &mut self.actors[slot];
+            p.dead = 0.0;
+            p.hp = 100.0;
+            p.pos = front + Vec3::Z * (m as f32 * 1.2 - 0.6);
+            p.vel = Vec3::ZERO;
+            p.hist.clear();
+            p.gun = gun;
+        }
+        let n = self.players(team);
+        self.say(format!("{} has {n}/{} players", ["BLUE", "RED"][team], self.team_size));
+    }
+
+    fn new_gun(&self, kind: GunKind, gold: bool) -> Gun {
+        let ammo = match kind {
+            GunKind::Rapid => self.n(P::RapidRounds),
+            GunKind::Rivet => self.n(P::Rivets),
+            GunKind::Heal => self.n(P::HealShots),
+        } as u32;
+        Gun { kind, ammo, max: ammo, gold }
+    }
+
+    fn new_alt(&self, kind: AltKind, gold: bool) -> Alt {
+        let n = match kind {
+            AltKind::Rockets => self.n(P::RocketCharges),
+            AltKind::ShieldWall => self.n(P::WallCharges),
+            AltKind::Pulse => self.n(P::PulseCharges),
+        } as u32;
+        Alt { kind, charges: n, max: n, gold }
+    }
+
+    /// A shield wall `half_len` wide, facing `normal`.
+    fn add_wall(&mut self, team: usize, pos: Vec3, normal: Vec3, half_len: f32, hp: f32, life: f32, gold: bool, bunker: bool, gate: bool) {
+        self.walls.push(Wall { team, pos: pos.with_y(0.0), normal, half_len, hp, max_hp: hp, life, gold, bunker, gate, ent: None });
+    }
+
+    /// The engineer's all 8: three full sides round the pad and the side facing the arena
+    /// with a gap in the middle. Super: a gate fills the gap that only enemies can't pass.
+    fn add_bunker(&mut self, team: usize, gold: bool) {
+        let p = pads()[team].extend(0.0).xzy();
+        let t = toward_centre(team);
+        let (hp, life) = (self.n(P::BunkerHp) * self.k(gold), self.n(P::BunkerLife));
+        let r = BUNKER_R;
+        self.add_wall(team, p - Vec3::X * t * r, Vec3::X, r + WALL_HALF_T, hp, life, gold, true, false);
+        self.add_wall(team, p + Vec3::Z * r, Vec3::Z, r + WALL_HALF_T, hp, life, gold, true, false);
+        self.add_wall(team, p - Vec3::Z * r, Vec3::Z, r + WALL_HALF_T, hp, life, gold, true, false);
+        let side = (r - GAP_HALF) / 2.0;
+        for sz in [-1.0, 1.0] {
+            let at = p + Vec3::X * t * r + Vec3::Z * sz * (GAP_HALF + side);
+            self.add_wall(team, at, Vec3::X, side + WALL_HALF_T, hp, life, gold, true, false);
+        }
+        if gold {
+            self.add_wall(team, p + Vec3::X * t * r, Vec3::X, GAP_HALF, hp, life, gold, true, true);
+        }
+    }
+
+    fn place(&mut self, who: usize, at: Vec3) {
+        let Some(id) = self.actors[who].carrying.take() else { return };
+        if let Some(c) = self.crate_mut(id) {
+            c.state = CrateState::Free;
+            c.pos = at;
+            c.vel = Vec3::ZERO;
+            c.thrown_by = None;
+            c.placed_by = Some(who);
+        }
+    }
+
+    fn take(&mut self, who: usize, id: u32) {
+        let from = self.crate_mut(id).map(|c| c.pos).unwrap_or_default();
+        let enemy = 1 - self.actors[who].team;
+        if pad_contains(pads()[enemy], from) {
+            self.stolen[enemy] += 1;
+            if self.walls.iter().any(|w| w.team == enemy && w.bunker) {
+                self.stolen_bunkered[enemy] += 1;
+            }
+        }
+        if let Some(c) = self.crate_mut(id) {
+            c.state = CrateState::Carried { by: who, lift_from: from, lift_t: 0.0 };
+            c.vel = Vec3::ZERO;
+            c.thrown_by = None;
+        }
+        self.actors[who].carrying = Some(id);
+        self.actors[who].claim = None;
+    }
+
+    fn nearest_free(&self, who: usize, reach: f32) -> Option<(u32, f32)> {
+        let a = &self.actors[who];
+        self.crates
+            .iter()
+            .filter(|c| c.loose() && c.kind.builds())
+            .filter(|c| c.pos.y - a.pos.y < 3.0)
+            .map(|c| (c.id, c.pos.xz().distance(a.pos.xz())))
+            .filter(|(_, d)| *d <= reach + HALF)
+            .min_by(|a, b| a.1.total_cmp(&b.1))
+    }
+
+    fn hurt(&mut self, who: usize, amount: f32, knock: Vec3, by: Option<usize>, by_team: usize) {
+        if !self.actors[who].alive() || self.actors[who].invuln > 0.0 {
+            return;
+        }
+        // A tank soaks hits until it's destroyed; the driver comes out unhurt.
+        if let Some(tank) = &mut self.actors[who].tank {
+            tank.hp -= amount;
+            if tank.hp <= 0.0 {
+                self.actors[who].tank = None;
+                let what = self.describe(who);
+                self.say(format!("{what}'s tank destroyed"));
+            }
+            return;
+        }
+        // A shield soaks damage first.
+        let a = &mut self.actors[who];
+        let soaked = a.shield.min(amount);
+        a.shield -= soaked;
+        let amount = amount - soaked;
+        // Core feel: a hit knocks the crate loose.
+        if self.actors[who].carrying.is_some() {
+            self.release(who, knock * 0.3 + Vec3::Y * 2.0, Vec3::ZERO);
+        }
+        let a = &mut self.actors[who];
+        a.vel += knock;
+        a.stun = a.stun.max(0.15);
+        a.hp -= amount;
+        if a.hp > 0.0 {
+            return;
+        }
+        // A team's first player respawns; anyone who joined from the pad is out until the
+        // team opens another player recipe.
+        let first = a.slot == 0;
+        a.dead = if first { 3.0 } else { f32::INFINITY };
+        a.claim = None;
+        a.gun = None;
+        a.alt = None;
+        a.toss = None;
+        a.shield = 0.0;
+        a.slow = 0.0;
+        // by_team 2 is a PvE monster.
+        if by_team < 2 {
+            self.kills[by_team] += 1;
+        } else {
+            self.pve_deaths[a.team] += 1;
+        }
+        let what = self.describe(who);
+        if who == YOU {
+            self.pending = None;
+            self.say("you're down (3 s)");
+        } else if !first {
+            let how = if by == Some(YOU) { "you knocked out" } else { "out:" };
+            self.say(format!("{how} {what}"));
+        } else if by == Some(YOU) {
+            self.say(format!("you downed {what}"));
+        }
+    }
+
+    fn describe(&self, i: usize) -> String {
+        let a = &self.actors[i];
+        let team = ["blue", "red"][a.team];
+        if i == YOU { "you".into() } else { format!("{team} player {}", a.slot + 1) }
+    }
+
+    /// Players on the team: everyone who has joined, alive or waiting to respawn.
+    fn players(&self, team: usize) -> usize {
+        self.actors.iter().filter(|a| a.team == team && !a.dead.is_infinite()).count()
+    }
+
+    /// Crates resting on the team's pad, plus crates spent there on recipes.
+    fn score(&self, team: usize) -> usize {
+        let on_pad = self
+            .crates
+            .iter()
+            .filter(|c| c.state == CrateState::Free && c.kind.builds() && pad_contains(pads()[team], c.pos))
+            .filter(|c| self.builds[team].as_ref().is_none_or(|b| !b.ids.contains(&c.id)))
+            .count();
+        on_pad + self.banked[team]
+    }
+
+    /// An enemy hit lands on `team`'s pad at `at`: a build loses hp; otherwise the
+    /// vulnerability rule decides what the crates do. Returns whether the hit was absorbed.
+    fn pad_hit(&mut self, team: usize, at: Vec3, dmg: f32, radius: f32) -> bool {
+        if let Some(b) = &mut self.builds[team] {
+            b.hp -= dmg;
+            if b.hp <= 0.0 {
+                self.break_build(team);
+            }
+            return true;
+        }
+        if !matches!(self.vuln, SPLIT | SPILL) {
+            return false;
+        }
+        let pad = pads()[team];
+        let on_pad: Vec<usize> = (0..self.crates.len())
+            .filter(|&k| self.crates[k].loose() && self.crates[k].kind.builds() && pad_contains(pad, self.crates[k].pos))
+            .collect();
+        let hit: Vec<usize> = if self.vuln == SPILL {
+            if on_pad.iter().any(|&k| self.crates[k].pos.xz().distance(at.xz()) < HALF + radius) { on_pad } else { vec![] }
+        } else {
+            // Split: the top crate of each cell the hit reaches flies off.
+            let mut tops = Vec::new();
+            for cell in pad_cells(team) {
+                if cell.distance(at.xz()) > HALF * 1.3 + radius {
+                    continue;
+                }
+                if let Some(&k) = on_pad
+                    .iter()
+                    .filter(|&&k| self.crates[k].pos.xz().distance(cell) < 0.3)
+                    .max_by(|&&x, &&y| self.crates[x].pos.y.total_cmp(&self.crates[y].pos.y))
+                {
+                    tops.push(k);
+                }
+            }
+            tops
+        };
+        if hit.is_empty() {
+            return false;
+        }
+        for &k in &hit {
+            let a = self.rand() * 6.3;
+            let c = &mut self.crates[k];
+            let out = (c.pos.xz() - at.xz()).normalize_or(Vec2::from_angle(a)) + Vec2::from_angle(a) * 0.3;
+            c.vel = Vec3::new(out.x * 4.5, 4.0 + c.pos.y, out.y * 4.5);
+            c.settling = false;
+        }
+        self.lost[team] += hit.len() as u32;
+        let how = if self.vuln == SPILL { "spilled" } else { "split" };
+        self.say(format!("{} pad hit: {} crate{} {how} off", ["BLUE", "RED"][team], hit.len(), if hit.len() == 1 { "" } else { "s" }));
+        true
+    }
+
+    /// A rocket goes off: hurts enemies, walls and builds near it, and blows loose crates
+    /// about (crates on an enemy pad follow the vulnerability rule).
+    fn explode(&mut self, at: Vec3, team: usize, dmg: f32, radius: f32, owner: Option<usize>) {
+        for j in 0..self.actors.len() {
+            let a = &self.actors[j];
+            if a.team == team || !a.alive() {
+                continue;
+            }
+            let d = a.pos.xz().distance(at.xz());
+            if d < radius {
+                let dir = (a.pos - at).with_y(0.0).normalize_or_zero();
+                if owner == Some(YOU) {
+                    self.hits += 1;
+                }
+                self.hurt(j, dmg * (1.0 - 0.5 * d / radius), dir * 5.0, owner, team);
+            }
+        }
+        for w in self.walls.iter_mut().filter(|w| w.team != team && !w.gate) {
+            if w.dist(at.xz()) < radius {
+                w.hp -= dmg;
+                self.wall_dmg[w.team] += dmg;
+            }
+        }
+        for m in 0..self.monsters.len() {
+            if self.monsters[m].alive() && self.monsters[m].pos.xz().distance(at.xz()) < radius + 0.6 {
+                self.hurt_monster(m, dmg, owner);
+            }
+        }
+        let enemy = 1 - team;
+        if pads()[enemy].distance(at.xz()) < PAD_HALF + radius {
+            self.pad_hit(enemy, at, dmg, radius);
+        }
+        for c in self.crates.iter_mut().filter(|c| c.loose()) {
+            if pad_contains(pads()[0], c.pos) || pad_contains(pads()[1], c.pos) {
+                continue;
+            }
+            let d = c.pos.distance(at);
+            if d < radius {
+                let out = (c.pos - at).with_y(0.0).normalize_or(Vec3::X);
+                c.vel += out * 5.0 * (1.0 - d / radius) + Vec3::Y * 3.0;
+            }
+        }
+    }
+}
+
+impl Sim {
+    /// A shot or blast hits monster `m`: it turns on whoever fired.
+    fn hurt_monster(&mut self, m: usize, dmg: f32, by: Option<usize>) {
+        let mon = &mut self.monsters[m];
+        if !mon.alive() {
+            return;
+        }
+        mon.hp -= dmg;
+        if by.is_some() && mon.target.is_none() {
+            mon.target = by;
+        }
+        if mon.hp > 0.0 {
+            return;
+        }
+        mon.respawn = if mon.drop == Drop::Super { 60.0 } else { 40.0 };
+        mon.target = None;
+        let (at, drop) = (mon.pos, mon.drop);
+        let who = by.map_or("someone".to_string(), |b| if b == YOU { "YOU".into() } else { self.describe(b) });
+        let what = match drop {
+            Drop::Heal => "heal camp",
+            Drop::Shield => "shield camp",
+            Drop::Super | Drop::MedPack(_) => "river objective",
+        };
+        let msg = format!("{who} cleared the {what}");
+        println!("t={:.1}s {msg}", self.t);
+        self.say(msg);
+        match drop {
+            Drop::Heal | Drop::Shield | Drop::MedPack(_) => self.pickups.push(Pickup { pos: at.with_y(0.5), drop, life: 30.0 }),
+            Drop::Super => {
+                let kinds: &[Kind] = if self.super_mode > 0 { &[Kind::Super] } else { &[Kind::Normal; 3] };
+                for (k, &kind) in kinds.iter().enumerate() {
+                    let id = self.spawn_crate(kind, at + Vec3::Y * 1.0);
+                    let a = k as f32 * 2.1;
+                    if let Some(c) = self.crate_mut(id) {
+                        c.vel = Vec3::new(a.cos() * 2.0, 6.0, a.sin() * 2.0);
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Movement speed scale: slowed in a super tank's slow zone.
+fn slow_factor(a: &Actor) -> f32 {
+    if a.slow > 0.0 { 0.6 } else { 1.0 }
+}
+
+fn toward_centre(team: usize) -> f32 {
+    if team == 0 { 1.0 } else { -1.0 }
+}
+
+fn pad_contains(pad: Vec2, p: Vec3) -> bool {
+    (p.x - pad.x).abs() < PAD_HALF && (p.z - pad.y).abs() < PAD_HALF
+}
+
+/// Where actor `a` is drawn: in the past by the online delay, except for you (predicted).
+fn shown(a: &Actor, t: f32, delay: f32) -> Vec3 {
+    if delay <= 0.0 || a.hist.is_empty() {
+        return a.pos;
+    }
+    let want = t - delay;
+    let mut prev = a.hist[0];
+    for &(ht, hp) in &a.hist {
+        if ht >= want {
+            let span = ht - prev.0;
+            let k = if span > 0.0 { (want - prev.0) / span } else { 1.0 };
+            return prev.1.lerp(hp, k.clamp(0.0, 1.0));
+        }
+        prev = (ht, hp);
+    }
+    a.pos
+}
+
+fn shown_at(s: &Sim, i: usize, tune: &Tune) -> Vec3 {
+    let seat_bot = tune.c(P::Seat) == 1;
+    let delay = if i == YOU && !seat_bot { 0.0 } else { tune.delay() };
+    shown(&s.actors[i], s.t, delay)
+}
+
+// ---------------------------------------------------------------------------------------
+// Crate physics and throws (the #9 baseline: curling landings, apex jump-throws)
+// ---------------------------------------------------------------------------------------
+
+fn velocity_to(from: Vec3, to: Vec3, angle: f32) -> Vec3 {
+    let flat = (to - from).xz();
+    let d = flat.length().max(0.05);
+    let dir = (flat / d).extend(0.0).xzy();
+    let drop = from.y - to.y;
+    let denom = (d * angle.tan() + drop).max(0.05);
+    let speed = (G * d * d / (2.0 * angle.cos().powi(2) * denom)).sqrt();
+    dir * speed * angle.cos() + Vec3::Y * speed * angle.sin()
+}
+
+struct ThrowPlan {
+    from: Vec3,
+    vel: Vec3,
+    target: Option<Vec3>,
+    short: bool,
+    path: Vec<Vec3>,
+    landing: Vec3,
+    knock: bool,
+    boost: f32,
+}
+
+/// Reach grows with jump height, peaking at the apex.
+fn jump_boost(a: &Actor) -> f32 {
+    if a.grounded {
+        return 1.0;
+    }
+    let apex = JUMP_VEL.powi(2) / (2.0 * G);
+    1.0 + (JUMP_BOOST - 1.0) * (a.pos.y / apex).clamp(0.0, 1.0)
+}
+
+fn floor_under(p: Vec3, others: impl Iterator<Item = Vec3>) -> f32 {
+    let mut floor: f32 = 0.0;
+    for o in others {
+        let overlap = (o.x - p.x).abs() < CRATE * 0.9 && (o.z - p.z).abs() < CRATE * 0.9;
+        if overlap && o.y + 0.5 < p.y {
+            floor = floor.max(o.y + HALF);
+        }
+    }
+    floor
+}
+
+/// One step of a free crate: gravity, then a curling landing (keep some speed, slide with
+/// friction, click into a cell once slow).
+fn crate_motion(p: &mut Vec3, v: &mut Vec3, settling: &mut bool, floor: impl Fn(Vec3) -> f32, dt: f32) -> bool {
+    v.y -= G * dt;
+    *p += *v * dt;
+    let arena = arena();
+    if p.x.abs() > arena.x - HALF {
+        p.x = p.x.clamp(-arena.x + HALF, arena.x - HALF);
+        v.x *= -0.4;
+    }
+    if p.z.abs() > arena.y - HALF {
+        p.z = p.z.clamp(-arena.y + HALF, arena.y - HALF);
+        v.z *= -0.4;
+    }
+    // Jungle walls are tall: a crate bounces off them.
+    for b in blocks() {
+        let mut xz = p.xz();
+        if let Some(n) = b.push_out(&mut xz, HALF) {
+            p.x = xz.x;
+            p.z = xz.y;
+            let into = v.xz().dot(n);
+            if into < 0.0 {
+                let bounce = n * into * 1.4;
+                v.x -= bounce.x;
+                v.z -= bounce.y;
+            }
+            *settling = false;
+        }
+    }
+    let floor = floor(*p);
+    if p.y - HALF > floor {
+        *settling = false;
+        return false;
+    }
+    p.y = floor + HALF;
+    if v.y < -2.0 {
+        v.x *= SLIDE_KEEP;
+        v.z *= SLIDE_KEEP;
+    }
+    v.y = if v.y < -6.0 { -v.y * 0.25 } else { 0.0 };
+    let h = v.xz();
+    let speed = h.length();
+    let slowed = (speed - SLIDE_FRICTION * dt).max(0.0);
+    let h = if speed > 0.0 { h * (slowed / speed) } else { h };
+    v.x = h.x;
+    v.z = h.y;
+    let cell = (p.xz() / CRATE).round() * CRATE;
+    let off = cell.distance(p.xz());
+    if v.y == 0.0 && off < SNAP_RADIUS && (slowed < 1.5 || *settling) && !blocked(cell, HALF - 0.05) {
+        *settling = true;
+        let pull = (cell - p.xz()) * 20.0;
+        v.x = pull.x;
+        v.z = pull.y;
+        if off < 0.02 {
+            p.x = cell.x;
+            p.z = cell.y;
+            v.x = 0.0;
+            v.z = 0.0;
+            *settling = false;
+        }
+    } else {
+        *settling = false;
+    }
+    true
+}
+
+fn side_hit(a: Vec3, b: Vec3) -> bool {
+    (a.y - b.y).abs() < 0.3 && (a.x - b.x).abs() < CRATE * 0.95 && (a.z - b.z).abs() < CRATE * 0.95
+}
+
+fn predict(s: &Sim, from: Vec3, vel: Vec3) -> (Vec<Vec3>, Vec3, bool) {
+    let (mut p, mut v, mut settling) = (from, vel, false);
+    let others: Vec<Vec3> = s.crates.iter().filter(|c| c.state == CrateState::Free).map(|c| c.pos).collect();
+    let mut path = vec![p];
+    let dt = 1.0 / 60.0;
+    for _ in 0..600 {
+        let grounded = crate_motion(
+            &mut p,
+            &mut v,
+            &mut settling,
+            |q| floor_under(q, others.iter().copied()),
+            dt,
+        );
+        path.push(p);
+        if others.iter().any(|o| side_hit(p, *o)) && v.xz().length() > 0.3 {
+            return (path, p, true);
+        }
+        if grounded && v.length() < 0.05 && !settling {
+            break;
+        }
+    }
+    (path, p, false)
+}
+
+fn throw_plan(s: &Sim, aim_dist: Option<f32>) -> ThrowPlan {
+    let a = &s.actors[YOU];
+    if a.grounded {
+        // Jump-throw: on the ground you can only toss it a short way.
+        let from = a.pos + Vec3::Y * HEAD + a.facing * 0.5;
+        let vel = a.facing * 3.0 + Vec3::Y * 3.0;
+        let (path, landing, knock) = predict(s, from, vel);
+        return ThrowPlan { from, vel, target: None, short: true, path, landing, knock, boost: 1.0 };
+    }
+    let from = a.pos + Vec3::Y * HEAD + a.facing * 0.3;
+    let boost = jump_boost(a);
+    let max = THROW_DIST * boost;
+    let d = aim_dist.unwrap_or(max).clamp(1.0, max);
+    let want = (a.pos + a.facing * d).xz();
+    let free = s.crates.iter().filter(|c| c.state == CrateState::Free).map(|c| c.pos);
+    let top = floor_under(want.extend(99.0).xzy(), free);
+    let target = Vec3::new(want.x, top + HALF, want.y);
+    let vel = velocity_to(from, target, THROW_ANGLE.to_radians());
+    let (path, landing, knock) = predict(s, from, vel);
+    ThrowPlan { from, vel, target: Some(target), short: false, path, landing, knock, boost }
+}
+
+// ---------------------------------------------------------------------------------------
+// Input
+// ---------------------------------------------------------------------------------------
+
+#[derive(Resource, Default, Clone)]
+struct Controls {
+    mv: Vec2,
+    aim: Option<Vec3>,
+    jump: bool,
+    grab: bool,
+    throw: bool,
+    fire: bool,
+    kick_held: bool,
+    kick: bool,
+    /// Throw your 1-crate item (Q / LB).
+    toss: bool,
+    /// Drop a crate (T) or a super crate (Y) at your feet, for trying recipes.
+    drop: Option<Kind>,
+    use_mouse: bool,
+    aim_point: Option<Vec3>,
+    aim_dist: Option<f32>,
+}
+
+#[derive(Component)]
+struct MainCamera;
+
+fn read_controls(
+    keys: Res<ButtonInput<KeyCode>>,
+    mouse: Res<ButtonInput<MouseButton>>,
+    // CursorMoved, not MouseMotion: raw device motion often never arrives on Wayland.
+    mut moved: MessageReader<CursorMoved>,
+    gamepads: Query<&Gamepad>,
+    window: Single<&Window>,
+    camera: Single<(&Camera, &GlobalTransform), With<MainCamera>>,
+    sim: Res<Sim>,
+    mut c: ResMut<Controls>,
+) {
+    let mut mv = Vec2::ZERO;
+    if keys.pressed(KeyCode::KeyW) { mv.y += 1.0; }
+    if keys.pressed(KeyCode::KeyS) { mv.y -= 1.0; }
+    if keys.pressed(KeyCode::KeyD) { mv.x += 1.0; }
+    if keys.pressed(KeyCode::KeyA) { mv.x -= 1.0; }
+    c.jump = keys.just_pressed(KeyCode::Space);
+    c.grab = keys.just_pressed(KeyCode::KeyE);
+    c.throw = mouse.just_pressed(MouseButton::Right);
+    c.fire = mouse.pressed(MouseButton::Left);
+    c.kick_held = keys.pressed(KeyCode::KeyF);
+    c.kick = keys.just_pressed(KeyCode::KeyF);
+    c.toss = keys.just_pressed(KeyCode::KeyQ);
+    c.drop = if keys.just_pressed(KeyCode::KeyT) {
+        Some(Kind::Normal)
+    } else if keys.just_pressed(KeyCode::KeyY) {
+        Some(Kind::Super)
+    } else {
+        None
+    };
+    if moved.read().count() > 0 || mouse.just_pressed(MouseButton::Left) {
+        c.use_mouse = true;
+    }
+    let mut stick_aim = None;
+    let mut tilt = 0.0;
+    for pad in &gamepads {
+        let ls = pad.left_stick();
+        if ls.length() > 0.15 { mv = ls; }
+        let rs = pad.right_stick();
+        if rs.length() > 0.3 {
+            stick_aim = Some(Vec3::new(rs.x, 0.0, -rs.y).normalize());
+            tilt = ((rs.length() - 0.3) / 0.65).clamp(0.0, 1.0);
+            c.use_mouse = false;
+        }
+        c.jump |= pad.just_pressed(GamepadButton::South);
+        c.grab |= pad.just_pressed(GamepadButton::West);
+        c.throw |= pad.just_pressed(GamepadButton::RightTrigger);
+        c.fire |= pad.pressed(GamepadButton::RightTrigger2);
+        c.kick_held |= pad.pressed(GamepadButton::East);
+        c.kick |= pad.just_pressed(GamepadButton::East);
+        c.toss |= pad.just_pressed(GamepadButton::LeftTrigger);
+    }
+    c.mv = mv.clamp_length_max(1.0);
+    c.aim = stick_aim;
+    c.aim_point = None;
+    c.aim_dist = None;
+    let you = &sim.actors[YOU];
+    if let Some(dir) = stick_aim {
+        let max = if you.carrying.is_some() { THROW_DIST * JUMP_BOOST } else { 30.0 };
+        let d = 1.0 + tilt * (max - 1.0);
+        c.aim_dist = Some(d);
+        c.aim_point = Some((you.pos + dir * d).with_y(CHEST));
+    }
+    if c.use_mouse && stick_aim.is_none() {
+        let (cam, cam_tf) = *camera;
+        if let Some(cursor) = window.cursor_position()
+            && let Ok(ray) = cam.viewport_to_world(cam_tf, cursor)
+            && let Some(d) = ray.intersect_plane(Vec3::Y * CHEST, InfinitePlane3d::new(Vec3::Y))
+        {
+            let p = ray.get_point(d);
+            let to = (p - you.pos).with_y(0.0);
+            c.aim_point = Some(p.with_y(CHEST));
+            c.aim_dist = Some(to.length());
+            if to.length() > 0.2 {
+                c.aim = Some(to.normalize());
+            }
+        }
+    }
+}
+
+fn tune_input(
+    keys: Res<ButtonInput<KeyCode>>,
+    gamepads: Query<&Gamepad>,
+    mut tune: ResMut<Tune>,
+    mut sim: ResMut<Sim>,
+) {
+    let any = |k: KeyCode, b: GamepadButton| keys.just_pressed(k) || gamepads.iter().any(|g| g.just_pressed(b));
+    let n = tune.vals.len();
+    if any(KeyCode::ArrowUp, GamepadButton::DPadUp) {
+        tune.selected = (tune.selected + n - 1) % n;
+    }
+    if any(KeyCode::ArrowDown, GamepadButton::DPadDown) {
+        tune.selected = (tune.selected + 1) % n;
+    }
+    let mut dir = 0i32;
+    if any(KeyCode::ArrowLeft, GamepadButton::DPadLeft) { dir -= 1; }
+    if any(KeyCode::ArrowRight, GamepadButton::DPadRight) { dir += 1; }
+    if dir != 0 {
+        let mult = if keys.pressed(KeyCode::ShiftLeft) { 5.0 } else { 1.0 };
+        let sel = tune.selected;
+        match &mut tune.vals[sel].value {
+            Value::Num { v, min, max, step, .. } => {
+                *v = (*v + *step * mult * dir as f32).clamp(*min, *max);
+            }
+            Value::Choice { i, opts } => {
+                *i = (*i as i32 + dir).rem_euclid(opts.len() as i32) as usize;
+            }
+        }
+        // Match length only takes effect on a reset; apply it now.
+        if sel == P::MatchLength as usize {
+            sim.match_left = tune.f(P::MatchLength);
+        }
+    }
+    if keys.just_pressed(KeyCode::KeyH) {
+        tune.panel = !tune.panel;
+    }
+    if any(KeyCode::KeyR, GamepadButton::Start) {
+        sim.reset(&tune);
+        sim.say("match reset");
+    }
+    // 1-6 step through the set switch. Live: the match keeps going and the next kick uses
+    // the new items (R restarts).
+    let rule_keys = [KeyCode::Digit1, KeyCode::Digit2, KeyCode::Digit3, KeyCode::Digit4, KeyCode::Digit5, KeyCode::Digit6];
+    for (k, key) in rule_keys.iter().enumerate() {
+        if keys.just_pressed(*key) {
+            if let Value::Choice { i, opts } = &mut tune.vals[k].value {
+                *i = (*i + 1) % opts.len();
+            }
+            if k == P::Set as usize {
+                let i = tune.c(P::Set);
+                apply_set(&mut tune.vals, i);
+            }
+            tune.selected = k;
+            sim.rules(&tune);
+            let p = &tune.vals[k];
+            sim.say(format!("{}: {} (live: your next kick uses it)", &p.name[2..], fmt_value(&p.value)));
+        }
+    }
+    // G: red puts up a bunker round its pad now (Shift: a super one), to try raiding it.
+    if keys.just_pressed(KeyCode::KeyG) {
+        let gold = keys.pressed(KeyCode::ShiftLeft);
+        match sim.capstone(1) {
+            Some(c) => sim.say(format!("red's all 8 is locked: {c}")),
+            None => {
+                let lead = team_lead(&sim, 1);
+                sim.apply(1, lead, Make::Bunker, gold);
+                let what = format!("engineer {} (G)", Make::Bunker.label(gold));
+                sim.made[1].push(what.clone());
+                sim.say(format!("red put up a {what}: try raiding it"));
+            }
+        }
+    }
+    if keys.just_pressed(KeyCode::KeyC) {
+        sim.your_class = sim.your_class.next();
+        sim.actors[YOU].class = sim.your_class;
+        let c = sim.your_class.name();
+        sim.say(format!("you're a {c} now"));
+    }
+    if keys.just_pressed(KeyCode::Enter) {
+        let line = rules_desc(&tune);
+        println!("verdict: {line}");
+        tune.verdicts.push(line);
+        sim.say("picked these rules (P prints them)");
+    }
+    if keys.just_pressed(KeyCode::KeyP) {
+        println!("# class_items settings");
+        for p in &tune.vals {
+            println!("{:<20} = {}", p.name, fmt_value(&p.value));
+        }
+        if !tune.verdicts.is_empty() {
+            println!("# verdicts");
+            for v in &tune.verdicts {
+                println!("- {v}");
+            }
+        }
+        if !sim.log.is_empty() {
+            println!("# results");
+            for l in &sim.log {
+                println!("- {l}");
+            }
+        }
+        sim.say("printed settings, verdicts and results to the terminal");
+    }
+}
+
+// ---------------------------------------------------------------------------------------
+// Simulation step
+// ---------------------------------------------------------------------------------------
+
+fn step(time: Res<Time>, controls: Res<Controls>, tune: Res<Tune>, mut sim: ResMut<Sim>) {
+    let s = &mut *sim;
+    if tune.c(P::TeamSize) != s.team_size || (tune.c(P::Map) == 0) != s.map {
+        s.reset(&tune);
+    }
+    let dt = time.delta_secs().min(1.0 / 30.0);
+    for m in &mut s.msgs { m.1 -= dt; }
+    s.msgs.retain(|m| m.1 > 0.0);
+    // Faster-than-real-time for watching bot matches; edge inputs only on the first substep.
+    let quiet = Controls {
+        mv: controls.mv,
+        aim: controls.aim,
+        aim_point: controls.aim_point,
+        aim_dist: controls.aim_dist,
+        fire: controls.fire,
+        kick_held: controls.kick_held,
+        ..default()
+    };
+    for k in 0..tune.c(P::TimeScale).max(1) {
+        tick(s, if k == 0 { &controls } else { &quiet }, &tune, dt);
+    }
+}
+
+fn tick(s: &mut Sim, c: &Controls, tune: &Tune, dt: f32) {
+    if s.over > 0.0 {
+        s.over -= dt;
+        if s.over <= 0.0 {
+            s.reset(tune);
+        }
+        return;
+    }
+    s.t += dt;
+    s.rules(tune);
+    s.ally_stacks = tune.c(P::AllyStacks) == 1;
+    s.you_play = tune.c(P::Seat) == 0;
+    let t = s.t;
+    for i in 0..s.actors.len() {
+        let a = &mut s.actors[i];
+        a.fire_cd -= dt;
+        a.alt_cd -= dt;
+        a.stun -= dt;
+        a.slow -= dt;
+        a.slow_immune -= dt;
+        a.invuln -= dt;
+        if a.dead > 0.0 {
+            a.dead -= dt;
+            if a.dead <= 0.0 {
+                let p = s.spawn_point(i);
+                let a = &mut s.actors[i];
+                a.pos = p;
+                a.vel = Vec3::ZERO;
+                a.hp = 100.0;
+                a.hist.clear();
+            }
+        }
+    }
+    if tune.c(P::Seat) == 1 {
+        ai_step(s, YOU, dt);
+    } else {
+        player_step(s, c, dt);
+    }
+    for i in 1..s.actors.len() {
+        ai_step(s, i, dt);
+    }
+    actors_physics(s, dt);
+    crates_physics(s);
+    crates_step(s, dt);
+    shots_step(s, dt);
+    pads_step(s, dt);
+    builds_step(s, dt);
+    lobs_step(s, dt);
+    walls_step(s, dt);
+    vehicles_step(s, dt);
+    monsters_step(s, dt);
+    pickups_step(s, dt);
+    refill(s, dt);
+    for a in &mut s.actors {
+        a.hist.push_back((t, a.pos));
+        while a.hist.front().is_some_and(|h| h.0 < t - 0.5) {
+            a.hist.pop_front();
+        }
+    }
+    s.match_left -= dt;
+    if s.match_left <= 0.0 {
+        end_match(s, tune);
+    }
+}
+
+fn end_match(s: &mut Sim, tune: &Tune) {
+    let (b, r) = (s.score(0), s.score(1));
+    let winner = match b.cmp(&r) {
+        std::cmp::Ordering::Greater => "BLUE wins",
+        std::cmp::Ordering::Less => "RED wins",
+        std::cmp::Ordering::Equal => "draw",
+    };
+    let seat = if tune.c(P::Seat) == 1 { "bot" } else { "you" };
+    let made = |t: usize| if s.made[t].is_empty() { "nothing".to_string() } else { s.made[t].join(", ") };
+    let pair = |x: [u32; 2]| format!("{}-{}", x[0], x[1]);
+    let line = format!(
+        "match: BLUE {b} - {r} RED, {winner} | {} | {} | blue player 1 = {seat} ({}) | kills {} | lost to PvE {} | \
+         crates stolen off pads {} (while bunkered {}) | bunker up {:.0}-{:.0} s | wall damage taken {:.0}-{:.0} | \
+         wall hp repaired {:.0}-{:.0} | heal camp pickups {} | med pack pickups {} | crafted LMB shots {} vs standard {} | \
+         blue made: {} | red made: {}",
+        if s.map { "lanes + jungle" } else { "open arena" },
+        rules_desc(tune),
+        s.your_class.name(),
+        pair(s.kills),
+        pair(s.pve_deaths),
+        pair(s.stolen),
+        pair(s.stolen_bunkered),
+        s.bunker_time[0],
+        s.bunker_time[1],
+        s.wall_dmg[0],
+        s.wall_dmg[1],
+        s.repaired[0],
+        s.repaired[1],
+        pair(s.camp_heals),
+        pair(s.pack_heals),
+        pair(s.crafted_shots),
+        pair(s.plain_shots),
+        made(0),
+        made(1),
+    );
+    println!("{line}");
+    s.log.push(line);
+    s.say(format!("MATCH OVER: blue {b} - {r} red, {winner}"));
+    s.over = 4.0;
+}
+
+fn player_step(s: &mut Sim, c: &Controls, dt: f32) {
+    if !s.actors[YOU].alive() {
+        s.pending = None;
+        return;
+    }
+    let carrying = s.actors[YOU].carrying.is_some();
+    {
+        let a = &mut s.actors[YOU];
+        if let Some(aim) = c.aim {
+            a.facing = aim;
+        } else if c.mv.length() > 0.1 {
+            a.facing = Vec3::new(c.mv.x, 0.0, -c.mv.y).normalize();
+        }
+        let speed = MOVE_SPEED * if carrying { CARRY_SPEED } else if a.tank.is_some() { 0.8 } else { 1.0 } * slow_factor(a);
+        let mut target = Vec3::new(c.mv.x, 0.0, -c.mv.y) * speed;
+        if a.stun > 0.0 { target = Vec3::ZERO; }
+        let k = 1.0 - (-dt * 18.0).exp();
+        let h = a.vel.with_y(0.0).lerp(target, k);
+        a.vel = h.with_y(a.vel.y);
+        if c.jump && a.grounded {
+            a.vel.y = JUMP_VEL;
+            a.grounded = false;
+        }
+    }
+
+    // Grab confirmation after the round trip (the reach mask covers it).
+    if let Some(p) = &mut s.pending {
+        p.left -= dt;
+        if p.left <= 0.0 {
+            let id = p.crate_id;
+            s.pending = None;
+            let a_pos = s.actors[YOU].pos;
+            match s.crates.iter().find(|cr| cr.id == id) {
+                Some(cr) if cr.state == CrateState::Free && cr.pos.xz().distance(a_pos.xz()) <= GRAB_REACH + HALF + 0.5 => {
+                    s.take(YOU, id);
+                }
+                _ => s.say("GRAB DENIED"),
+            }
+        }
+    }
+
+    if s.actors[YOU].stun > 0.0 {
+        return;
+    }
+    let facing = s.actors[YOU].facing;
+    let carrying = s.actors[YOU].carrying.is_some();
+    let in_tank = s.actors[YOU].tank.is_some();
+
+    if let Some(kind) = c.drop {
+        let at = s.place_target(YOU);
+        s.spawn_crate(kind, at + Vec3::Y * 0.5);
+    }
+
+    if c.grab && in_tank {
+        s.say("you can't carry crates in a tank");
+    } else if c.grab {
+        if carrying {
+            let plan = throw_plan(s, c.aim_dist);
+            let pos = s.actors[YOU].pos;
+            let at = match plan.target {
+                Some(t) if t.xz().distance(pos.xz()) <= PLACE_REACH => t,
+                _ => s.place_target(YOU),
+            };
+            s.place(YOU, at);
+        } else if s.pending.is_none()
+            && let Some((id, _)) = s.nearest_free(YOU, GRAB_REACH)
+        {
+            s.pending = Some(Pending { crate_id: id, left: GRAB_LATENCY, total: GRAB_LATENCY });
+        }
+    }
+
+    if c.throw && carrying {
+        let plan = throw_plan(s, c.aim_dist);
+        let head = s.actors[YOU].pos + Vec3::Y * HEAD;
+        s.release(YOU, plan.vel, plan.from - head);
+    }
+
+    // Right click with empty hands: the loadout's right-click item.
+    if c.throw && !carrying && !in_tank {
+        let range = c.aim_dist.map_or(8.0, |d| d.clamp(1.0, 30.0));
+        use_alt(s, YOU, facing, range);
+    }
+
+    // Q: throw the 1-crate item where you aim.
+    if c.toss && !carrying && !in_tank {
+        let pos = s.actors[YOU].pos;
+        let at = c.aim_point.unwrap_or(pos + facing * 6.0);
+        if s.actors[YOU].toss.is_none() {
+            s.say("nothing to throw: 1 crate makes your class's throwable");
+        }
+        toss(s, YOU, at);
+    }
+
+    // Full lock: no shooting while carrying.
+    if c.fire && !carrying && s.actors[YOU].fire_cd <= 0.0 {
+        let range = c.aim_dist.map_or(30.0, |d| d.clamp(1.0, 30.0));
+        fire(s, YOU, facing, range);
+    }
+
+    if !carrying && !in_tank {
+        let pos = s.actors[YOU].pos;
+        let my_pad = pads()[s.actors[YOU].team];
+        // Hold kick beside your pad to open what's on it.
+        if c.kick_held && pos.xz().distance(my_pad) < PAD_HALF + 1.4 {
+            s.kicking[s.actors[YOU].team] = Some(YOU);
+        }
+        let mut opened = None;
+        let mut punted = false;
+        for cr in s.crates.iter_mut().filter(|cr| cr.loose() && !pad_contains(my_pad, cr.pos)) {
+            let near = cr.pos.xz().distance(pos.xz()) < 1.6 && cr.pos.y - pos.y < 1.5;
+            match cr.kind {
+                Kind::Loot if near && c.kick_held => {
+                    cr.kick += dt;
+                    if cr.kick >= KICK_TIME {
+                        opened = Some((cr.id, cr.pos));
+                    }
+                }
+                Kind::Loot => cr.kick = (cr.kick - dt * 0.5).max(0.0),
+                Kind::Normal if near && c.kick && !punted => {
+                    cr.vel = facing * 9.0 + Vec3::Y * 3.0;
+                    punted = true;
+                }
+                _ => {}
+            }
+        }
+        if let Some((id, at)) = opened {
+            s.crates.retain(|cr| {
+                if cr.id == id { s.despawn.extend(cr.ent); }
+                cr.id != id
+            });
+            for i in 0..3 {
+                let a = i as f32 * 2.1 + s.rand();
+                let id = s.spawn_crate(Kind::Normal, at + Vec3::Y * 0.5);
+                if let Some(cr) = s.crate_mut(id) {
+                    cr.vel = Vec3::new(a.cos() * 3.0, 7.0, a.sin() * 3.0);
+                }
+            }
+            s.loot_respawn = 6.0;
+            s.say("loot crate opened: 3 crates");
+        }
+    }
+}
+
+/// Fires `who`'s weapon: the tank's cannon, a crafted gun (until its ammo runs out), or the
+/// standard gun. Sets the cooldown.
+fn fire(s: &mut Sim, who: usize, dir: Vec3, range: f32) {
+    let a = &s.actors[who];
+    let from = a.pos + Vec3::Y * CHEST + dir * 0.5;
+    let team = a.team;
+    if who == YOU {
+        s.fired += 1;
+    }
+    let shot = |vel: Vec3, dmg: f32, life: f32| Shot::new(from, vel, Some(who), team, dmg, life);
+    if let Some(tank) = a.tank {
+        s.actors[who].fire_cd = 0.9;
+        let blast = s.n(P::RocketBlast);
+        s.shots.push(Shot { splash: blast, slow: tank.gold, ..shot(dir * 16.0, 80.0, range.max(6.0) / 16.0) });
+        return;
+    }
+    let Some(mut gun) = a.gun else {
+        s.plain_shots[team] += 1;
+        s.actors[who].fire_cd = 1.0 / FIRE_RATE;
+        s.shots.push(shot(dir * PROJ_SPEED, SHOT_DMG, range / PROJ_SPEED));
+        return;
+    };
+    s.crafted_shots[team] += 1;
+    let k = s.k(gun.gold);
+    match gun.kind {
+        GunKind::Rapid => {
+            s.actors[who].fire_cd = 1.0 / s.n(P::RapidRate);
+            let dmg = s.n(P::RapidDmg) * k;
+            s.shots.push(Shot { pierce: gun.gold as u8, ..shot(dir * PROJ_SPEED, dmg, range / PROJ_SPEED) });
+        }
+        GunKind::Rivet => {
+            s.actors[who].fire_cd = 1.0 / s.n(P::RivetRate);
+            let dmg = s.n(P::RivetDmg) * k;
+            let stagger = if gun.gold { 0.2 } else { 0.0 };
+            s.shots.push(Shot { rivet: true, stagger, ..shot(dir * PROJ_SPEED, dmg, range / PROJ_SPEED) });
+        }
+        GunKind::Heal => {
+            // A visible heal shot: heals the first hurt teammate it touches, out to its range;
+            // a weak shot against enemies.
+            s.actors[who].fire_cd = 0.2;
+            let heal = s.n(P::HealShot) * k;
+            let life = s.n(P::HealRange) / PROJ_SPEED;
+            s.shots.push(Shot { heal, bounce: gun.gold, ..shot(dir * PROJ_SPEED, heal, life) });
+        }
+    }
+    gun.ammo -= 1;
+    s.actors[who].gun = if gun.ammo == 0 { None } else { Some(gun) };
+    if gun.ammo == 0 && who == YOU {
+        s.say("out of ammo: back to your standard gun");
+    }
+}
+
+/// Uses `who`'s right-click item (class loadout), if it has one and it's ready.
+fn use_alt(s: &mut Sim, who: usize, dir: Vec3, range: f32) {
+    let a = &s.actors[who];
+    let Some(mut alt) = a.alt else { return };
+    if a.alt_cd > 0.0 || a.tank.is_some() || a.carrying.is_some() || !a.alive() {
+        return;
+    }
+    let (pos, team) = (a.pos, a.team);
+    let k = s.k(alt.gold);
+    match alt.kind {
+        AltKind::Rockets => {
+            s.actors[who].alt_cd = 1.0;
+            let from = pos + Vec3::Y * CHEST + dir * 0.5;
+            let (dmg, blast) = (s.n(P::RocketDmg) * k, s.n(P::RocketBlast));
+            let rocket = Shot::new(from, dir * 14.0, Some(who), team, dmg, range.max(4.0) / 14.0);
+            s.shots.push(Shot { splash: blast, split: alt.gold, ..rocket });
+        }
+        AltKind::ShieldWall => {
+            // A wall where you aim, up to 8 m away, facing you.
+            s.actors[who].alt_cd = 0.5;
+            let mut at = pos + dir * range.clamp(1.5, 8.0);
+            if !clear(pos.xz(), at.xz(), 0.5) {
+                at = pos + dir * 1.5;
+            }
+            let (half, hp, life) = (s.n(P::WallLen) / 2.0, s.n(P::WallHp) * k, s.n(P::WallLife));
+            s.add_wall(team, at, dir, half, hp, life, alt.gold, false, false);
+        }
+        AltKind::Pulse => {
+            s.actors[who].alt_cd = 2.0;
+            let (heal, r) = (s.n(P::PulseHp) * k, s.n(P::PulseRadius));
+            for b in s.actors.iter_mut().filter(|b| b.team == team && b.alive() && b.pos.distance(pos) < r) {
+                b.hp = (b.hp + heal).min(100.0);
+                if alt.gold {
+                    b.shield = (b.shield + 25.0).min(100.0);
+                }
+            }
+            s.booms.push((pos + Vec3::Y * 0.2, r, 0.4));
+        }
+    }
+    alt.charges -= 1;
+    s.actors[who].alt = if alt.charges == 0 { None } else { Some(alt) };
+    if alt.charges == 0 && who == YOU {
+        s.say("right-click item used up");
+    }
+}
+
+/// Throws `who`'s 1-crate item at `at` on the jump-throw arc: further from the top of a jump.
+/// Not while carrying (ADR 0003) or in a tank.
+fn toss(s: &mut Sim, who: usize, at: Vec3) {
+    let a = &s.actors[who];
+    let Some((kind, gold)) = a.toss else { return };
+    if a.carrying.is_some() || a.tank.is_some() || !a.alive() {
+        return;
+    }
+    let from = a.pos + Vec3::Y * HEAD + a.facing * 0.3;
+    let max = THROW_DIST * jump_boost(a);
+    let flat = (at - a.pos).with_y(0.0);
+    let flat = if flat.length() < 0.6 { a.facing * 0.6 } else { flat.clamp_length_max(max) };
+    let to = a.pos + flat;
+    let vel = velocity_to(from, to.with_y(0.15), THROW_ANGLE.to_radians());
+    let (team, fuse) = (a.team, s.n(P::GrenadeFuse));
+    s.lobs.push(Lob { kind, pos: from, vel, team, owner: who, gold, fuse, stuck: None });
+    s.actors[who].toss = None;
+}
+
+// ---------------------------------------------------------------------------------------
+// Bots standing in for other players
+// ---------------------------------------------------------------------------------------
+
+/// The nearest live enemy within `radius` of `around`, carriers first (they hold crates).
+fn nearest_enemy(s: &Sim, i: usize, around: Vec3, radius: f32) -> Option<usize> {
+    let team = s.actors[i].team;
+    (0..s.actors.len())
+        .filter(|&j| s.actors[j].team != team && s.actors[j].alive())
+        .map(|j| {
+            let d = s.actors[j].pos.xz().distance(around.xz());
+            (j, d, d - if s.actors[j].carrying.is_some() { 4.0 } else { 0.0 })
+        })
+        .filter(|(_, d, _)| *d <= radius)
+        // Only enemies in sight: jungle walls block shots.
+        .filter(|(j, ..)| clear(around.xz(), s.actors[*j].pos.xz(), 0.1))
+        .min_by(|x, y| x.2.total_cmp(&y.2))
+        .map(|(j, ..)| j)
+}
+
+/// Where a bot goes in the jungle, if anywhere: a dropped heal or shield close by, a camp
+/// when it's hurt (heal camps first), or any camp for the team's 3rd player (its jungler).
+fn jungle_goal(s: &Sim, i: usize) -> Option<Vec3> {
+    let a = &s.actors[i];
+    if !s.map || a.carrying.is_some() || a.tank.is_some() {
+        return None;
+    }
+    let pick = s
+        .pickups
+        .iter()
+        .filter(|p| p.pos.xz().distance(a.pos.xz()) < 12.0 && (!matches!(p.drop, Drop::Heal | Drop::MedPack(_)) || a.hp < 100.0))
+        .min_by(|x, y| x.pos.distance(a.pos).total_cmp(&y.pos.distance(a.pos)));
+    if let Some(p) = pick {
+        return Some(p.pos.with_y(0.0));
+    }
+    let hurt = a.hp < 60.0;
+    let jungler = a.slot == 2;
+    if !hurt && !jungler {
+        return None;
+    }
+    s.monsters
+        .iter()
+        .filter(|m| m.alive() && (!hurt || m.drop == Drop::Heal || jungler))
+        // Hurt bots go for heals; junglers go for anything, river objectives first (they
+        // drop crates, so both teams want them).
+        .min_by(|x, y| {
+            let score = |m: &Monster| m.pos.distance(a.pos) - if m.drop == Drop::Super && !hurt { 15.0 } else { 0.0 };
+            score(x).total_cmp(&score(y))
+        })
+        .map(|m| m.pos.with_y(0.0))
+}
+
+/// A monster bot `i` should shoot: one fighting it, or one at a camp it's clearing.
+fn monster_aim(s: &Sim, i: usize, jungling: bool) -> Option<Vec3> {
+    let a = &s.actors[i];
+    s.monsters
+        .iter()
+        .filter(|m| m.alive() && m.pos.xz().distance(a.pos.xz()) < 11.0 && clear(a.pos.xz(), m.pos.xz(), 0.1))
+        .filter(|m| m.target == Some(i) || jungling)
+        .min_by(|x, y| x.pos.distance(a.pos).total_cmp(&y.pos.distance(a.pos)))
+        .map(|m| m.pos.with_y(CHEST))
+}
+
+/// The next point toward `goal` around the jungle walls, recomputed a few times a second.
+fn steer(a: &mut Actor, goal: Vec3, dt: f32) -> Vec3 {
+    if !map_on() {
+        return goal;
+    }
+    if let Some((g, next, age)) = &mut a.nav {
+        *age += dt;
+        if g.distance(goal.xz()) < 1.0 && *age < 0.4 && next.distance(a.pos.xz()) > 0.6 {
+            return next.extend(0.0).xzy();
+        }
+    }
+    let next = route(a.pos.xz(), goal.xz());
+    a.nav = Some((goal.xz(), next, 0.0));
+    next.extend(0.0).xzy()
+}
+
+enum Act {
+    None,
+    Grab(u32),
+    Place(Vec3),
+    /// Set the crate down where you stand.
+    Drop,
+}
+
+fn act_none(a: &Act) -> bool {
+    matches!(a, Act::None)
+}
+
+/// Fetch the nearest crate no teammate is after (stealing from the enemy pad included) and
+/// set it down on the team pad. Returns the goal and the action; `None` goal and no action
+/// means there's nothing to haul. Bot grabs are instant: they stand in for the server.
+fn haul_plan(s: &Sim, i: usize) -> (Option<Vec3>, Act, Option<u32>) {
+    let a = &s.actors[i];
+    if a.tank.is_some() {
+        return (None, Act::None, None);
+    }
+    if a.carrying.is_some() {
+        let shape = s.pad_state(a.team).shape;
+        let builds = a.team == 1 || s.ally_stacks || i == YOU;
+        // Hold on to it while the pad is ready to open (or full), so the shape survives.
+        let ready = s.can_open(a.team, shape) && worth_opening(s, a.team, shape);
+        let cell = s.pad_cell(i).filter(|_| !(builds && ready));
+        let Some(cell) = cell else {
+            let front = pad_front(a.team, a.slot);
+            // Nobody free to kick it open: set the crate down beside the pad and kick it.
+            let kicker = s.actors.iter().enumerate().any(|(j, b)| {
+                j != i && b.team == a.team && b.alive() && b.carrying.is_none() && b.tank.is_none()
+            });
+            if builds && ready && !kicker && front.xz().distance(a.pos.xz()) < 1.0 {
+                return (None, Act::Drop, None);
+            }
+            return (Some(front), Act::None, None);
+        };
+        if cell.xz().distance(a.pos.xz()) < 2.0 {
+            return (None, Act::Place(cell), None);
+        }
+        return (Some(cell.with_y(0.0)), Act::None, None);
+    }
+    let pad = pads()[a.team];
+    let claimed = |id: u32| s.actors.iter().enumerate().any(|(j, b)| j != i && b.team == a.team && b.claim == Some(id));
+    let pick = s
+        .crates
+        .iter()
+        .filter(|c| c.loose() && c.kind.builds() && c.pos.y < 3.0)
+        .filter(|c| !pad_contains(pad, c.pos) && !claimed(c.id))
+        // Super crates are worth a longer walk.
+        .map(|c| (c, c.pos.distance(a.pos) - if c.kind == Kind::Super && s.super_mode > 0 { 8.0 } else { 0.0 }))
+        .min_by(|x, y| x.1.total_cmp(&y.1))
+        .map(|(c, _)| c);
+    match pick {
+        None => (None, Act::None, None),
+        Some(c) if c.pos.xz().distance(a.pos.xz()) <= GRAB_REACH + HALF => (None, Act::Grab(c.id), Some(c.id)),
+        Some(c) => (Some(c.pos.with_y(0.0)), Act::None, Some(c.id)),
+    }
+}
+
+/// Recipes bots open: players while the team has room and the big recipes right away;
+/// small ones (and 5-7 by count) only once the pad has sat unchanged a while; a pad stuck
+/// out of line after a few seconds.
+fn worth_opening(s: &Sim, team: usize, shape: Shape) -> bool {
+    match shape {
+        Shape::Recipe(Slot::Player1 | Slot::Player2 | Slot::All8) => true,
+        Shape::Recipe(Slot::Flat4) if !s.count_only => true,
+        // Class loadout: 2 side by side is the left-click item, worth it once the team is full
+        // and nobody has added to the pad for a while (otherwise it grows to 2 x 2 flat).
+        Shape::Recipe(Slot::Pair) if s.players(team) >= s.team_size => s.pad_t[team] > 8.0,
+        // Small recipes once the pad has sat a while (longer on the big map: hauls are long).
+        Shape::Recipe(_) => s.pad_t[team] > if s.map { 25.0 } else { 7.0 },
+        Shape::Unaligned => s.odd_t[team] > 4.0,
+        _ => false,
+    }
+}
+
+/// A spot beside the pad, on the side facing the arena.
+fn pad_front(team: usize, slot: usize) -> Vec3 {
+    let pad = pads()[team];
+    Vec3::new(pad.x + toward_centre(team) * 1.6, 0.0, pad.y + (slot as f32 % 3.0 - 1.0) * 0.9)
+}
+
+fn guard_post(s: &Sim, i: usize) -> Vec3 {
+    let a = &s.actors[i];
+    let pad = pads()[a.team];
+    // Outside the bunker's front wall while there is one.
+    let out = if s.walls.iter().any(|w| w.team == a.team && w.bunker) { 3.6 } else { 2.8 };
+    Vec3::new(pad.x + toward_centre(a.team) * out, 0.0, pad.y + (a.slot as f32 - 1.0) * 1.6)
+}
+
+/// Bots and walls: the next point toward `goal` that doesn't walk into a wall, and the wall
+/// to shoot when an enemy super bunker's gap is shut to this bot.
+fn detour(s: &Sim, i: usize, goal: Vec3) -> (Vec3, Option<Vec3>) {
+    let a = &s.actors[i];
+    let (from, team) = (a.pos.xz(), a.team);
+    let r = ACTOR_R * 0.8;
+    let in_way = |p: Vec2, q: Vec2| s.walls.iter().find(|w| w.blocks_body(team) && w.crosses(p, q, r));
+    let Some(w) = in_way(from, goal.xz()) else { return (goal, None) };
+    let to3 = |p: Vec2| p.extend(0.0).xzy();
+    // The best of some waypoints: in a straight line from here, shortest way to the goal.
+    let best = |pts: &[Vec2]| {
+        pts.iter()
+            .copied()
+            .filter(|&p| in_way(from, p).is_none())
+            .min_by(|x, y| (from.distance(*x) + x.distance(goal.xz())).total_cmp(&(from.distance(*y) + y.distance(goal.xz()))))
+    };
+    if !w.bunker {
+        // Round the nearer end of a shield wall, on our side of it.
+        let n = w.normal.xz();
+        let tan = Vec2::new(-n.y, n.x);
+        let side = n * w.local(from).1.signum() * 0.7;
+        let ends = [-1.0, 1.0].map(|k| w.pos.xz() + tan * k * (w.half_len + 0.9) + side);
+        let far = ends.map(|e| e + tan * (e - w.pos.xz()).dot(tan).signum() * 0.5 - side * 2.0);
+        return (to3(best(&ends).or_else(|| best(&far)).unwrap_or(ends[0])), None);
+    }
+    let pad = pads()[w.team];
+    let t = toward_centre(w.team);
+    let gap = Vec2::new(pad.x + t * BUNKER_R, pad.y);
+    let in_ring = |p: Vec2| (p - pad).abs().max_element() < BUNKER_R;
+    let gate = s.walls.iter().find(|g| g.gate && g.team == w.team && g.blocks_body(team));
+    if let Some(g) = gate.filter(|_| in_ring(goal.xz()) && !in_ring(from)) {
+        // Shut out: stand off and shoot the gate.
+        let stand = gap + Vec2::X * t * 4.0;
+        return (to3(stand), Some(g.pos.with_y(CHEST)));
+    }
+    let c = BUNKER_R + 1.3;
+    let corners = [Vec2::new(t * c, c), Vec2::new(t * c, -c), Vec2::new(-t * c, c), Vec2::new(-t * c, -c)].map(|o| pad + o);
+    if in_ring(from) == in_ring(goal.xz()) {
+        return (to3(best(&corners).unwrap_or(corners[0])), None);
+    }
+    // In or out through the gap: line up with it, then walk through.
+    let (mouth, past) = if in_ring(from) {
+        (gap - Vec2::X * t * 1.0, gap + Vec2::X * t * 1.2)
+    } else {
+        (gap + Vec2::X * t * 1.5, gap - Vec2::X * t * 1.0)
+    };
+    let next = if from.distance(gap) < 0.5 || (from - gap).y.abs() < 0.6 && in_way(from, past).is_none() {
+        past
+    } else if in_way(from, mouth).is_none() {
+        mouth
+    } else {
+        best(&corners).unwrap_or(mouth)
+    };
+    (to3(next), None)
+}
+
+/// Engineers with a rivet gun: a hurt wall of theirs within 10 m to repair.
+fn wall_to_fix(s: &Sim, i: usize) -> Option<Vec3> {
+    let a = &s.actors[i];
+    if !a.gun.is_some_and(|g| g.kind == GunKind::Rivet) {
+        return None;
+    }
+    s.walls
+        .iter()
+        .filter(|w| w.team == a.team && !w.gate && w.hp < w.max_hp * 0.8 && w.dist(a.pos.xz()) < 10.0)
+        .min_by(|x, y| x.dist(a.pos.xz()).total_cmp(&y.dist(a.pos.xz())))
+        .map(|w| w.pos.with_y(CHEST))
+}
+
+/// Whether bot `i` should go kick its pad open: the pad makes something worth opening,
+/// and `i` is the nearest empty-handed teammate allowed to.
+fn wants_to_kick(s: &Sim, i: usize) -> bool {
+    let team = s.actors[i].team;
+    if !(team == 1 || s.ally_stacks || i == YOU) {
+        return false;
+    }
+    let shape = s.pad_state(team).shape;
+    if !(s.can_open(team, shape) || shape == Shape::Unaligned) || !worth_opening(s, team, shape) {
+        return false;
+    }
+    let pad = pads()[team];
+    let me = s.actors[i].pos.xz().distance(pad);
+    let human = tune_free_seat(s);
+    !(0..s.actors.len()).any(|j| {
+        let b = &s.actors[j];
+        j != i && j != human && b.team == team && b.alive() && b.carrying.is_none() && b.pos.xz().distance(pad) < me
+    })
+}
+
+/// The seat you're playing (bots don't wait for you to kick), or none when it's a bot.
+fn tune_free_seat(s: &Sim) -> usize {
+    if s.you_play { YOU } else { usize::MAX }
+}
+
+/// Where bot `i` would shoot the enemy pad: a build in progress, or (when hits split or
+/// spill) the crates on it, if it's within 11 m.
+fn pad_aim(s: &Sim, i: usize) -> Option<Vec3> {
+    let a = &s.actors[i];
+    let enemy = 1 - a.team;
+    let pad = pads()[enemy];
+    if a.carrying.is_some() || a.pos.xz().distance(pad) > 11.0 {
+        return None;
+    }
+    let crates = s.crates.iter().any(|c| c.state == CrateState::Free && c.kind.builds() && pad_contains(pad, c.pos));
+    (crates && (s.builds[enemy].is_some() || matches!(s.vuln, SPLIT | SPILL))).then(|| pad.extend(CHEST).xzy())
+}
+
+/// A bot player: carry home, fight what's close, chase enemy carriers to steal back,
+/// otherwise haul (and steal). Builds pad shapes and kicks them open. Guards the pad when
+/// there's nothing to haul.
+fn ai_step(s: &mut Sim, i: usize, dt: f32) {
+    if !s.actors[i].alive() {
+        return;
+    }
+    let pos = s.actors[i].pos;
+    let carrying = s.actors[i].carrying.is_some();
+    let near = nearest_enemy(s, i, pos, if s.map { 10.0 } else { 8.0 });
+    let carrier = nearest_enemy(s, i, pos, 14.0).filter(|&e| s.actors[e].carrying.is_some());
+    let keep = s.actors[i].claim;
+    let in_tank = s.actors[i].tank.is_some();
+    let enemy_pad = pads()[1 - s.actors[i].team];
+    let (target, goal, act, claim) = match (carrying, near, carrier) {
+        // A tank pushes to the enemy pad and fights whatever it meets.
+        (false, _, _) if in_tank => {
+            let e = nearest_enemy(s, i, pos, 12.0);
+            let goal = Vec3::new(enemy_pad.x - toward_centre(1 - s.actors[i].team) * 3.0, 0.0, enemy_pad.y);
+            (e, Some(goal), Act::None, None)
+        }
+        (false, Some(e), _) => {
+            // Strafe while fighting.
+            let to = (s.actors[e].pos - pos).with_y(0.0).normalize_or_zero();
+            let side = Vec3::new(-to.z, 0.0, to.x) * (s.t * 0.7 + i as f32).sin().signum();
+            (Some(e), Some(pos + side * 2.0), Act::None, keep)
+        }
+        (false, None, Some(e)) => (Some(e), Some(s.actors[e].pos), Act::None, keep),
+        (false, None, None) if wants_to_kick(s, i) => {
+            // Go to the pad and kick it open.
+            let team = s.actors[i].team;
+            let spot = pad_front(team, s.actors[i].slot);
+            let d = pos.xz().distance(pads()[team]);
+            if d < PAD_HALF + 1.4 {
+                s.kicking[team] = Some(i);
+                (None, None, Act::None, None)
+            } else if pos.xz().distance(spot.xz()) < 0.6 {
+                // At the spot but held off the pad: walk straight at it.
+                (None, Some(pads()[team].extend(0.0).xzy()), Act::None, None)
+            } else {
+                (None, Some(spot), Act::None, None)
+            }
+        }
+        (false, None, None) if let Some(goal) = jungle_goal(s, i) => (None, Some(goal), Act::None, None),
+        _ => {
+            let (goal, act, claim) = haul_plan(s, i);
+            let idle = goal.is_none() && matches!(act, Act::None);
+            (None, if idle { Some(guard_post(s, i)) } else { goal }, act, claim)
+        }
+    };
+    // Walls: walk round a shield wall, in and out through a bunker's gap, and shoot an enemy
+    // bunker whose gap is shut.
+    let (goal, breach) = match goal {
+        Some(g) => {
+            let (g, b) = detour(s, i, g);
+            (Some(g), b)
+        }
+        None => (None, None),
+    };
+    let speed = MOVE_SPEED * 0.85 * if carrying { CARRY_SPEED } else if in_tank { 0.8 } else { 1.0 } * slow_factor(&s.actors[i]);
+    let spread = (s.rand() - 0.5) * 0.15;
+    let jungling = target.is_none() && act_none(&act) && jungle_goal(s, i).is_some();
+    {
+        let a = &mut s.actors[i];
+        a.claim = claim;
+        let goal = goal.map(|g| steer(a, g, dt));
+        let want = match goal.map(|g| (g - a.pos).with_y(0.0)) {
+            Some(v) if v.length() > 0.4 && a.stun <= 0.0 => v.normalize() * speed,
+            _ => Vec3::ZERO,
+        };
+        let k = 1.0 - (-dt * 12.0).exp();
+        a.vel = a.vel.with_y(0.0).lerp(want, k).with_y(a.vel.y);
+        if want.length() > 0.1 {
+            a.facing = want.normalize();
+        }
+    }
+    // Medics: pulse when someone close is hurt, and aim the heal gun at hurt teammates.
+    if !carrying && s.actors[i].alt.is_some_and(|a| a.kind == AltKind::Pulse) {
+        let team = s.actors[i].team;
+        if s.actors.iter().any(|b| b.team == team && b.alive() && b.hp < 60.0 && b.pos.distance(pos) < 6.0) {
+            let f = s.actors[i].facing;
+            use_alt(s, i, f, 0.0);
+        }
+    }
+    // Med packs: thrown at the most hurt teammate close by (yourself included).
+    if !carrying && s.actors[i].toss.is_some_and(|t| t.0 == TossKind::MedPack) {
+        let team = s.actors[i].team;
+        let mate = (0..s.actors.len())
+            .filter(|&j| s.actors[j].team == team && s.actors[j].alive() && s.actors[j].hp < 60.0)
+            .filter(|&j| s.actors[j].pos.distance(pos) < 8.0 && clear(pos.xz(), s.actors[j].pos.xz(), 0.1))
+            .min_by(|&x, &y| s.actors[x].hp.total_cmp(&s.actors[y].hp));
+        if let Some(j) = mate {
+            let at = s.actors[j].pos;
+            toss(s, i, at);
+        }
+    }
+    let hurt_mate = if !carrying && s.actors[i].gun.is_some_and(|g| g.kind == GunKind::Heal) {
+        let team = s.actors[i].team;
+        (0..s.actors.len())
+            .filter(|&j| j != i && s.actors[j].team == team && s.actors[j].alive() && s.actors[j].hp < 80.0)
+            .filter(|&j| s.actors[j].pos.distance(pos) < 9.0 && clear(pos.xz(), s.actors[j].pos.xz(), 0.1))
+            .min_by(|&x, &y| s.actors[x].hp.total_cmp(&s.actors[y].hp))
+    } else {
+        None
+    };
+    if let Some(m) = hurt_mate {
+        let dir = (s.actors[m].pos - pos).with_y(0.0).normalize_or_zero();
+        s.actors[i].facing = dir;
+        if s.actors[i].fire_cd <= 0.0 && s.actors[i].stun <= 0.0 {
+            fire(s, i, dir, 10.0);
+        }
+    } else if let Some(e) = target {
+        let (ep, ev) = (s.actors[e].pos, s.actors[e].vel.with_y(0.0));
+        let d = ep.xz().distance(pos.xz());
+        // Lead the target, then miss a little.
+        let lead = ep + ev * (d / PROJ_SPEED);
+        let dir = Quat::from_rotation_y(spread) * (lead - pos).with_y(0.0).normalize_or_zero();
+        s.actors[i].facing = dir;
+        let alt = s.actors[i].alt.map(|a| a.kind);
+        let ready = !carrying && s.actors[i].stun <= 0.0;
+        if ready && d < 12.0 && alt == Some(AltKind::Rockets) {
+            use_alt(s, i, dir, d.min(6.0));
+        }
+        // Engineers put a wall between them and the fight, if they don't have one close.
+        let team = s.actors[i].team;
+        let walled = s.walls.iter().any(|w| w.team == team && !w.bunker && w.pos.distance(pos) < 6.0);
+        if ready && d < 12.0 && alt == Some(AltKind::ShieldWall) && !walled {
+            use_alt(s, i, dir, (d * 0.4).clamp(2.0, 4.0));
+        }
+        if ready && d > 4.0 && d < 9.0 && s.actors[i].toss.is_some_and(|t| t.0 == TossKind::Grenade) {
+            toss(s, i, lead);
+        }
+        if !carrying && d < 12.0 && s.actors[i].fire_cd <= 0.0 && s.actors[i].stun <= 0.0 {
+            fire(s, i, dir, 14.0);
+            s.actors[i].fire_cd = (s.actors[i].fire_cd * 1.5).max(0.25);
+        }
+    } else if let Some(at) = breach.or_else(|| wall_to_fix(s, i)) {
+        // A shut enemy bunker in the way, or a hurt wall of ours to rivet.
+        let dir = (at - pos).with_y(0.0).normalize_or_zero();
+        s.actors[i].facing = dir;
+        if !carrying && s.actors[i].fire_cd <= 0.0 && s.actors[i].stun <= 0.0 {
+            fire(s, i, dir, (at - pos).length() + 1.0);
+            s.actors[i].fire_cd = (s.actors[i].fire_cd * 1.5).max(0.25);
+        }
+    } else if let Some(at) = monster_aim(s, i, jungling) {
+        let dir = Quat::from_rotation_y(spread) * (at - pos).with_y(0.0).normalize_or_zero();
+        s.actors[i].facing = dir;
+        if !carrying && s.actors[i].fire_cd <= 0.0 && s.actors[i].stun <= 0.0 {
+            fire(s, i, dir, (at - pos).length() + 1.0);
+            s.actors[i].fire_cd = (s.actors[i].fire_cd * 1.5).max(0.25);
+        }
+    } else if let Some(at) = pad_aim(s, i) {
+        // Nobody to fight: shoot the enemy pad when hits do something there.
+        let dir = Quat::from_rotation_y(spread) * (at - pos).with_y(0.0).normalize_or_zero();
+        s.actors[i].facing = dir;
+        if !carrying && s.actors[i].fire_cd <= 0.0 && s.actors[i].stun <= 0.0 {
+            fire(s, i, dir, (at - pos).length() + 1.0);
+            s.actors[i].fire_cd = (s.actors[i].fire_cd * 1.5).max(0.25);
+        }
+    }
+    match act {
+        Act::Grab(id) => s.take(i, id),
+        Act::Place(at) => s.place(i, at),
+        Act::Drop => {
+            let at = s.actors[i].pos.with_y(HALF) + s.actors[i].facing * -0.2;
+            s.place(i, at);
+        }
+        Act::None => {}
+    }
+}
+
+// ---------------------------------------------------------------------------------------
+// Physics
+// ---------------------------------------------------------------------------------------
+
+fn actors_physics(s: &mut Sim, dt: f32) {
+    let arena = arena();
+    let blockers: Vec<Vec3> = s
+        .crates
+        .iter()
+        .filter(|c| c.state == CrateState::Free && c.pos.y < CRATE * 1.5)
+        .map(|c| c.pos)
+        .collect();
+    for a in s.actors.iter_mut().filter(|a| a.alive()) {
+        a.vel.y -= G * dt;
+        a.pos += a.vel * dt;
+        if a.pos.y <= 0.0 {
+            a.pos.y = 0.0;
+            a.vel.y = 0.0;
+            a.grounded = true;
+        } else {
+            a.grounded = false;
+        }
+        for b in &blockers {
+            let d = a.pos.xz() - b.xz();
+            let min = ACTOR_R + HALF;
+            if d.length() < min && a.pos.y < b.y + HALF - 0.1 {
+                let n = d.normalize_or(Vec2::X);
+                let p = b.xz() + n * min;
+                a.pos.x = p.x;
+                a.pos.z = p.y;
+            }
+        }
+    }
+    // Jungle walls block everyone.
+    for a in s.actors.iter_mut().filter(|a| a.alive()) {
+        for b in blocks() {
+            let mut xz = a.pos.xz();
+            if b.push_out(&mut xz, ACTOR_R).is_some() {
+                a.pos.x = xz.x;
+                a.pos.z = xz.y;
+            }
+        }
+    }
+    // Shield walls and bunkers block everyone; a bunker gate only enemies.
+    for a in s.actors.iter_mut().filter(|a| a.alive()) {
+        for w in s.walls.iter().filter(|w| w.blocks_body(a.team)) {
+            let mut xz = a.pos.xz();
+            if w.push_out(&mut xz, ACTOR_R).is_some() {
+                a.pos.x = xz.x;
+                a.pos.z = xz.y;
+            }
+        }
+    }
+    // Bodies don't overlap each other.
+    let n = s.actors.len();
+    for i in 0..n {
+        for j in (i + 1)..n {
+            if !s.actors[i].alive() || !s.actors[j].alive() {
+                continue;
+            }
+            let d = s.actors[j].pos.xz() - s.actors[i].pos.xz();
+            let min = ACTOR_R * 1.8;
+            if d.length() < min {
+                let n = d.normalize_or(Vec2::X) * (min - d.length()) * 0.5;
+                s.actors[i].pos -= n.extend(0.0).xzy();
+                s.actors[j].pos += n.extend(0.0).xzy();
+            }
+        }
+    }
+    for a in &mut s.actors {
+        a.pos.x = a.pos.x.clamp(-arena.x + ACTOR_R, arena.x - ACTOR_R);
+        a.pos.z = a.pos.z.clamp(-arena.y + ACTOR_R, arena.y - ACTOR_R);
+    }
+}
+
+/// Carried crates ride on the carrier's head.
+fn crates_physics(s: &mut Sim) {
+    for c in &mut s.crates {
+        if let CrateState::Carried { by, lift_from, lift_t } = &mut c.state {
+            let head = s.actors[*by].pos + Vec3::Y * HEAD;
+            c.pos = lift_from.lerp(head, (*lift_t / 0.1).min(1.0));
+        }
+    }
+}
+
+fn crates_step(s: &mut Sim, dt: f32) {
+    let snapshot: Vec<(u32, Vec3, bool)> =
+        s.crates.iter().map(|c| (c.id, c.pos, c.state == CrateState::Free)).collect();
+    let mut thrown_hits = Vec::new();
+    for c in &mut s.crates {
+        match &mut c.state {
+            CrateState::Carried { lift_t, .. } => *lift_t += dt,
+            // Locked crates are asleep: no motion to simulate or send.
+            CrateState::Free if c.locked => {}
+            CrateState::Free => {
+                let me = c.id;
+                let others = || snapshot.iter().filter(move |(id, _, free)| *id != me && *free).map(|(_, p, _)| *p);
+                let grounded = crate_motion(
+                    &mut c.pos,
+                    &mut c.vel,
+                    &mut c.settling,
+                    |q| floor_under(q, others()),
+                    dt,
+                );
+                if grounded {
+                    c.thrown_by = None;
+                }
+                if let Some(by) = c.thrown_by {
+                    let team = s.actors.get(by).map_or(0, |a| a.team);
+                    let hit = s.actors.iter().position(|o| {
+                        o.team != team
+                            && o.alive()
+                            && c.pos.xz().distance(o.pos.xz()) < ACTOR_R + HALF
+                            && c.pos.y < o.pos.y + 2.0
+                    });
+                    if let Some(j) = hit {
+                        thrown_hits.push((j, c.vel.with_y(0.0).normalize_or_zero(), by, team));
+                        c.thrown_by = None;
+                        c.vel *= -0.2;
+                    }
+                }
+            }
+        }
+    }
+    // Shield walls stop sliding and low-flying crates.
+    for c in s.crates.iter_mut().filter(|c| c.loose() && c.pos.y - HALF < WALL_H) {
+        for w in s.walls.iter().filter(|w| !w.gate) {
+            let mut xz = c.pos.xz();
+            if let Some(n) = w.push_out(&mut xz, HALF) {
+                c.pos.x = xz.x;
+                c.pos.z = xz.y;
+                let into = c.vel.xz().dot(n);
+                if into < 0.0 {
+                    c.vel -= (n * into * 1.4).extend(0.0).xzy();
+                }
+                c.settling = false;
+            }
+        }
+    }
+    // Curling knocks.
+    let n = s.crates.len();
+    for i in 0..n {
+        for j in (i + 1)..n {
+            let (a, b) = (&s.crates[i], &s.crates[j]);
+            if a.state != CrateState::Free || b.state != CrateState::Free || !side_hit(a.pos, b.pos) || (a.locked && b.locked) {
+                continue;
+            }
+            // A locked crate doesn't budge: the other one bounces off it.
+            if a.locked || b.locked {
+                let (m, o) = if a.locked { (j, i) } else { (i, j) };
+                let d = s.crates[m].pos.xz() - s.crates[o].pos.xz();
+                let (axis, pen) = if (CRATE - d.x.abs()) < (CRATE - d.y.abs()) {
+                    (Vec2::new(d.x.signum(), 0.0), CRATE - d.x.abs())
+                } else {
+                    (Vec2::new(0.0, d.y.signum()), CRATE - d.y.abs())
+                };
+                let c = &mut s.crates[m];
+                c.pos += (axis * pen).extend(0.0).xzy();
+                let into = c.vel.xz().dot(axis);
+                if into < 0.0 {
+                    c.vel -= (axis * into * 1.4).extend(0.0).xzy();
+                }
+                continue;
+            }
+            let rel = a.vel.xz() - b.vel.xz();
+            if rel.length() < 0.3 {
+                continue;
+            }
+            let d = b.pos.xz() - a.pos.xz();
+            let (axis, pen) = if (CRATE - d.x.abs()) < (CRATE - d.y.abs()) {
+                (Vec2::new(d.x.signum(), 0.0), CRATE - d.x.abs())
+            } else {
+                (Vec2::new(0.0, d.y.signum()), CRATE - d.y.abs())
+            };
+            let closing = rel.dot(axis);
+            let push = (axis * pen * 0.5).extend(0.0).xzy();
+            s.crates[i].pos -= push;
+            s.crates[j].pos += push;
+            if closing > 0.0 {
+                let dv = (axis * closing * 0.9).extend(0.0).xzy();
+                s.crates[i].vel -= dv;
+                s.crates[j].vel += dv;
+                s.crates[i].settling = false;
+                s.crates[j].settling = false;
+            }
+        }
+    }
+    for (who, dir, by, team) in thrown_hits {
+        if by == YOU {
+            s.hits += 1;
+        }
+        s.hurt(who, SHOT_DMG * 2.0, dir * 6.0, Some(by), team);
+    }
+}
+
+fn shots_step(s: &mut Sim, dt: f32) {
+    let mut hits = Vec::new();
+    let mut heals = Vec::new();
+    let mut booms = Vec::new();
+    let mut monster_hits = Vec::new();
+    for sh in &mut s.shots {
+        sh.pos += sh.vel * dt;
+        sh.life -= dt;
+        let body = |a: &Actor| {
+            let r = if a.tank.is_some() { 0.9 } else { ACTOR_R + 0.15 };
+            a.alive() && sh.pos.xz().distance(a.pos.xz()) < r && sh.pos.y > a.pos.y && sh.pos.y < a.pos.y + 1.9
+        };
+        // Heal shots heal the first hurt teammate they touch (not the medic who fired).
+        if sh.heal > 0.0
+            && let Some(j) = (0..s.actors.len()).find(|&j| {
+                let a = &s.actors[j];
+                a.team == sh.team && Some(j) != sh.owner && Some(j) != sh.last && a.hp < 100.0 && body(a)
+            })
+        {
+            heals.push((j, sh.heal, sh.bounce, sh.owner, sh.team));
+            sh.life = 0.0;
+            continue;
+        }
+        let hit = (0..s.actors.len()).find(|&j| s.actors[j].team != sh.team && Some(j) != sh.last && body(&s.actors[j]));
+        if let Some(j) = hit {
+            if sh.splash > 0.0 {
+                booms.push(Boom { at: sh.pos, team: sh.team, dmg: sh.dmg, r: sh.splash, owner: sh.owner, split: sh.split, slow: sh.slow });
+                sh.life = 0.0;
+            } else {
+                hits.push((j, sh.vel.normalize(), sh.owner, sh.team, sh.dmg, sh.stagger));
+                // A piercing shot goes on through one more.
+                if sh.pierce > 0 {
+                    sh.pierce -= 1;
+                    sh.last = Some(j);
+                } else {
+                    sh.life = 0.0;
+                }
+            }
+            continue;
+        }
+        let boom = Boom { at: sh.pos, team: sh.team, dmg: sh.dmg, r: sh.splash, owner: sh.owner, split: sh.split, slow: sh.slow };
+        if blocked(sh.pos.xz(), 0.0) {
+            if sh.splash > 0.0 {
+                booms.push(boom);
+            }
+            sh.life = 0.0;
+            continue;
+        }
+        if let Some(m) = s.monsters.iter().position(|m| m.alive() && m.pos.xz().distance(sh.pos.xz()) < 0.9 && sh.pos.y < 2.2) {
+            if sh.splash > 0.0 {
+                booms.push(boom);
+            } else {
+                monster_hits.push((m, sh.dmg, sh.owner));
+            }
+            sh.life = 0.0;
+            continue;
+        }
+        // Walls stop shots from both teams. Enemy shots hurt them; a rivet repairs its own
+        // team's wall; a super shield wall lets its own team's shots through.
+        if let Some(w) = s.walls.iter_mut().find(|w| !w.gate && w.touches(sh.pos.xz(), 0.1) && sh.pos.y < WALL_H) {
+            if w.team != sh.team {
+                if sh.splash == 0.0 {
+                    w.hp -= sh.dmg;
+                    s.wall_dmg[w.team] += sh.dmg;
+                }
+            } else if sh.rivet {
+                let add = s.tv[P::RivetRepair as usize].min(w.max_hp - w.hp).max(0.0);
+                w.hp += add;
+                s.repaired[w.team] += add;
+            } else if w.gold && !w.bunker {
+                continue;
+            }
+            if sh.splash > 0.0 {
+                booms.push(boom);
+            }
+            sh.life = 0.0;
+            continue;
+        }
+        if sh.life <= 0.0 && sh.splash > 0.0 {
+            booms.push(boom);
+        }
+    }
+    s.shots.retain(|sh| {
+        if sh.life <= 0.0 { s.despawn.extend(sh.ent); }
+        sh.life > 0.0
+    });
+    for (who, dir, owner, team, dmg, stagger) in hits {
+        if owner == Some(YOU) {
+            s.hits += 1;
+        }
+        s.hurt(who, dmg, dir * 1.5, owner, team);
+        if stagger > 0.0 {
+            let a = &mut s.actors[who];
+            a.stun = a.stun.max(0.15 + stagger);
+        }
+    }
+    for (j, heal, bounce, owner, team) in heals {
+        s.actors[j].hp = (s.actors[j].hp + heal).min(100.0);
+        s.booms.push((s.actors[j].pos + Vec3::Y, 0.5, 0.15));
+        // Super heal: a second heal shot flies on to the nearest other hurt ally within 4 m.
+        let from = s.actors[j].pos;
+        let next = (0..s.actors.len())
+            .filter(|&m| m != j && Some(m) != owner && s.actors[m].team == team && s.actors[m].alive() && s.actors[m].hp < 100.0)
+            .filter(|&m| s.actors[m].pos.distance(from) < 4.0)
+            .min_by(|&x, &y| s.actors[x].pos.distance(from).total_cmp(&s.actors[y].pos.distance(from)));
+        if bounce && let Some(m) = next {
+            let dir = (s.actors[m].pos - from).with_y(0.0).normalize_or_zero();
+            let start = from + Vec3::Y * CHEST + dir * 0.6;
+            s.shots.push(Shot { heal, last: Some(j), ..Shot::new(start, dir * PROJ_SPEED, owner, team, heal, 5.0 / PROJ_SPEED) });
+        }
+    }
+    for (m, dmg, owner) in monster_hits {
+        s.hurt_monster(m, dmg, owner);
+    }
+    for b in booms {
+        blast(s, b);
+    }
+}
+
+/// A blast goes off: hurts and pushes, and a super rocket's splits into 3 small blasts and
+/// a super tank shell leaves a slow zone.
+fn blast(s: &mut Sim, b: Boom) {
+    s.explode(b.at, b.team, b.dmg, b.r, b.owner);
+    s.booms.push((b.at, b.r, 0.3));
+    if b.split {
+        for k in 0..3 {
+            let off = Vec2::from_angle(k as f32 * 2.09 + 0.5) * b.r * 0.8;
+            let at = b.at + off.extend(0.0).xzy();
+            if !blocked(at.xz(), 0.0) {
+                s.explode(at, b.team, b.dmg * 0.35, b.r * 0.5, b.owner);
+                s.booms.push((at, b.r * 0.5, 0.3));
+            }
+        }
+    }
+    if b.slow {
+        let life = s.n(P::SlowZone);
+        s.zones.push((b.at.with_y(0.0), b.r, life, b.team));
+    }
+}
+
+/// Grenades and med packs in flight. A grenade bounces (a super one sticks to the first
+/// thing it touches) and goes off when its fuse runs out; a med pack lands as a pickup.
+fn lobs_step(s: &mut Sim, dt: f32) {
+    let arena = arena();
+    let mut k = 0;
+    while k < s.lobs.len() {
+        let l = &mut s.lobs[k];
+        l.fuse -= dt;
+        match l.stuck {
+            Some(Some((j, off))) => {
+                if s.actors[j].alive() {
+                    l.pos = s.actors[j].pos + off;
+                } else {
+                    l.stuck = Some(None);
+                }
+            }
+            Some(None) => {}
+            None => {
+                l.vel.y -= G * dt;
+                l.pos += l.vel * dt;
+                let mut touched = false;
+                if l.pos.x.abs() > arena.x - 0.2 || l.pos.z.abs() > arena.y - 0.2 {
+                    l.pos.x = l.pos.x.clamp(-arena.x + 0.2, arena.x - 0.2);
+                    l.pos.z = l.pos.z.clamp(-arena.y + 0.2, arena.y - 0.2);
+                    l.vel.x *= -0.4;
+                    l.vel.z *= -0.4;
+                    touched = true;
+                }
+                for b in blocks() {
+                    let mut xz = l.pos.xz();
+                    if let Some(n) = b.push_out(&mut xz, 0.15) {
+                        l.pos = Vec3::new(xz.x, l.pos.y, xz.y);
+                        let into = l.vel.xz().dot(n);
+                        if into < 0.0 {
+                            l.vel -= (n * into * 1.5).extend(0.0).xzy();
+                        }
+                        touched = true;
+                    }
+                }
+                let low = l.pos.y < WALL_H;
+                for w in s.walls.iter().filter(|w| !w.gate && low) {
+                    let mut xz = l.pos.xz();
+                    if let Some(n) = w.push_out(&mut xz, 0.15) {
+                        l.pos = Vec3::new(xz.x, l.pos.y, xz.y);
+                        let into = l.vel.xz().dot(n);
+                        if into < 0.0 {
+                            l.vel -= (n * into * 1.5).extend(0.0).xzy();
+                        }
+                        touched = true;
+                    }
+                }
+                let on_floor = l.pos.y <= 0.15;
+                if on_floor {
+                    l.pos.y = 0.15;
+                    l.vel.y = if l.vel.y < -3.0 { -l.vel.y * 0.3 } else { 0.0 };
+                    l.vel.x *= 0.6;
+                    l.vel.z *= 0.6;
+                    touched = true;
+                }
+                let body = (0..s.actors.len()).find(|&j| {
+                    let a = &s.actors[j];
+                    j != l.owner && a.alive() && a.pos.xz().distance(l.pos.xz()) < ACTOR_R + 0.2 && l.pos.y > a.pos.y && l.pos.y < a.pos.y + 1.9
+                });
+                if l.kind == TossKind::Grenade && l.gold {
+                    if let Some(j) = body {
+                        l.stuck = Some(Some((j, l.pos - s.actors[j].pos)));
+                    } else if touched {
+                        l.stuck = Some(None);
+                        l.vel = Vec3::ZERO;
+                    }
+                }
+                if l.kind == TossKind::MedPack && on_floor {
+                    let (pos, gold) = (l.pos.with_y(0.5), l.gold);
+                    s.lobs.remove(k);
+                    s.pickups.push(Pickup { pos, drop: Drop::MedPack(gold), life: 30.0 });
+                    continue;
+                }
+            }
+        }
+        let l = &s.lobs[k];
+        if l.kind == TossKind::Grenade && l.fuse <= 0.0 {
+            let (k_, r, dmg) = (s.k(l.gold), s.n(P::GrenadeBlast), s.n(P::GrenadeDmg));
+            let b = Boom { at: l.pos.with_y(l.pos.y.max(0.5)), team: l.team, dmg: dmg * k_, r, owner: Some(l.owner), split: false, slow: false };
+            s.lobs.remove(k);
+            blast(s, b);
+            continue;
+        }
+        k += 1;
+    }
+    // Slow zones from a super tank's cannon.
+    for z in &mut s.zones {
+        z.2 -= dt;
+    }
+    s.zones.retain(|z| z.2 > 0.0);
+    for a in s.actors.iter_mut().filter(|a| a.alive() && a.slow_immune <= 0.0) {
+        if s.zones.iter().any(|z| z.3 != a.team && z.0.xz().distance(a.pos.xz()) < z.1) {
+            a.slow = 0.1;
+        }
+    }
+    for r in &mut s.rally {
+        *r = (*r - dt).max(0.0);
+    }
+}
+
+/// Kick-open progress, locking crates into the pad (lock rule), and crates stacked higher
+/// than 2 on a pad slide off.
+fn pads_step(s: &mut Sim, dt: f32) {
+    for team in 0..2 {
+        let shape = s.pad_state(team).shape;
+        s.odd_t[team] = if shape == Shape::Unaligned { s.odd_t[team] + dt } else { 0.0 };
+        s.pad_t[team] = if shape == s.last_shape[team] { s.pad_t[team] + dt } else { 0.0 };
+        s.last_shape[team] = shape;
+        // With a secret readout you can try to kick any pad; only a recipe opens.
+        let tryable = !s.shown && matches!(shape, Shape::Odd);
+        let held = s.kicking[team].take();
+        if s.hold_kick && shape != Shape::Unaligned && shape != Shape::Busy {
+            let stages = s.stages(team);
+            match held {
+                Some(by) if !stages.is_empty() => {
+                    s.pad_kick[team] += dt;
+                    s.kick_by[team] = Some(by);
+                    // Bots (and a pad with nothing bigger to reach) open at the last stage.
+                    let at = s.stage_at(team, stages.len());
+                    if (by != YOU || !s.you_play) && at == Some(stages.len() - 1) {
+                        s.pad_kick[team] = 0.0;
+                        let (slot, take) = stages[stages.len() - 1];
+                        s.open_stage(team, by, slot, take);
+                    }
+                }
+                Some(YOU) if shape.players() > 0 => {
+                    if s.msgs.last().is_none_or(|m| !m.0.starts_with("team is full")) {
+                        s.say("team is full: this shape brings players, so it won't open");
+                    }
+                }
+                Some(_) => {}
+                None => {
+                    // Released: open the recipe the hold reached.
+                    if let (Some(n), Some(by)) = (s.stage_at(team, stages.len()), s.kick_by[team]) {
+                        let (slot, take) = stages[n];
+                        s.open_stage(team, by, slot, take);
+                    }
+                    s.pad_kick[team] = 0.0;
+                    s.kick_by[team] = None;
+                }
+            }
+        } else {
+        match held {
+            // A pad with a crate out of line can only be cleared by breaking it.
+            Some(by) if s.can_open(team, shape) || shape == Shape::Unaligned || tryable => {
+                s.pad_kick[team] += dt;
+                if s.pad_kick[team] >= KICK_TIME {
+                    s.pad_kick[team] = 0.0;
+                    if tryable {
+                        if by == YOU {
+                            s.say("nothing happened: that's not a recipe. Add crates");
+                        }
+                    } else {
+                        s.open_pad(team, by);
+                    }
+                }
+            }
+            Some(YOU) if shape.players() > 0 => {
+                s.pad_kick[team] = 0.0;
+                if s.msgs.last().is_none_or(|m| !m.0.starts_with("team is full")) {
+                    s.say("team is full: this shape brings players, so it won't open");
+                }
+            }
+            _ => s.pad_kick[team] = (s.pad_kick[team] - dt).max(0.0),
+        }
+        }
+        let pad = pads()[team];
+        let cells = pad_cells(team);
+        let lock = s.vuln == LOCK;
+        for c in s.crates.iter_mut().filter(|c| c.loose() && c.kind.builds() && pad_contains(pad, c.pos)) {
+            if c.pos.y > HALF + 2.0 * CRATE - 0.1 && c.vel.length() < 0.5 {
+                let out = (c.pos.xz() - pad).normalize_or(Vec2::X);
+                c.vel = Vec3::new(out.x * 3.0, 2.0, out.y * 3.0);
+                continue;
+            }
+            let level = (c.pos.y - HALF) / CRATE;
+            let in_cell = cells.iter().any(|q| q.distance(c.pos.xz()) < 0.02) && (level - level.round()).abs() < 0.03;
+            if lock && in_cell && c.vel.length() < 0.05 && !c.settling {
+                c.locked = true;
+                c.vel = Vec3::ZERO;
+            }
+        }
+    }
+}
+
+/// Build timers count down; a finished build gives its result.
+fn builds_step(s: &mut Sim, dt: f32) {
+    for team in 0..2 {
+        if let Some(b) = &mut s.builds[team] {
+            b.left -= dt;
+            if b.left <= 0.0 {
+                s.finish_build(team);
+            }
+        }
+    }
+}
+
+fn walls_step(s: &mut Sim, dt: f32) {
+    for team in 0..2 {
+        if s.walls.iter().any(|w| w.team == team && w.bunker) {
+            s.bunker_time[team] += dt;
+        }
+    }
+    for w in &mut s.walls {
+        w.life -= dt;
+    }
+    let had = [0, 1].map(|t| s.walls.iter().any(|w| w.team == t && w.bunker));
+    let mut broke = Vec::new();
+    s.walls.retain(|w| {
+        let gone = w.life <= 0.0 || w.hp <= 0.0;
+        if gone {
+            s.despawn.extend(w.ent);
+            if w.hp <= 0.0 {
+                broke.push((w.team, w.bunker));
+            }
+        }
+        !gone
+    });
+    // A breached bunker is open: its gate goes with the first wall.
+    for &(team, bunker) in &broke {
+        if bunker {
+            for w in s.walls.iter_mut().filter(|w| w.team == team && w.gate) {
+                w.life = 0.0;
+            }
+        }
+    }
+    for (team, bunker) in broke {
+        let what = if bunker { "bunker wall breached" } else { "shield wall broken" };
+        s.say(format!("{} {what}", ["BLUE", "RED"][team]));
+    }
+    for team in 0..2 {
+        if had[team] && !s.walls.iter().any(|w| w.team == team && w.bunker) {
+            let msg = format!("{} bunker is down: all 8 open again", ["BLUE", "RED"][team]);
+            println!("t={:.1}s {msg}", s.t);
+            s.say(msg);
+        }
+    }
+    for b in &mut s.booms {
+        b.2 -= dt;
+    }
+    s.booms.retain(|b| b.2 > 0.0);
+}
+
+fn vehicles_step(s: &mut Sim, dt: f32) {
+    for i in 0..s.actors.len() {
+        if let Some(t) = &mut s.actors[i].tank {
+            t.life -= dt;
+            if t.life <= 0.0 {
+                s.actors[i].tank = None;
+                if i == YOU {
+                    s.say("your tank ran out of time");
+                }
+            }
+        }
+    }
+}
+
+/// PvE camps: monsters fight whoever comes close or shoots them, chase within their leash,
+/// then walk home and heal. Cleared camps come back after a while.
+fn monsters_step(s: &mut Sim, dt: f32) {
+    for m in 0..s.monsters.len() {
+        let mon = &mut s.monsters[m];
+        if !mon.alive() {
+            mon.respawn -= dt;
+            if mon.respawn <= 0.0 {
+                mon.respawn = 0.0;
+                mon.hp = mon.max;
+                mon.pos = mon.home;
+            }
+            continue;
+        }
+        mon.cd -= dt;
+        // Keep a target while it's alive and within the leash; else pick up anyone close.
+        let home = mon.home;
+        let keep = mon.target.filter(|&t| s.actors[t].alive() && s.actors[t].pos.xz().distance(home.xz()) < LEASH + 2.0);
+        let pos = mon.pos;
+        let near = (0..s.actors.len())
+            .filter(|&j| s.actors[j].alive() && s.actors[j].pos.xz().distance(pos.xz()) < 3.5)
+            .min_by(|&a, &b| s.actors[a].pos.distance(pos).total_cmp(&s.actors[b].pos.distance(pos)));
+        let target = keep.or(near);
+        let mon = &mut s.monsters[m];
+        mon.target = target;
+        let goal = match target {
+            Some(t) => s.actors[t].pos,
+            None => mon.home,
+        };
+        let to = (goal - mon.pos).with_y(0.0);
+        let reach = if target.is_some() { 1.5 } else { 0.2 };
+        if to.length() > reach {
+            let speed = if target.is_some() { 4.8 } else { 6.0 };
+            mon.pos += to.normalize() * speed * dt;
+        }
+        if target.is_none() && to.length() < 0.5 {
+            mon.hp = (mon.hp + mon.max * 0.5 * dt).min(mon.max);
+        }
+        if let Some(t) = target
+            && to.length() < 1.7
+            && mon.cd <= 0.0
+        {
+            mon.cd = 1.0;
+            let (dmg, knock) = (mon.dmg, to.normalize_or_zero() * 3.0);
+            s.hurt(t, dmg, knock, None, 2);
+        }
+    }
+}
+
+/// Heals and shields lying where a camp was cleared: whoever walks over one gets it.
+fn pickups_step(s: &mut Sim, dt: f32) {
+    let mut k = 0;
+    while k < s.pickups.len() {
+        s.pickups[k].life -= dt;
+        let at = s.pickups[k].pos;
+        let by = (0..s.actors.len()).find(|&j| s.actors[j].alive() && s.actors[j].pos.xz().distance(at.xz()) < 1.2);
+        if let Some(j) = by {
+            let drop = s.pickups.remove(k).drop;
+            let team = s.actors[j].team;
+            let pack = s.n(P::MedPackHp);
+            let a = &mut s.actors[j];
+            let what = match drop {
+                Drop::Heal => {
+                    a.hp = (a.hp + 60.0).min(100.0);
+                    s.camp_heals[team] += 1;
+                    "a heal (+60 hp)"
+                }
+                Drop::MedPack(gold) => {
+                    a.hp = (a.hp + pack).min(100.0);
+                    if gold {
+                        a.shield = (a.shield + 25.0).min(100.0);
+                    }
+                    s.pack_heals[team] += 1;
+                    if gold { "a SUPER med pack" } else { "a med pack" }
+                }
+                _ => {
+                    a.shield = (a.shield + 60.0).min(100.0);
+                    "a shield (+60)"
+                }
+            };
+            let who = if j == YOU { "you".to_string() } else { s.describe(j) };
+            s.say(format!("{who} picked up {what}"));
+            continue;
+        }
+        if s.pickups[k].life <= 0.0 {
+            s.pickups.remove(k);
+            continue;
+        }
+        k += 1;
+    }
+}
+
+fn refill(s: &mut Sim, dt: f32) {
+    let loose = s
+        .crates
+        .iter()
+        .filter(|c| c.kind == Kind::Normal)
+        .filter(|c| c.state != CrateState::Free || !(pad_contains(pads()[0], c.pos) || pad_contains(pads()[1], c.pos)))
+        .count();
+    let want = if s.map { 14 + 2 * s.team_size } else { 3 + 2 * s.team_size };
+    if loose < want {
+        let a = arena();
+        // On the lanes map new crates land in the contested middle: the river and mid lane.
+        let span = Vec2::new(a.x * if s.map { 0.25 } else { 0.4 }, a.y * 0.8);
+        let p = open_spot(|| s.rand(), span);
+        s.spawn_crate(Kind::Normal, Vec3::new(p.x, 10.0, p.y));
+    }
+    // One super crate at a time drops somewhere in the middle third.
+    if s.super_mode > 0 && !s.crates.iter().any(|c| c.kind == Kind::Super) {
+        s.super_respawn -= dt;
+        if s.super_respawn <= 0.0 {
+            let span = Vec2::new(arena().x * if s.map { 0.1 } else { 0.3 }, arena().y * 0.7);
+            let p = open_spot(|| s.rand(), span);
+            s.spawn_crate(Kind::Super, Vec3::new(p.x, 10.0, p.y));
+            s.super_respawn = 25.0;
+            s.say("a SUPER crate dropped in the middle");
+        }
+    }
+    if s.crates.iter().filter(|c| c.kind == Kind::Loot).count() < 2 {
+        s.loot_respawn -= dt;
+        if s.loot_respawn <= 0.0 {
+            let p = open_spot(|| s.rand(), Vec2::new(3.0 * arena_scale().min(2.0), arena().y * 0.65));
+            s.spawn_crate(Kind::Loot, Vec3::new(p.x, 10.0, p.y));
+            s.loot_respawn = 6.0;
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------------------
+// Presentation
+// ---------------------------------------------------------------------------------------
+
+#[derive(Resource)]
+struct Looks {
+    crate_mesh: Handle<Mesh>,
+    normal: Handle<StandardMaterial>,
+    loot: Handle<StandardMaterial>,
+    sup: Handle<StandardMaterial>,
+    monster_mesh: Handle<Mesh>,
+    monster_mat: [Handle<StandardMaterial>; 2],
+    marker: Handle<Mesh>,
+    camp: Handle<StandardMaterial>,
+    wall_mesh: Handle<Mesh>,
+    wall_mat: [Handle<StandardMaterial>; 2],
+    shot_mesh: Handle<Mesh>,
+    shot_mat: [Handle<StandardMaterial>; 2],
+    body: Handle<Mesh>,
+    nose: Handle<Mesh>,
+    band: Handle<Mesh>,
+    team: [Handle<StandardMaterial>; 2],
+    player: [Handle<StandardMaterial>; 8],
+}
+
+#[derive(Component)]
+struct Hud;
+
+#[derive(Component)]
+struct Ground;
+
+#[derive(Component)]
+struct PadView(usize);
+
+fn sync_arena(
+    mut ground: Single<&mut Transform, With<Ground>>,
+    mut pad_views: Query<(&PadView, &mut Transform), Without<Ground>>,
+) {
+    let a = arena();
+    ground.scale = Vec3::new(a.x * 2.0, 1.0, a.y * 2.0);
+    for (p, mut tf) in &mut pad_views {
+        let pad = pads()[p.0];
+        tf.translation = Vec3::new(pad.x, 0.01, pad.y);
+    }
+}
+
+#[derive(Component)]
+struct Panel;
+
+#[derive(Component)]
+struct Minimap;
+
+/// A marker only the minimap sees: a player (actor index) or a camp (monster index).
+#[derive(Component)]
+enum Marker {
+    Actor(usize),
+    Monster(usize),
+}
+
+/// The lanes map's static meshes (walls, lane floors, river), rebuilt when the map changes.
+#[derive(Resource, Default)]
+struct MapView {
+    built: Option<bool>,
+    ents: Vec<Entity>,
+}
+
+fn sync_map(
+    mut commands: Commands,
+    sim: Res<Sim>,
+    mut view: ResMut<MapView>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut mats: ResMut<Assets<StandardMaterial>>,
+) {
+    if view.built == Some(sim.map) && !view.ents.is_empty() == sim.map {
+        return;
+    }
+    for e in view.ents.drain(..) {
+        commands.entity(e).despawn();
+    }
+    view.built = Some(sim.map);
+    if !sim.map {
+        return;
+    }
+    let wall = mats.add(Color::srgb(0.16, 0.3, 0.14));
+    for b in blocks() {
+        let size = b.max - b.min;
+        let c = (b.min + b.max) / 2.0;
+        let e = commands
+            .spawn((
+                Mesh3d(meshes.add(Cuboid::new(size.x, BLOCK_H, size.y))),
+                MeshMaterial3d(wall.clone()),
+                Transform::from_xyz(c.x, BLOCK_H / 2.0, c.y),
+            ))
+            .id();
+        view.ents.push(e);
+    }
+    // Floors: jungle darker, lanes lighter, river blue.
+    let mut floor = |commands: &mut Commands, c: Vec2, size: Vec2, color: Color, y: f32| {
+        let e = commands
+            .spawn((
+                Mesh3d(meshes.add(Cuboid::new(size.x, 0.02, size.y))),
+                MeshMaterial3d(mats.add(color)),
+                Transform::from_xyz(c.x, y, c.y),
+            ))
+            .id();
+        view.ents.push(e);
+    };
+    for sx in [-1.0, 1.0] {
+        for sz in [-1.0, 1.0] {
+            floor(&mut commands, Vec2::new(17.5 * sx, 11.0 * sz), Vec2::new(27.0, 13.0), Color::srgb(0.2, 0.27, 0.18), 0.005);
+        }
+    }
+    let lane = Color::srgb(0.48, 0.45, 0.36);
+    floor(&mut commands, Vec2::new(0.0, 21.5), Vec2::new(62.0, 7.0), lane, 0.006);
+    floor(&mut commands, Vec2::new(0.0, -21.5), Vec2::new(62.0, 7.0), lane, 0.006);
+    floor(&mut commands, Vec2::new(0.0, 0.0), Vec2::new(62.0, 8.0), lane, 0.006);
+    floor(&mut commands, Vec2::new(0.0, 0.0), Vec2::new(8.0, 50.0), Color::srgb(0.22, 0.38, 0.55), 0.008);
+    for (team, color) in TEAM_COLOR.into_iter().enumerate() {
+        let x = if team == 0 { -38.0 } else { 38.0 };
+        floor(&mut commands, Vec2::new(x, 0.0), Vec2::new(14.0, 50.0), color.mix(&Color::srgb(0.3, 0.33, 0.3), 0.75), 0.004);
+    }
+}
+
+/// Sizes the minimap to the bottom-right corner, and turns it off in the open arena.
+fn minimap_view(sim: Res<Sim>, window: Single<&Window>, mut cam: Single<&mut Camera, With<Minimap>>) {
+    cam.is_active = sim.map;
+    let size = window.physical_size();
+    let w = (size.x as f32 * 0.3) as u32;
+    let h = (w as f32 * (MAP_HALF.y + 1.0) / (MAP_HALF.x + 1.0)) as u32;
+    if w < 10 || h + 10 > size.y {
+        return;
+    }
+    cam.viewport = Some(Viewport {
+        physical_position: UVec2::new(size.x - w - 10, size.y - h - 10),
+        physical_size: UVec2::new(w, h),
+        ..default()
+    });
+}
+
+/// Minimap markers follow the players and camps they stand for.
+fn sync_markers(
+    mut commands: Commands,
+    sim: Res<Sim>,
+    looks: Res<Looks>,
+    mut markers: Query<(Entity, &Marker, &mut Transform, &mut Visibility)>,
+    mut seen: Local<(usize, usize)>,
+) {
+    if *seen != (sim.actors.len(), sim.monsters.len()) {
+        for (e, ..) in &markers {
+            commands.entity(e).despawn();
+        }
+        *seen = (sim.actors.len(), sim.monsters.len());
+        for (i, a) in sim.actors.iter().enumerate() {
+            let mat = if i == YOU { looks.player[0].clone() } else { looks.team[a.team].clone() };
+            commands.spawn((Marker::Actor(i), Mesh3d(looks.marker.clone()), MeshMaterial3d(mat), Transform::default(), RenderLayers::layer(1)));
+        }
+        for m in 0..sim.monsters.len() {
+            commands.spawn((Marker::Monster(m), Mesh3d(looks.marker.clone()), MeshMaterial3d(looks.camp.clone()), Transform::default(), RenderLayers::layer(1)));
+        }
+        return;
+    }
+    for (_, marker, mut tf, mut vis) in &mut markers {
+        let (pos, alive, scale) = match marker {
+            Marker::Actor(i) => (sim.actors[*i].pos, sim.actors[*i].alive(), if *i == YOU { 1.3 } else { 1.0 }),
+            Marker::Monster(m) => (sim.monsters[*m].pos, sim.monsters[*m].alive(), 0.8),
+        };
+        tf.translation = pos.with_y(30.0);
+        tf.scale = Vec3::splat(scale);
+        *vis = if alive && sim.map { Visibility::Visible } else { Visibility::Hidden };
+    }
+}
+
+#[derive(Component)]
+struct GuideText;
+
+fn setup(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, mut mats: ResMut<Assets<StandardMaterial>>) {
+    commands.spawn((
+        MainCamera,
+        IsDefaultUiCamera,
+        Camera3d::default(),
+        Transform::from_translation(CAM_OFFSET).looking_at(Vec3::ZERO, Vec3::Y),
+    ));
+    // Minimap: a top-down camera in the bottom-right corner, north up. It also sees
+    // layer 1, where the big player and camp markers live.
+    commands.spawn((
+        Minimap,
+        Camera3d::default(),
+        Camera { order: 1, clear_color: ClearColorConfig::Custom(Color::srgb(0.05, 0.06, 0.08)), ..default() },
+        Projection::from(OrthographicProjection {
+            scaling_mode: ScalingMode::Fixed { width: MAP_HALF.x * 2.0 + 2.0, height: MAP_HALF.y * 2.0 + 2.0 },
+            ..OrthographicProjection::default_3d()
+        }),
+        RenderLayers::from_layers(&[0, 1]),
+        Transform::from_xyz(0.0, 80.0, 0.0).looking_at(Vec3::ZERO, Vec3::NEG_Z),
+    ));
+    commands.spawn((
+        DirectionalLight { illuminance: 9_000.0, shadow_maps_enabled: true, ..default() },
+        Transform::from_xyz(8.0, 20.0, 10.0).looking_at(Vec3::ZERO, Vec3::Y),
+    ));
+    // Ground and pads are resized and moved by `sync_arena`.
+    commands.spawn((
+        Ground,
+        Mesh3d(meshes.add(Cuboid::new(1.0, 0.1, 1.0))),
+        MeshMaterial3d(mats.add(Color::srgb(0.32, 0.36, 0.3))),
+        Transform::from_xyz(0.0, -0.05, 0.0),
+    ));
+    for (team, color) in TEAM_COLOR.into_iter().enumerate() {
+        commands.spawn((
+            PadView(team),
+            Mesh3d(meshes.add(Cuboid::new(PAD_HALF * 2.0, 0.02, PAD_HALF * 2.0))),
+            MeshMaterial3d(mats.add(color.with_alpha(0.6))),
+            Transform::from_xyz(0.0, 0.01, 0.0),
+        ));
+    }
+    commands.insert_resource(Looks {
+        crate_mesh: meshes.add(Cuboid::from_length(CRATE)),
+        normal: mats.add(Color::srgb(0.75, 0.6, 0.35)),
+        loot: mats.add(Color::srgb(1.0, 0.5, 0.05)),
+        sup: mats.add(StandardMaterial {
+            base_color: Color::srgb(0.75, 0.3, 1.0),
+            emissive: LinearRgba::rgb(0.9, 0.3, 1.6),
+            ..default()
+        }),
+        monster_mesh: meshes.add(Sphere::new(0.8)),
+        monster_mat: [mats.add(Color::srgb(0.55, 0.4, 0.2)), mats.add(Color::srgb(0.6, 0.25, 0.7))],
+        marker: meshes.add(Cylinder::new(1.1, 0.1)),
+        camp: mats.add(StandardMaterial { base_color: Color::srgb(1.0, 0.85, 0.2), unlit: true, ..default() }),
+        wall_mesh: meshes.add(Cuboid::new(WALL_HALF_T * 2.0, WALL_H, 1.0)),
+        wall_mat: TEAM_COLOR.map(|c| {
+            mats.add(StandardMaterial { base_color: c.with_alpha(0.45), alpha_mode: AlphaMode::Blend, ..default() })
+        }),
+        shot_mesh: meshes.add(Sphere::new(0.15)),
+        shot_mat: [
+            mats.add(StandardMaterial { emissive: LinearRgba::rgb(0.6, 1.4, 3.0), ..default() }),
+            mats.add(StandardMaterial { emissive: LinearRgba::rgb(3.0, 0.6, 0.3), ..default() }),
+        ],
+        body: meshes.add(Capsule3d::new(ACTOR_R, 1.0)),
+        nose: meshes.add(Cuboid::new(0.25, 0.25, 0.4)),
+        band: meshes.add(Cylinder::new(ACTOR_R + 0.06, 0.22)),
+        team: TEAM_COLOR.map(|c| mats.add(c)),
+        player: PLAYER_COLOR.map(|c| mats.add(StandardMaterial { base_color: c, emissive: c.to_linear() * 0.4, ..default() })),
+    });
+    commands.spawn((
+        Hud,
+        Text::new(""),
+        TextFont::from_font_size(15.0),
+        Node { position_type: PositionType::Absolute, bottom: px(10.0), left: px(10.0), ..default() },
+        BackgroundColor(Color::BLACK.with_alpha(0.5)),
+    ));
+    commands.spawn((
+        GuideText,
+        Text::new(""),
+        TextFont::from_font_size(14.0),
+        Node {
+            position_type: PositionType::Absolute,
+            top: px(10.0),
+            left: px(10.0),
+            padding: UiRect::all(px(10.0)),
+            max_width: percent(70.0),
+            ..default()
+        },
+        BackgroundColor(Color::BLACK.with_alpha(0.7)),
+    ));
+    commands.spawn((
+        Panel,
+        Text::new(""),
+        TextFont::from_font_size(14.0),
+        Node { position_type: PositionType::Absolute, top: px(10.0), right: px(10.0), padding: UiRect::all(px(8.0)), ..default() },
+        BackgroundColor(Color::BLACK.with_alpha(0.6)),
+    ));
+}
+
+fn sync_views(
+    mut commands: Commands,
+    mut sim: ResMut<Sim>,
+    tune: Res<Tune>,
+    looks: Res<Looks>,
+    mut q: Query<(&mut Transform, &mut Visibility)>,
+) {
+    for e in sim.despawn.drain(..) {
+        commands.entity(e).despawn();
+    }
+    let shown_pos: Vec<Vec3> = (0..sim.actors.len()).map(|i| shown_at(&sim, i, &tune)).collect();
+    for (i, a) in sim.actors.iter_mut().enumerate() {
+        let rot = Transform::IDENTITY.looking_to(a.facing, Vec3::Y).rotation;
+        match a.ent {
+            Some(e) => {
+                if let Ok((mut tf, mut vis)) = q.get_mut(e) {
+                    tf.translation = shown_pos[i];
+                    tf.rotation = rot;
+                    *vis = if a.alive() { Visibility::Visible } else { Visibility::Hidden };
+                }
+            }
+            None => {
+                let body = looks.team[a.team].clone();
+                let band = looks.player[a.slot % PLAYER_COLOR.len()].clone();
+                let (bm, nm, band_m) = (looks.body.clone(), looks.nose.clone(), looks.band.clone());
+                a.ent = Some(
+                    commands
+                        .spawn((
+                            Transform::from_translation(shown_pos[i]).with_rotation(rot),
+                            Visibility::default(),
+                        ))
+                        .with_children(|p| {
+                            p.spawn((Mesh3d(bm), MeshMaterial3d(body.clone()), Transform::from_xyz(0.0, 0.95, 0.0)));
+                            p.spawn((Mesh3d(nm), MeshMaterial3d(body), Transform::from_xyz(0.0, 1.3, -0.5)));
+                            p.spawn((Mesh3d(band_m), MeshMaterial3d(band), Transform::from_xyz(0.0, 1.0, 0.0)));
+                        })
+                        .id(),
+                );
+            }
+        }
+    }
+    for c in &mut sim.crates {
+        match c.ent {
+            Some(e) => {
+                if let Ok((mut tf, _)) = q.get_mut(e) {
+                    tf.translation = c.pos;
+                }
+            }
+            None => {
+                let mat = match c.kind {
+                    Kind::Loot => looks.loot.clone(),
+                    Kind::Super => looks.sup.clone(),
+                    Kind::Normal => looks.normal.clone(),
+                };
+                c.ent = Some(
+                    commands
+                        .spawn((Mesh3d(looks.crate_mesh.clone()), MeshMaterial3d(mat), Transform::from_translation(c.pos)))
+                        .id(),
+                );
+            }
+        }
+    }
+    for m in &mut sim.monsters {
+        match m.ent {
+            Some(e) => {
+                if let Ok((mut tf, mut vis)) = q.get_mut(e) {
+                    tf.translation = m.pos + Vec3::Y * 0.8;
+                    *vis = if m.alive() { Visibility::Visible } else { Visibility::Hidden };
+                }
+            }
+            None => {
+                let big = m.drop == Drop::Super;
+                let mat = looks.monster_mat[big as usize].clone();
+                m.ent = Some(
+                    commands
+                        .spawn((
+                            Mesh3d(looks.monster_mesh.clone()),
+                            MeshMaterial3d(mat),
+                            Transform::from_translation(m.pos + Vec3::Y * 0.8).with_scale(Vec3::splat(if big { 1.4 } else { 1.0 })),
+                        ))
+                        .id(),
+                );
+            }
+        }
+    }
+    for w in &mut sim.walls {
+        if w.ent.is_none() {
+            let (m, mat) = (looks.wall_mesh.clone(), looks.wall_mat[w.team].clone());
+            // The mesh is 1 m long on z and thin on x: turn x to face the wall's normal.
+            let tf = Transform::from_translation(w.pos + Vec3::Y * WALL_H / 2.0)
+                .with_rotation(Quat::from_rotation_arc(Vec3::X, w.normal))
+                .with_scale(Vec3::new(1.0, if w.gate { 0.15 } else { 1.0 }, w.half_len * 2.0));
+            w.ent = Some(commands.spawn((Mesh3d(m), MeshMaterial3d(mat), tf)).id());
+        }
+    }
+    for sh in &mut sim.shots {
+        match sh.ent {
+            Some(e) => {
+                if let Ok((mut tf, _)) = q.get_mut(e) {
+                    tf.translation = sh.pos;
+                }
+            }
+            None => {
+                let mat = looks.shot_mat[sh.team].clone();
+                sh.ent = Some(
+                    commands
+                        .spawn((Mesh3d(looks.shot_mesh.clone()), MeshMaterial3d(mat), Transform::from_translation(sh.pos)))
+                        .id(),
+                );
+            }
+        }
+    }
+}
+
+fn follow_camera(time: Res<Time>, sim: Res<Sim>, tune: Res<Tune>, mut cam: Single<&mut Transform, With<MainCamera>>) {
+    let k = 1.0 - (-time.delta_secs() * 6.0).exp();
+    if tune.c(P::Camera) == 1 {
+        let want = ARENA_CAM * arena_scale().max(1.0);
+        cam.translation = cam.translation.lerp(want, k);
+        let look = cam.translation - want;
+        cam.look_at(look, Vec3::Y);
+        return;
+    }
+    let off = if sim.map { CAM_OFFSET * 1.25 } else { CAM_OFFSET };
+    let want = sim.actors[YOU].pos.with_y(0.0) + off;
+    cam.translation = cam.translation.lerp(want, k);
+    let look = cam.translation - off;
+    cam.look_at(look, Vec3::Y);
+}
+
+fn ground_circle(p: Vec3) -> Isometry3d {
+    Isometry3d::new(p, Quat::from_rotation_x(FRAC_PI_2))
+}
+
+fn draw_gizmos(mut g: Gizmos, sim: Res<Sim>, tune: Res<Tune>, controls: Res<Controls>) {
+    let you_play = tune.c(P::Seat) == 0;
+    let a = &sim.actors[YOU];
+    let pos_of = |i: usize| shown_at(&sim, i, &tune);
+    if you_play && a.alive() {
+        let chest = a.pos + Vec3::Y * CHEST;
+        g.line(chest, chest + a.facing * 8.0, Color::srgba(1.0, 1.0, 1.0, 0.5));
+        let plan = a.carrying.map(|_| throw_plan(&sim, controls.aim_dist));
+        if let Some(p) = controls.aim_point
+            && plan.as_ref().is_none_or(|p| p.target.is_none())
+        {
+            g.circle(ground_circle(p), 0.35, Color::srgb(1.0, 0.3, 0.3));
+            g.circle(ground_circle(p.with_y(0.03)), 0.35, Color::srgba(1.0, 0.3, 0.3, 0.4));
+            g.line(p.with_y(0.03), p, Color::srgba(1.0, 0.3, 0.3, 0.4));
+        }
+        if a.carrying.is_none() {
+            g.circle(ground_circle(a.pos + Vec3::Y * 0.03), GRAB_REACH + HALF, Color::srgba(1.0, 1.0, 1.0, 0.15));
+            if sim.pending.is_none()
+                && let Some((id, _)) = sim.nearest_free(YOU, GRAB_REACH)
+                && let Some(c) = sim.crates.iter().find(|c| c.id == id)
+            {
+                g.cube(Transform::from_translation(c.pos).with_scale(Vec3::splat(CRATE * 1.08)), Color::WHITE);
+            }
+        }
+        // Reach mask over the grab round trip.
+        if let Some(p) = &sim.pending
+            && let Some(c) = sim.crates.iter().find(|c| c.id == p.crate_id)
+        {
+            let progress = 1.0 - (p.left / p.total).clamp(0.0, 1.0);
+            let hand = chest.lerp(c.pos, progress);
+            g.line(chest, hand, TEAM_COLOR[0]);
+            g.sphere(Isometry3d::from_translation(hand), 0.15, TEAM_COLOR[0]);
+        }
+        if let Some(plan) = &plan {
+            let ghost = |g: &mut Gizmos, at: Vec3, color: Color| {
+                g.cube(Transform::from_translation(at).with_scale(Vec3::splat(CRATE)), color);
+            };
+            let near = sim.place_target(YOU);
+            match plan.target {
+                Some(t) => {
+                    g.circle(ground_circle(t.with_y(t.y - HALF + 0.03)), 0.55, Color::srgb(0.6, 1.0, 1.0));
+                    g.circle(ground_circle(t.with_y(t.y - HALF + 0.03)), 0.1, Color::srgb(0.6, 1.0, 1.0));
+                    let color = if plan.knock { Color::srgb(1.0, 0.55, 0.1) } else { Color::srgb(0.6, 1.0, 1.0) };
+                    ghost(&mut g, plan.landing.with_y(plan.landing.y.max(HALF)), color);
+                    if t.xz().distance(a.pos.xz()) > PLACE_REACH {
+                        ghost(&mut g, near, Color::srgba(0.6, 1.0, 1.0, 0.25));
+                    }
+                }
+                None => ghost(&mut g, near, Color::srgb(0.6, 1.0, 1.0)),
+            }
+            let color = if plan.short { Color::srgb(1.0, 0.4, 0.2) } else { Color::srgb(0.4, 1.0, 0.4) };
+            g.linestrip(plan.path.iter().copied(), color);
+        }
+    }
+    let kt = KICK_TIME;
+    for c in sim.crates.iter().filter(|c| c.kind == Kind::Loot && c.kick > 0.0) {
+        g.circle(ground_circle(c.pos.with_y(0.04)), 0.2 + 0.6 * (c.kick / kt).min(1.0), Color::srgb(1.0, 0.7, 0.1));
+    }
+    // Pads: 4 cells, gold when what's on them can be kicked open (pad readout on), the kick
+    // progress, and a build's timer and health.
+    for (team, pad) in pads().into_iter().enumerate() {
+        let shape = sim.pad_state(team).shape;
+        let ready = sim.shown && sim.can_open(team, shape);
+        let color = if ready { Color::srgb(1.0, 0.8, 0.1) } else { Color::WHITE };
+        let iso = Isometry3d::new(pad.extend(0.03).xzy(), Quat::from_rotation_x(FRAC_PI_2));
+        g.rect(iso, Vec2::splat(PAD_HALF * 2.0), color);
+        let c = pad.extend(0.03).xzy();
+        g.line(c - Vec3::X * PAD_HALF, c + Vec3::X * PAD_HALF, color.with_alpha(0.6));
+        g.line(c - Vec3::Z * PAD_HALF, c + Vec3::Z * PAD_HALF, color.with_alpha(0.6));
+        if sim.pad_kick[team] > 0.0 {
+            let k = (sim.pad_kick[team] / KICK_TIME).min(1.0);
+            g.circle(ground_circle(c + Vec3::Y * 0.02), PAD_HALF * 1.5 + 0.6 * k, Color::srgb(1.0, 0.7, 0.1));
+        }
+        if let Some(b) = &sim.builds[team] {
+            let done = 1.0 - b.left / b.total;
+            g.circle(ground_circle(c + Vec3::Y * 0.05), PAD_HALF * 1.6, Color::srgb(0.3, 1.0, 1.0));
+            g.circle(ground_circle(c + Vec3::Y * 0.05), 0.2 + PAD_HALF * 1.4 * done, Color::srgb(0.3, 1.0, 1.0));
+            let top = c + Vec3::Y * 2.4 - Vec3::X * 0.8;
+            g.line(top, top + Vec3::X * 1.6 * (b.hp / b.max_hp).max(0.0), Color::srgb(1.0, 0.3, 0.3));
+        }
+    }
+    // Hold-to-choose: gold outlines on the crates the held kick would use.
+    if sim.hold_kick {
+        for team in 0..2 {
+            let stages = sim.stages(team);
+            if let Some(k) = sim.stage_at(team, stages.len()) {
+                let ids = sim.stage_ids(team, stages[k].1);
+                for c in sim.crates.iter().filter(|c| ids.contains(&c.id)) {
+                    g.cube(Transform::from_translation(c.pos).with_scale(Vec3::splat(CRATE * 1.06)), Color::srgb(1.0, 0.8, 0.1));
+                }
+            }
+        }
+    }
+    // Locked crates get a dark outline: asleep, untouchable until kicked open.
+    for c in sim.crates.iter().filter(|c| c.locked) {
+        g.cube(Transform::from_translation(c.pos).with_scale(Vec3::splat(CRATE * 1.02)), Color::srgb(0.1, 0.1, 0.1));
+    }
+    // Tanks: a hull around the driver, and its health.
+    for (i, b) in sim.actors.iter().enumerate().filter(|(_, b)| b.alive()) {
+        if let Some(t) = &b.tank {
+            let p = pos_of(i);
+            let rot = Transform::IDENTITY.looking_to(b.facing, Vec3::Y).rotation;
+            g.cube(Transform::from_translation(p + Vec3::Y * 0.6).with_rotation(rot).with_scale(Vec3::new(1.8, 1.0, 2.4)), TEAM_COLOR[b.team]);
+            g.line(p + Vec3::Y * 1.2, p + Vec3::Y * 1.2 + b.facing * 1.8, TEAM_COLOR[b.team]);
+            let top = p + Vec3::Y * 2.8 - Vec3::X * 0.6;
+            g.line(top, top + Vec3::X * 1.2 * (t.hp / t.max).max(0.0), Color::srgb(0.3, 0.8, 1.0));
+            if t.gold {
+                g.cube(Transform::from_translation(p + Vec3::Y * 0.6).with_rotation(rot).with_scale(Vec3::new(1.9, 1.1, 2.5)), Color::srgb(1.0, 0.85, 0.2));
+            }
+        }
+        if let Some(gun) = &b.gun {
+            let col = if gun.gold { Color::srgb(1.0, 0.85, 0.2) } else { Color::srgb(0.9, 0.9, 0.9) };
+            let p = pos_of(i) + Vec3::Y * CHEST;
+            g.line(p, p + b.facing * 1.0, col);
+        }
+    }
+    // Class markers over heads: soldier ^, engineer square, medic +.
+    {
+        for (i, b) in sim.actors.iter().enumerate().filter(|(_, b)| b.alive()) {
+            let p = pos_of(i) + Vec3::Y * 3.0;
+            let col = PLAYER_COLOR[b.slot % PLAYER_COLOR.len()];
+            match b.class {
+                Class::Soldier => g.linestrip([p - Vec3::X * 0.3, p + Vec3::Y * 0.4, p + Vec3::X * 0.3, p - Vec3::X * 0.3], col),
+                Class::Engineer => g.rect(Isometry3d::from_translation(p + Vec3::Y * 0.2), Vec2::splat(0.5), col),
+                Class::Medic => {
+                    g.line(p - Vec3::X * 0.3 + Vec3::Y * 0.2, p + Vec3::X * 0.3 + Vec3::Y * 0.2, col);
+                    g.line(p - Vec3::Y * 0.1, p + Vec3::Y * 0.5, col);
+                }
+            }
+        }
+    }
+    for m in sim.monsters.iter().filter(|m| m.alive()) {
+        if m.hp < m.max {
+            let top = m.pos + Vec3::Y * 2.6 - Vec3::X * 0.8;
+            g.line(top, top + Vec3::X * 1.6 * (m.hp / m.max).max(0.0), Color::srgb(1.0, 0.85, 0.2));
+        }
+        if m.target.is_some() {
+            g.circle(ground_circle(m.home.with_y(0.04)), LEASH, Color::srgba(1.0, 0.85, 0.2, 0.25));
+        }
+    }
+    for p in &sim.pickups {
+        let col = if p.drop == Drop::Heal { Color::srgb(0.2, 1.0, 0.3) } else { Color::srgb(0.3, 0.8, 1.0) };
+        let bob = p.pos + Vec3::Y * (0.2 * (sim.t * 3.0).sin());
+        g.sphere(Isometry3d::from_translation(bob), 0.35, col);
+        g.circle(ground_circle(p.pos.with_y(0.04)), 0.6, col);
+    }
+    for (i, b) in sim.actors.iter().enumerate().filter(|(_, b)| b.alive() && b.shield > 0.0) {
+        let top = pos_of(i) + Vec3::Y * 2.62 - Vec3::X * 0.4;
+        g.line(top, top + Vec3::X * 0.8 * (b.shield / 100.0), Color::srgb(0.3, 0.8, 1.0));
+    }
+    // Walls: hp bar over the middle, gold edges on a super one, a dashed gate.
+    let gold = Color::srgb(1.0, 0.85, 0.2);
+    for w in &sim.walls {
+        let tan = Vec3::new(-w.normal.z, 0.0, w.normal.x);
+        let top = w.pos + Vec3::Y * (WALL_H + 0.3);
+        if w.gate {
+            for k in 0..4 {
+                let a = w.pos + tan * (-w.half_len + k as f32 * w.half_len / 2.0) + Vec3::Y * 0.3;
+                g.line(a, a + tan * w.half_len / 4.0, TEAM_COLOR[w.team]);
+            }
+            continue;
+        }
+        g.line(top - tan * 0.8, top - tan * 0.8 + tan * 1.6 * (w.hp / w.max_hp).max(0.0), Color::srgb(1.0, 0.3, 0.3));
+        if w.gold {
+            let a = w.pos + Vec3::Y * WALL_H;
+            g.line(a - tan * w.half_len, a + tan * w.half_len, gold);
+        }
+    }
+    // Grenades (red, the ring grows as the fuse runs down) and med packs (green).
+    for l in &sim.lobs {
+        match l.kind {
+            TossKind::Grenade => {
+                g.sphere(Isometry3d::from_translation(l.pos), 0.18, if l.gold { gold } else { Color::srgb(1.0, 0.2, 0.1) });
+                let fuse = (l.fuse / sim.n(P::GrenadeFuse)).clamp(0.0, 1.0);
+                g.circle(ground_circle(l.pos.with_y(0.04)), sim.n(P::GrenadeBlast) * (1.0 - fuse), Color::srgba(1.0, 0.2, 0.1, 0.6));
+            }
+            TossKind::MedPack => {
+                g.sphere(Isometry3d::from_translation(l.pos), 0.25, Color::srgb(0.2, 1.0, 0.3));
+            }
+        }
+    }
+    for (at, r, _, team) in &sim.zones {
+        g.circle(ground_circle(at.with_y(0.05)), *r, TEAM_COLOR[*team].mix(&Color::srgb(0.7, 0.2, 1.0), 0.6));
+        g.circle(ground_circle(at.with_y(0.05)), r * 0.6, Color::srgba(0.7, 0.2, 1.0, 0.5));
+    }
+    for (i, _) in sim.actors.iter().enumerate().filter(|(_, b)| b.alive() && b.invuln > 0.0) {
+        g.sphere(Isometry3d::from_translation(pos_of(i) + Vec3::Y * 1.0), 1.1, gold);
+    }
+    for (i, _) in sim.actors.iter().enumerate().filter(|(_, b)| b.alive() && b.slow > 0.0) {
+        g.circle(ground_circle(pos_of(i).with_y(0.06)), 0.7, Color::srgb(0.7, 0.2, 1.0));
+    }
+    // Your aim for a 1-crate throwable or a shield wall.
+    if you_play && a.alive() && a.carrying.is_none() && a.tank.is_none() {
+        let aim = controls.aim_point.unwrap_or(a.pos + a.facing * 6.0);
+        if a.toss.is_some() {
+            let flat = (aim - a.pos).with_y(0.0).clamp_length_max(THROW_DIST * jump_boost(a));
+            g.circle(ground_circle((a.pos + flat).with_y(0.05)), 0.5, Color::srgba(1.0, 0.5, 0.2, 0.7));
+        }
+        if a.alt.is_some_and(|x| x.kind == AltKind::ShieldWall) {
+            let d = controls.aim_dist.unwrap_or(8.0).clamp(1.5, 8.0);
+            let at = (a.pos + a.facing * d).with_y(0.05);
+            let tan = Vec3::new(-a.facing.z, 0.0, a.facing.x) * sim.n(P::WallLen) / 2.0;
+            g.line(at - tan, at + tan, Color::srgba(0.6, 0.8, 1.0, 0.5));
+        }
+    }
+    for (at, r, left) in &sim.booms {
+        g.sphere(Isometry3d::from_translation(*at), r * (1.0 - left / 0.3 * 0.5), Color::srgb(1.0, 0.6, 0.1));
+    }
+    // Damage shows as a bar over the head.
+    for (i, b) in sim.actors.iter().enumerate().filter(|(_, b)| b.alive() && b.hp < 100.0) {
+        let top = pos_of(i) + Vec3::Y * 2.5 - Vec3::X * 0.4;
+        g.line(top, top + Vec3::X * 0.8 * (b.hp / 100.0).max(0.0), Color::srgb(0.2, 1.0, 0.2));
+    }
+}
+
+fn hud(sim: Res<Sim>, tune: Res<Tune>, controls: Res<Controls>, mut hud: Single<&mut Text, (With<Hud>, Without<Panel>)>) {
+    let a = &sim.actors[YOU];
+    let mut s = String::new();
+    let left = sim.match_left.max(0.0);
+    s += &format!(
+        "MATCH {}:{:02}   BLUE {} - {} RED   (crates on pad)   kills {}-{}\n",
+        (left / 60.0) as u32,
+        (left % 60.0) as u32,
+        sim.score(0),
+        sim.score(1),
+        sim.kills[0],
+        sim.kills[1],
+    );
+    s += &format!(
+        "players: BLUE {}/{n}  RED {}/{n}   crates stolen off pads: blue {} red {}\n",
+        sim.players(0),
+        sim.players(1),
+        sim.stolen[0],
+        sim.stolen[1],
+        n = sim.team_size,
+    );
+    let cap = |t: usize| sim.capstone(t).map_or("ready".to_string(), |c| format!("LOCKED ({c} still out)"));
+    s += &format!("all 8: blue {}   red {}\n", cap(0), cap(1));
+    s += &format!("your pad: {}\n", pad_readout(&sim, 0));
+    s += &format!("red pad:  {}\n", pad_readout(&sim, 1).replace("   HOLD F: LONGER = MORE CRATES", ""));
+    if tune.c(P::Seat) == 1 {
+        s += "your seat is a BOT: watching\n";
+    } else {
+        s += &format!(
+            "you ({}): {}{}  hp {:.0}{}{}{}{}\n",
+            a.class.name(),
+            if a.carrying.is_some() { "CARRYING" } else { "empty-handed" },
+            if a.grounded { "" } else { ", airborne" },
+            a.hp.max(0.0),
+            if a.shield > 0.0 { format!("  shield {:.0}", a.shield) } else { String::new() },
+            if a.invuln > 0.0 { format!("  INVULNERABLE {:.1}s", a.invuln) } else { String::new() },
+            if a.slow > 0.0 { "  SLOWED" } else { "" },
+            if a.alive() { String::new() } else { format!("  DOWN {:.1}s", a.dead) },
+        );
+        if let Some(t) = &a.tank {
+            s += &format!("IN A {}TANK: hp {:.0}, {:.0} s left, cannon only, can't carry\n", if t.gold { "SUPER " } else { "" }, t.hp, t.life);
+        }
+        s += &match &a.gun {
+            Some(gun) => format!("left click: {} ({} shots left)\n", Make::Gun(gun.kind).label(gun.gold), gun.ammo),
+            None => "left click: standard gun\n".to_string(),
+        };
+        if let Some(alt) = &a.alt {
+            s += &format!("right click (empty hands): {} ({} left)\n", Make::Alt(alt.kind).label(alt.gold), alt.charges);
+        }
+        if let Some((kind, gold)) = a.toss {
+            s += &format!("Q: throw your {}\n", Make::Toss(kind).label(gold));
+        }
+        if a.carrying.is_some() {
+            let boost = throw_plan(&sim, controls.aim_dist).boost;
+            s += &format!("throw reach: {:.1} m  (jump x{boost:.2})\n", THROW_DIST * boost);
+        }
+    }
+    if sim.map {
+        let camp = |m: &Monster| {
+            let name = match (m.drop, m.home.z > 0.0, m.home.x < 0.0) {
+                (Drop::Super, true, _) => "river N (super crate)".to_string(),
+                (Drop::Super, false, _) => "river S (super crate)".to_string(),
+                (d, _, west) => format!("{} {}", if west { "blue-side" } else { "red-side" }, if d == Drop::Heal { "heal" } else { "shield" }),
+            };
+            if m.alive() { format!("{name} up") } else { format!("{name} {:.0}s", m.respawn) }
+        };
+        s += &format!("camps: {}\n", sim.monsters.iter().map(camp).collect::<Vec<_>>().join(" | "));
+    }
+    let acc = if sim.fired > 0 { 100.0 * sim.hits as f32 / sim.fired as f32 } else { 0.0 };
+    s += &format!("your shots {} hits {} ({acc:.0}%)\n", sim.fired, sim.hits);
+    for (m, _) in &sim.msgs {
+        s += &format!("> {m}\n");
+    }
+    s += "\nWASD move  mouse aim  Space jump  E grab/place  RMB throw (empty hands: right-click item)  LMB shoot  Q throw 1-crate item  F kick\n";
+    s += "1-6 set switch  C your class  ENTER pick this set  T drop crate  Y drop super crate  G red bunker (Shift: super)  R reset  P print  H hide boxes";
+    hud.0 = s;
+}
+
+/// The first player on `team` (its starting player).
+fn team_lead(sim: &Sim, team: usize) -> usize {
+    (0..sim.actors.len()).find(|&j| sim.actors[j].team == team).unwrap_or(YOU)
+}
+
+/// What a pad says about itself: the recipes inside it, smallest first, with what each
+/// makes for the kicker (you, or red's first player) and any super twist.
+fn pad_readout(sim: &Sim, team: usize) -> String {
+    let st = sim.pad_state(team);
+    let n = st.ids.len();
+    let locked = (st.h == [2; 4]).then(|| sim.capstone(team)).flatten().map_or(String::new(), |c| format!("   (all 8 LOCKED: {c})"));
+    match st.shape {
+        Shape::Empty => return "empty".into(),
+        Shape::Unaligned => return "a crate is out of line: kicking breaks them for nothing".into(),
+        _ => {}
+    }
+    let stages = sim.stages(team);
+    if stages.is_empty() {
+        return format!("{n} crate{}: no recipe inside yet, add crates{locked}", if n == 1 { "" } else { "s" });
+    }
+    let at = sim.stage_at(team, stages.len());
+    let kicker = if team == 0 { YOU } else { team_lead(sim, 1) };
+    let each: Vec<String> = stages
+        .iter()
+        .enumerate()
+        .map(|(k, &(slot, take))| {
+            let ids = sim.stage_ids(team, take);
+            let supers = sim.crates.iter().filter(|c| ids.contains(&c.id) && c.kind == Kind::Super).count();
+            let (make, gold) = sim.make_for(slot, supers, sim.actors[kicker].class);
+            let what = format!("{} -> {}", slot.label(sim.count_only), make.label(gold));
+            if at == Some(k) { format!("[{what}]") } else { what }
+        })
+        .collect();
+    let tip = if at.is_some() { "   RELEASE F TO OPEN" } else { "   HOLD F: LONGER = MORE CRATES" };
+    format!("{}{locked}{tip}", each.join(" > "))
+}
+
+fn guide_text(
+    tune: Res<Tune>,
+    sim: Res<Sim>,
+    mut guide: Single<(&mut Text, &mut Visibility), (With<GuideText>, Without<Hud>, Without<Panel>)>,
+) {
+    let (text, vis) = &mut *guide;
+    **vis = if tune.panel { Visibility::Visible } else { Visibility::Hidden };
+    let mut s = "SET SWITCH (press the number; live, your next kick uses it. R restarts)\n".to_string();
+    for (k, p) in tune.vals[..RULES].iter().enumerate() {
+        let opts = match &p.value {
+            Value::Choice { i, opts } => opts
+                .iter()
+                .enumerate()
+                .map(|(j, o)| if j == *i { format!("[{o}]") } else { o.to_string() })
+                .collect::<Vec<_>>()
+                .join("  "),
+            Value::Num { .. } => fmt_value(&p.value),
+        };
+        s += &format!(" {} {:<12} {opts}\n", k + 1, &p.name[2..]);
+    }
+    s += &format!(
+        "\nITEMS by the KICKER'S CLASS (you: {}, C changes it). 2 stacked = 1 player, 2 wide x 2 high = 2 players:",
+        sim.actors[YOU].class.name().to_uppercase()
+    );
+    for c in CLASSES {
+        let at = |slot: Slot| item_of(slot, c, sim.sets);
+        s += &format!(
+            "\n  {:<8} 2 side by side = {} | 4 flat = {} | 1 crate = {} | all 8 = {}",
+            c.name(),
+            at(Slot::Pair).name(),
+            at(Slot::Flat4).name(),
+            at(Slot::Small).name(),
+            at(Slot::All8).name(),
+        );
+        if sim.super_mode > 0 {
+            s += &format!(
+                "\n           SUPER: {} | {} | {} | {}",
+                at(Slot::Pair).twist(),
+                at(Slot::Flat4).twist(),
+                at(Slot::Small).twist(),
+                at(Slot::All8).twist(),
+            );
+        }
+    }
+    s += "\nALL 8 has a team lockout: no new all 8 until the current one ends. Items go to the kicker and are lost on knockout.";
+    s += "\nWATCH: does the engineer skip the rivet gun to save for walls? Is the bunker's 40 s a siege or a dead pause? Does rally make the heal camp pointless?";
+    s += "\nENTER = pick this set";
+    if !tune.verdicts.is_empty() {
+        s += &format!(" ({} picked so far, P prints them)", tune.verdicts.len());
+    }
+    text.0 = s;
+}
+
+fn panel(tune: Res<Tune>, mut panel: Single<(&mut Text, &mut Visibility), (With<Panel>, Without<Hud>)>) {
+    let (text, vis) = &mut *panel;
+    **vis = if tune.panel { Visibility::Visible } else { Visibility::Hidden };
+    let mut s = "TUNING (core feel #9, pad joins #10, grammar #17 fixed)\n\n".to_string();
+    // A window of rows round the cursor: the list is long.
+    const ROWS: usize = 26;
+    let n = tune.vals.len();
+    let from = tune.selected.saturating_sub(ROWS / 2).min(n.saturating_sub(ROWS));
+    if from > 0 {
+        s += "  ...\n";
+    }
+    for (i, p) in tune.vals.iter().enumerate().skip(from).take(ROWS) {
+        let cursor = if i == tune.selected { ">" } else { " " };
+        s += &format!("{cursor} {:<22} {}\n", p.name, fmt_value(&p.value));
+    }
+    if from + ROWS < n {
+        s += "  ...\n";
+    }
+    s += "\nUp/Down pick  Left/Right change (Shift x5)";
+    text.0 = s;
+}
+
+#[derive(Resource, Default)]
+struct Smoke {
+    exit_at: Option<Duration>,
+    shot: bool,
+}
+
+fn smoke_exit(time: Res<Time>, mut smoke: ResMut<Smoke>, mut exit: MessageWriter<AppExit>, mut commands: Commands) {
+    let Some(secs) = std::env::var("CRATE_EXIT_AFTER").ok().and_then(|s| s.parse::<f32>().ok()) else {
+        return;
+    };
+    let deadline = *smoke.exit_at.get_or_insert(Duration::from_secs_f32(secs));
+    if let Ok(path) = std::env::var("CRATE_SCREENSHOT")
+        && !smoke.shot
+        && time.elapsed() + Duration::from_secs(1) >= deadline
+    {
+        smoke.shot = true;
+        commands.spawn(Screenshot::primary_window()).observe(save_to_disk(path));
+    }
+    if time.elapsed() >= deadline {
+        exit.write(AppExit::Success);
+    }
+}
+
+fn main() {
+    let tune = Tune {
+        vals: defaults(),
+        selected: 0,
+        panel: true,
+        verdicts: Vec::new(),
+    };
+    let sim = Sim::new(&tune);
+    App::new()
+        .add_plugins(DefaultPlugins.set(WindowPlugin {
+            primary_window: Some(Window {
+                title: "big_back class items (PROTOTYPE)".into(),
+                // Smoke runs often land on a hidden workspace, where vsync blocks forever.
+                present_mode: if std::env::var("CRATE_EXIT_AFTER").is_ok() {
+                    bevy::window::PresentMode::AutoNoVsync
+                } else {
+                    bevy::window::PresentMode::AutoVsync
+                },
+                ..default()
+            }),
+            ..default()
+        }))
+        .insert_resource(GlobalAmbientLight { color: Color::WHITE, brightness: 500.0, ..default() })
+        .insert_resource(ClearColor(Color::srgb(0.12, 0.13, 0.16)))
+        .insert_resource(tune)
+        .insert_resource(sim)
+        .init_resource::<Controls>()
+        .init_resource::<Smoke>()
+        .init_resource::<MapView>()
+        .add_systems(Startup, (setup, init_from_env).chain())
+        .add_systems(
+            Update,
+            (read_controls, tune_input, step, sync_arena, sync_map, sync_views, sync_markers, minimap_view, follow_camera, draw_gizmos, hud, guide_text, panel, smoke_exit)
+                .chain(),
+        )
+        .run();
+}
+
