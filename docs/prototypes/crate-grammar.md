@@ -13,6 +13,14 @@ how readable it is, super crates, build time, and how vulnerable an unfinished s
 **Resolved when** you've played at least two options of recipe shape, build time and
 vulnerability, and picked a grammar (press **Enter** on the rules you like).
 
+## Verdict so far
+
+**2026-10-18: class loadout + hold to choose feels good.** The human, after playing both: "it
+feels good". Rule 1 is picked as **class loadout (LMB/RMB)** and rule 7 as **hold longer to
+use more crates**. Still open: what 1 crate and all 8 make, the items themselves, and rules
+2–6 (recipe shape, readout, super crates, build time, vulnerability). #17 resolves once at
+least two options each of recipe shape, build time and vulnerability have been played.
+
 ## Already decided (fixed here)
 
 - Core feel from #9: curling jump-throws, carrying is a commitment, 18 m/s projectiles
