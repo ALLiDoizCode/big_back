@@ -70,9 +70,33 @@ _Avoid_: merge, craft, consume
 What a player is (for example soldier, engineer or medic). The class of whoever kicks a pad open decides what its non-player recipes make.
 _Avoid_: role, job, hero
 
+**Kicker**:
+The player who kicks a pad open. The kicker's class decides what the recipe makes, and the kicker gets the item.
+_Avoid_: builder, crafter, opener
+
 **Loadout**:
-A class's two crafted items: a left-click item from 1 × 2 and a right-click item from 2 × 2 flat.
+A class's four crafted items: its primary item, secondary item, quick item and capstone.
 _Avoid_: kit, abilities, build
+
+**Primary item**:
+What 1 × 2 makes: a weapon that replaces the base gun until its ammo runs out.
+_Avoid_: left-click item, LMB, main weapon
+
+**Secondary item**:
+What 2 × 2 flat makes: a tool with charges, used with empty hands.
+_Avoid_: right-click item, RMB, ability
+
+**Quick item**:
+What 1 crate makes: a single-use item kept until used.
+_Avoid_: Q item, consumable, throwable
+
+**Capstone**:
+What all 8 crates make: a class's biggest result, such as a vehicle or a team-wide effect.
+_Avoid_: ultimate, super, all-8 item
+
+**Capstone lockout**:
+The rule that a team can't make a new capstone while its current one is still out.
+_Avoid_: cooldown, all-8 lock
 
 ### Teams
 

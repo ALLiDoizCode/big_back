@@ -14,3 +14,15 @@ The human's reason: "I don't want the build buddy I just want other players."
 Bots exist only to stand in for missing players. They play by a player's rules and are never
 units a player owns. This also keeps the netcode budget to one predicted character per
 client. Don't add owned AI back without revisiting this ADR.
+
+## Deployables
+
+Added from the class-items grilling ([#22](https://github.com/ALLiDoizCode/big_back/issues/22),
+[research](https://github.com/ALLiDoizCode/big_back/blob/research/class-items/docs/research/class-items.md#6-ruling-deployables-against-adr-0004)).
+A deployable is an owned AI unit, and so banned, if it **decides**: picks a target, aims, or
+moves by itself.
+
+- **Allowed:** static objects (walls, cover), visible one-shot floor traps, short area effects,
+  and devices that fire only along their owner's aim. A vehicle is its kicker's own character.
+- **Banned:** turrets that pick their own targets (the prototype's turret drop and fortress
+  turret), and drones or bots that move by themselves.

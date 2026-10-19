@@ -34,5 +34,5 @@ stack; crates that lock once placed; a kick that uses the whole pad.
 - **Netcode:** the netcode-budget research asked for crates on a pad to lock. Steal only
   rejects that, so resting pad crates have to sleep and stop replicating some other way,
   and stealing one wakes it.
-- **Open:** the classes and their items (the prototype's are placeholders), and what 1 crate
-  and all 8 make.
+- ~~**Open:** the classes and their items (the prototype's are placeholders), and what 1 crate
+  and all 8 make.~~ Decided in [0008](0008-class-roster-and-loadouts.md).
