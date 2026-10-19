@@ -1,0 +1,746 @@
+<title>Ladder Lab</title>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700&family=Source+Sans+3:wght@400;600&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Layout: the same lab bench as the Rating Lab (#11). The ladder rules on top,
+   then your rank as a player sees it beside what the game knows, then the
+   season chart, your matches, and the whole population. */
+:root {
+  --bg: #eef2f3; --surface: #ffffff; --sunk: #e3e9eb; --ink: #13212a; --muted: #566873;
+  --line: #cfd8dc; --accent: #0a6680; --accent-ink: #ffffff; --good: #2f7d32; --bad: #b3261e;
+  --hid: #7c3aed; --real: #8a99a1; --warn: #a15c00;
+  --display: "Barlow Condensed", "Arial Narrow", sans-serif;
+  --body: "Source Sans 3", "Segoe UI", system-ui, sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #0f171b; --surface: #16222a; --sunk: #1c2b34; --ink: #e3ecef; --muted: #93a7b1;
+  --line: #2a3c46; --accent: #4fb3cf; --accent-ink: #06222b; --good: #7bc77e; --bad: #f2867e;
+  --hid: #a78bfa; --real: #6f828c; --warn: #f0b35a; color-scheme: dark } }
+:root[data-theme="dark"] {
+  --bg: #0f171b; --surface: #16222a; --sunk: #1c2b34; --ink: #e3ecef; --muted: #93a7b1;
+  --line: #2a3c46; --accent: #4fb3cf; --accent-ink: #06222b; --good: #7bc77e; --bad: #f2867e;
+  --hid: #a78bfa; --real: #6f828c; --warn: #f0b35a; color-scheme: dark }
+
+* { box-sizing: border-box }
+body { background: var(--bg); color: var(--ink); font: 16px/1.5 var(--body); margin: 0 }
+.wrap { max-width: 1180px; margin: 0 auto; padding-inline: 16px; padding-block: 24px 64px; display: grid; gap: 28px }
+h1, h2, h3 { font-family: var(--display); font-weight: 700; letter-spacing: .01em; text-wrap: balance; margin: 0; line-height: 1.1 }
+h1 { font-size: 2.6rem }
+h2 { font-size: 1.6rem }
+h3 { font-size: 1.15rem }
+p { margin: 0; max-width: 72ch }
+.eyebrow { font: 600 .75rem/1 var(--mono); letter-spacing: .12em; text-transform: uppercase; color: var(--accent) }
+.muted { color: var(--muted) }
+.small { font-size: .9rem }
+header { display: grid; gap: 10px }
+.note { border-left: 3px solid var(--line); padding-left: 12px; color: var(--muted); font-size: .92rem; max-width: 80ch }
+section { display: grid; gap: 14px; min-width: 0 }
+.panel { background: var(--surface); border: 1px solid var(--line); border-radius: 6px; padding: 16px; min-width: 0 }
+.grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 440px), 1fr)); gap: 16px }
+.settings { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 230px), 1fr)); gap: 12px 18px }
+.field { display: grid; gap: 4px; font-size: .9rem; align-content: start }
+.field label { font-weight: 600 }
+select { width: 100%; font: inherit; padding: 6px 8px; border: 1px solid var(--line); border-radius: 4px; background: var(--surface); color: var(--ink) }
+.row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center }
+button { font: 600 .92rem var(--body); border: 1px solid var(--accent); background: var(--surface); color: var(--accent); border-radius: 4px; padding: 7px 12px; cursor: pointer }
+button.primary { background: var(--accent); color: var(--accent-ink) }
+button.win { border-color: var(--good); color: var(--good) }
+button.lose { border-color: var(--bad); color: var(--bad) }
+button:hover { filter: brightness(1.08) }
+button:focus-visible, select:focus-visible, [role=tab]:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px }
+button:disabled { opacity: .45; cursor: default }
+.chips { display: flex; flex-wrap: wrap; gap: 6px }
+.chip { border: 1px solid var(--line); color: var(--ink); background: var(--surface); font-weight: 400; text-align: left }
+.chip[aria-pressed=true] { border-color: var(--accent); background: var(--accent); color: var(--accent-ink); font-weight: 600 }
+.chip small { display: block; font-size: .75rem; opacity: .8; font-weight: 400 }
+.tabs { display: flex; flex-wrap: wrap; gap: 0; border-bottom: 1px solid var(--line) }
+[role=tab] { border: 0; border-bottom: 3px solid transparent; border-radius: 0; background: none; color: var(--muted); padding: 8px 12px }
+[role=tab][aria-selected=true] { color: var(--ink); border-bottom-color: var(--accent) }
+.steps { display: grid; gap: 8px; counter-reset: step }
+.step { display: flex; gap: 10px; align-items: center }
+.step::before { counter-increment: step; content: counter(step); font: 600 .8rem var(--mono); width: 1.6rem; height: 1.6rem; border-radius: 50%; display: grid; place-items: center; background: var(--sunk); color: var(--muted); flex: none }
+.step.done::before { content: "✓"; background: var(--good); color: var(--surface) }
+.step.next::before { background: var(--accent); color: var(--accent-ink) }
+.watch { background: var(--sunk); border-radius: 4px; padding: 10px 12px; font-size: .92rem }
+.status { font: .85rem var(--mono); color: var(--muted) }
+.status b { color: var(--ink) }
+.scroll { overflow-x: auto }
+table { border-collapse: collapse; width: 100%; font-size: .9rem }
+th, td { text-align: right; padding: 6px 10px; border-bottom: 1px solid var(--line); white-space: nowrap; font-variant-numeric: tabular-nums }
+th { font: 600 .72rem/1.2 var(--mono); letter-spacing: .06em; text-transform: uppercase; color: var(--muted); vertical-align: bottom; white-space: normal }
+th:first-child, td:first-child { text-align: left }
+td.l { text-align: left; white-space: normal }
+.up { color: var(--good) } .down { color: var(--bad) } .warn { color: var(--warn) }
+
+/* the rank card: what the player sees */
+.rank { display: grid; gap: 10px; align-content: start }
+.badge { display: flex; gap: 14px; align-items: center }
+.crest { width: 64px; height: 64px; flex: none; border-radius: 50%; display: grid; place-items: center; font: 700 1.5rem var(--display); color: var(--accent-ink); background: var(--accent) }
+.crest.t0 { background: #8d5a3b } .crest.t1 { background: #8c99a3 } .crest.t2 { background: #c49a1c }
+.crest.t3 { background: #2a9d8f } .crest.t4 { background: #4f7fd8 } .crest.t5 { background: #8e44ad } .crest.t6 { background: #c0392b }
+.crest.unk { background: var(--sunk); color: var(--muted) }
+.rname { font: 700 2rem/1 var(--display) }
+.rsub { font: 600 1rem var(--mono); color: var(--muted) }
+.bar { height: 10px; background: var(--sunk); border-radius: 5px; overflow: hidden }
+.bar > i { display: block; height: 100%; background: var(--accent) }
+.told { background: var(--sunk); border-radius: 4px; padding: 8px 12px; font-size: .95rem }
+.told ul { margin: 4px 0 0; padding-left: 18px; font-size: .88rem; color: var(--muted) }
+.stars { font-size: 1.4rem; letter-spacing: 2px; color: var(--accent) }
+.kv { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 14px; font-size: .92rem }
+.kv dt { color: var(--muted) } .kv dd { margin: 0; font-family: var(--mono); text-align: right }
+.secret { border-style: dashed }
+.rewards { display: flex; flex-wrap: wrap; gap: 6px }
+.rw { font: 600 .75rem var(--mono); padding: 2px 8px; border-radius: 3px; border: 1px solid var(--line); color: var(--muted) }
+.rw.got { background: var(--good); border-color: var(--good); color: var(--surface) }
+svg { display: block; width: 100%; height: auto }
+svg text { fill: var(--muted); font: 11px var(--mono) }
+.legend { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: .85rem }
+.sw { display: inline-block; width: 14px; height: 3px; margin-right: 6px; vertical-align: 4px }
+.dist { display: grid; grid-template-columns: 9ch minmax(0, 1fr); gap: 3px 10px; align-items: center; font-size: .85rem }
+.dist .bars { display: grid; gap: 2px }
+.dist .bars i { display: block; height: 7px; border-radius: 2px; min-width: 1px }
+details summary { cursor: pointer; font-weight: 600 }
+dl.gloss { display: grid; grid-template-columns: minmax(0, 18ch) minmax(0, 1fr); gap: 6px 14px; margin: 10px 0 0; font-size: .92rem }
+dl.gloss dt { font-weight: 600 } dl.gloss dd { margin: 0; color: var(--muted) }
+@media (max-width: 520px) { dl.gloss { grid-template-columns: 1fr } h1 { font-size: 2.1rem } }
+</style>
+
+<div class="wrap">
+<header>
+  <span class="eyebrow">Prototype · issue #12 · throwaway</span>
+  <h1>Ladder Lab</h1>
+  <p><b>How should rank be shown to players?</b> You play one or two seasons as one player in a population of 400:
+  win, lose, let your real skill decide, take breaks, and roll into the next season. Underneath runs the rating we picked in
+  <a href="https://github.com/ALLiDoizCode/big_back/blob/main/docs/adr/0010-weng-lin-thurstone-mosteller-with-a-learned-party-bonus.md">ADR 0010</a>
+  (Weng-Lin Thurstone-Mosteller). Pick a ladder structure and watch what the player is told, next to what the game actually knows.</p>
+  <p class="note">Assumptions: solo 5v5 matches (<a href="https://github.com/ALLiDoizCode/big_back/blob/main/docs/adr/0006-five-v-five-on-a-lanes-and-jungle-map.md">ADR 0006</a>), so the party bonus stays at 0 here.
+  The matchmaker finds nine players near your hidden rating, a little loosely, as at about 200 CCU. Tiers are cut so that, by real skill,
+  15% of players are Bronze, 25% Silver, 27% Gold, 18% Platinum, 10% Diamond, 4% Master and 1% Champion.
+  Background players play 0–6 matches a day and sometimes take breaks. Rewards follow
+  <a href="https://github.com/ALLiDoizCode/big_back/blob/main/docs/adr/0009-progression-buys-identity-only.md">ADR 0009</a>: dated seasonal cosmetics only.</p>
+</header>
+
+<section aria-labelledby="ladder-h">
+  <h2 id="ladder-h">The ladder</h2>
+  <div class="panel" style="display:grid;gap:16px">
+    <div class="field"><label>Start from a ladder modelled on a real game</label><div class="chips" id="presets"></div></div>
+    <div class="settings" id="rules"></div>
+    <p class="small muted" id="rulesNote">Changing any rule or your player starts the run over with the same population.</p>
+  </div>
+</section>
+
+<section aria-labelledby="walk-h">
+  <h2 id="walk-h">Guided walkthroughs</h2>
+  <p class="small muted">Each walkthrough restarts on the ladder chosen above. Run one, then switch ladders and run it again.</p>
+  <div class="tabs" role="tablist" id="tabs"></div>
+  <div class="panel" id="walk"></div>
+</section>
+
+<section aria-labelledby="play-h">
+  <h2 id="play-h">Play</h2>
+  <div class="panel" style="display:grid;gap:12px">
+    <div class="settings" id="you"></div>
+    <div class="row">
+      <button class="win" id="bWin">Win a match</button>
+      <button class="lose" id="bLose">Lose a match</button>
+      <button class="primary" id="bPlay">Play a match (skill decides)</button>
+      <button id="bPlay5">Play 5</button>
+      <button id="bDay">End the day</button>
+    </div>
+    <div class="row">
+      <button id="bWeek">Play a week, 3 a day</button>
+      <button id="bOff7">Take a week off</button>
+      <button id="bOff30">Take a month off</button>
+      <button id="bEnd">Play to season end, 2 a day</button>
+      <button id="bReset">Start over</button>
+    </div>
+    <div class="status" id="status"></div>
+  </div>
+  <div class="grid2">
+    <div class="panel rank" id="rank"></div>
+    <div class="panel secret rank" id="truth"></div>
+  </div>
+</section>
+
+<section aria-labelledby="chart-h">
+  <h2 id="chart-h">Your seasons</h2>
+  <div class="panel" style="display:grid;gap:10px">
+    <div id="chart"></div>
+    <div class="legend">
+      <span><i class="sw" style="background:var(--accent)"></i>Rank you are shown</span>
+      <span><i class="sw" style="background:var(--hid)"></i>Hidden rating (matchmaking)</span>
+      <span><i class="sw" style="background:var(--real)"></i>Your real skill</span>
+    </div>
+  </div>
+</section>
+
+<section class="grid2">
+  <div class="panel scroll" style="display:grid;gap:8px"><h3>Last matches</h3><table id="log"></table></div>
+  <div class="panel scroll" style="display:grid;gap:8px"><h3>Seasons and rewards</h3><table id="seasons"></table></div>
+</section>
+
+<section aria-labelledby="pop-h">
+  <h2 id="pop-h">Everyone else</h2>
+  <div class="panel" style="display:grid;gap:10px">
+    <p class="small muted">Share of active players (a match in the last 21 days, placements done) in each tier: by the rank they are shown, by hidden rating, and by real skill. If the top bar runs right of the others, ranks have inflated.</p>
+    <div class="legend">
+      <span><i class="sw" style="background:var(--accent)"></i>Shown rank</span>
+      <span><i class="sw" style="background:var(--hid)"></i>Hidden rating</span>
+      <span><i class="sw" style="background:var(--real)"></i>Real skill</span>
+    </div>
+    <div class="dist" id="dist"></div>
+    <div class="status" id="popStatus"></div>
+  </div>
+</section>
+
+<section>
+  <details class="panel"><summary>What the rules mean</summary>
+  <dl class="gloss">
+    <dt>Hidden rating</dt><dd>ADR 0010's rating: a mean and an uncertainty. It runs matchmaking. It moves on win or loss only, and its uncertainty grows a little each idle day and each new season.</dd>
+    <dt>Divisions and points</dt><dd>Each tier below Master has divisions III, II and I, 100 points each. Points carry over on promotion and demotion. A win pays more than a loss costs while your rank is below your hidden rating, and the reverse above it (Valorant and League of Legends call this convergence).</dd>
+    <dt>Progress bar</dt><dd>The same points, shown as a percentage through the division, with the reasons for each change listed under it (Overwatch 2 since Season 9).</dd>
+    <dt>Stars</dt><dd>Five stars per division. A win is +1 star, a loss −1. Below Diamond, a loss at the start of a tier costs nothing (floor protection), and three wins in a row pay +2. Far below your hidden rating, a win pays +1 more (rank boost). Stars do not look at the hidden rating otherwise (Brawl Stars).</dd>
+    <dt>Shown rating</dt><dd>The hidden rating itself, as a number (1500 = average, 50 per skill point), with its tier. While uncertain it says so (StarCraft II since patch 3.4, Splatoon X Power).</dd>
+    <dt>Placements</dt><dd>The first matches of an account show no rank, only a prediction. Afterwards the rank is set from the hidden rating, optionally one uncertainty low, and capped.</dd>
+    <dt>Decay</dt><dd>From Diamond up, each match banks 7 days (28 at most). Each day uses one. A day with an empty bank costs 50 points, down to Diamond III at worst (League of Legends).</dd>
+    <dt>Champion</dt><dd>The apex tier, a leaderboard. Either everyone in Master whose hidden rating clears the Champion line, or only the top 1% of active players. Both need 10 matches in the last 21 days.</dd>
+    <dt>Ranked-win rewards</dt><dd>A dated season cosmetic per tier. "Wins at rank": 10 wins at that tier or above. "Peak": every tier you reached. "Season end": every tier up to where you finished.</dd>
+  </dl></details>
+</section>
+</div>
+
+<script>
+// ---------------------------------------------------------------------------
+// Ladder: the portable part of this prototype. Plain data in, plain data out.
+// No DOM. The page below only calls into it.
+//
+// Scale: "pos" is a ladder position in divisions. Bronze III starts at 0,
+// each division is 1, Master starts at 15. Ratings are on TrueSkill's scale
+// (new player 25 ± 8.33), as in ADR 0010.
+// ---------------------------------------------------------------------------
+const Ladder = (() => {
+  const MU0 = 25, SIG0 = 25 / 3, BETA = 25 / 6, TAU = SIG0 / 100, TEAM = 5;
+  const FIELD_SIG = 3, MM_NOISE = 0.7, IDLE_TAU = 0.5, SEASON_TAU = 1, PROVISIONAL = 3.5, SPREAD = 6;
+  const TIERS = ['Bronze', 'Silver', 'Gold', 'Platinum', 'Diamond', 'Master', 'Champion'];
+  const SHARE_CUM = [0.15, 0.40, 0.67, 0.85, 0.95, 0.99];
+  const DIAMOND = 12, MASTER = 15;
+
+  // ---- maths -------------------------------------------------------------
+  function rng(seed) {
+    let s = seed >>> 0;
+    return () => {
+      s = (s + 0x6d2b79f5) >>> 0;
+      let t = s;
+      t = Math.imul(t ^ (t >>> 15), t | 1);
+      t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+  function gauss(r) { let u = 0; while (!u) u = r(); return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * r()); }
+  function erf(x) {
+    const s = Math.sign(x); x = Math.abs(x);
+    const t = 1 / (1 + 0.3275911 * x);
+    return s * (1 - ((((1.061405429 * t - 1.453152027) * t + 1.421413741) * t - 0.284496736) * t + 0.254829592) * t * Math.exp(-x * x));
+  }
+  const Phi = x => 0.5 * (1 + erf(x / Math.SQRT2));
+  const phi = x => Math.exp(-x * x / 2) / Math.sqrt(2 * Math.PI);
+  function invPhi(q) { let lo = -8, hi = 8; for (let i = 0; i < 60; i++) { const m = (lo + hi) / 2; if (Phi(m) < q) lo = m; else hi = m; } return (lo + hi) / 2; }
+  function poisson(r, l) { let k = 0, p = 1; const L = Math.exp(-l); do { k++; p *= r(); } while (p > L); return k - 1; }
+  const clamp = (x, a, b) => Math.min(b, Math.max(a, x));
+
+  // ---- the ladder scale --------------------------------------------------
+  // EDGE[i] is the rating where tier i starts; EDGE[6] is the Champion line.
+  const EDGE = [MU0 + SPREAD * invPhi(0.01)].concat(SHARE_CUM.map(q => MU0 + SPREAD * invPhi(q)));
+  function posOf(mu) {
+    if (mu < EDGE[0]) return 0;
+    for (let i = 0; i < 6; i++) if (mu < EDGE[i + 1]) return 3 * i + 3 * (mu - EDGE[i]) / (EDGE[i + 1] - EDGE[i]);
+    return 18 + 3 * (mu - EDGE[6]) / (EDGE[6] - EDGE[5]);
+  }
+  const tierOf = pos => Math.min(5, Math.floor(pos / 3));
+  function posName(pos) {
+    if (pos >= MASTER) return 'Master';
+    return TIERS[tierOf(pos)] + ' ' + ['III', 'II', 'I'][Math.floor(pos % 3)];
+  }
+  const sr = mu => Math.round(1500 + 50 * (mu - MU0));
+
+  // ---- ladder presets, each modelled on a real game ----------------------
+  const PRESETS = {
+    points: { name: 'Divisions and points', from: 'League of Legends, Valorant',
+      rules: { display: 'points', placements: 5, placeLow: 1, placeCap: 12, cushion: false, decay: 'top', reset: 'drop1t', seasonDays: 91, batch: 1, reward: 'wins', apex: 'line' } },
+    rating: { name: 'Shown rating', from: 'StarCraft II, Splatoon X Power',
+      rules: { display: 'rating', placements: 0, placeLow: 0, placeCap: 18, cushion: false, decay: 'none', reset: 'unsure', seasonDays: 91, batch: 1, reward: 'peak', apex: 'top' } },
+    bar: { name: 'Progress bar, yearly placements', from: 'Overwatch 2 since Season 9',
+      rules: { display: 'bar', placements: 10, placeLow: 0, placeCap: 15, cushion: true, decay: 'none', reset: 'placeYear', seasonDays: 63, batch: 1, reward: 'wins', apex: 'line' } },
+    stars: { name: 'Stars with floors', from: 'Brawl Stars',
+      rules: { display: 'stars', placements: 0, placeLow: 0, placeCap: 18, cushion: false, decay: 'none', reset: 'drop2t', seasonDays: 49, batch: 1, reward: 'end', apex: 'top' } },
+  };
+  const RULES = [
+    ['display', 'How rank is shown', [['points', 'Divisions and points'], ['bar', 'Progress bar with reasons'], ['stars', 'Stars with floors'], ['rating', 'The rating as a number']]],
+    ['placements', 'Placement matches', [[0, 'None'], [5, '5'], [10, '10']]],
+    ['placeLow', 'Placement sets rank', [[0, 'At the hidden rating'], [1, 'Low, then climb (Valorant)']]],
+    ['placeCap', 'Placement cap', [[9, 'Platinum III'], [12, 'Diamond III'], [15, 'Master'], [18, 'No cap']]],
+    ['cushion', 'Underdog cushion on rank', [[false, 'Off'], [true, 'Loss halved when under 40%']]],
+    ['decay', 'Rank decay', [['none', 'None'], ['top', 'Diamond and up, banked days']]],
+    ['reset', 'Season start', [['none', 'Rank carries over'], ['unsure', 'Rank kept, uncertainty raised'], ['drop1t', 'Drop one tier'], ['drop2t', 'Drop two tiers'], ['half', 'Halfway to Silver I'], ['place', 'Placements every season'], ['placeYear', 'Placements once a year']]],
+    ['seasonDays', 'Season length', [[49, '7 weeks'], [63, '9 weeks'], [91, '3 months'], [182, '6 months']]],
+    ['batch', 'Rank updates', [[1, 'After every match'], [5, 'After each set of 5']]],
+    ['reward', 'Ranked-win rewards', [['wins', '10 wins at rank or above'], ['peak', 'Peak rank reached'], ['end', 'Rank at season end']]],
+    ['apex', 'Champion is', [['line', 'Master above a rating line'], ['top', 'Top 1% of active players']]],
+  ];
+  const SKILLS = [[10, 'Struggling (bottom 10%)'], [50, 'Average (50th percentile)'], [78, 'Good (top 22%)'], [92, 'Very good (top 8%)'], [98, 'Great (top 2%)'], [99.6, 'Elite (top 0.4%)']];
+
+  // ---- players -------------------------------------------------------------
+  function makePlayer(id, skill) {
+    return { id, skill, mu: MU0, sigma: SIG0, pos: 0, placing: 0, bank: 0, streak: 0, recent: [],
+      playedToday: 0, rate: 1, breakLeft: 0, games: 0, season: freshSeason() };
+  }
+  function freshSeason() { return { matches: 0, wins: 0, winsAt: [0, 0, 0, 0, 0, 0, 0], peak: -1, peakPos: -1 }; }
+  function settle(p, r) { p.mu = p.skill + 0.8 * gauss(r); p.sigma = 2.5; p.pos = posOf(p.mu); p.games = 150; }
+
+  function create(rules, youCfg, seed = 7) {
+    const r = rng(seed), players = [];
+    for (let i = 0; i < 400; i++) {
+      const p = makePlayer(i, MU0 + SPREAD * gauss(r));
+      settle(p, r);
+      const u = r();
+      p.rate = u < 0.4 ? 0.3 : u < 0.85 ? 1.5 : 5;
+      for (let d = 0; d < 21; d++) for (let k = poisson(r, p.rate); k > 0; k--) p.recent.push(-d);
+      players.push(p);
+    }
+    const you = makePlayer(400, MU0 + SPREAD * invPhi(youCfg.skillPct / 100));
+    you.isYou = true;
+    if (youCfg.account === 'veteran') { settle(you, rng(seed + 1)); for (let d = 0; d < 21; d += 2) you.recent.push(-d); }
+    else startPlacements(rules, you);
+    players.push(you);
+    const w = { rules, players, you, day: 0, season: 1, r: rng(seed + 2), champCut: Infinity,
+      seasons: [], log: [], history: [], shown: null, pending: 0, told: null };
+    computeChampCut(w);
+    sync(w);
+    w.told = { text: you.placing ? `New account: ${you.placing} placement matches to play.` : 'Ready. Your rank carries over from earlier seasons.', mods: [] };
+    point(w);
+    return w;
+  }
+  function startPlacements(rules, p) {
+    p.placing = rules.placements;
+    if (!p.placing) p.pos = rules.display === 'rating' ? posOf(p.mu) : 0;
+  }
+
+  // ---- one match, from one player's side -----------------------------------
+  // The matchmaker puts four teammates and five opponents near p's hidden
+  // rating, give or take MM_NOISE per player. They are settled players, so
+  // their real skill is their rating.
+  function match(w, p, forced) {
+    const r = w.r, dA = MM_NOISE * gauss(r), dB = MM_NOISE * gauss(r);
+    p.sigma = Math.sqrt(p.sigma * p.sigma + TAU * TAU);
+    const s2t = p.sigma * p.sigma + (TEAM - 1) * FIELD_SIG * FIELD_SIG;
+    const c = Math.sqrt(s2t + TEAM * FIELD_SIG * FIELD_SIG + 2 * TEAM * BETA * BETA);
+    const t = ((TEAM - 1) * dA - TEAM * dB) / c;
+    const predicted = Phi(t);
+    const truth = Phi((p.skill - p.mu + (TEAM - 1) * dA - TEAM * dB) / (Math.sqrt(2 * TEAM) * BETA));
+    const won = forced === undefined ? r() < truth : forced;
+
+    // Weng-Lin Thurstone-Mosteller, as in ADR 0010, for p's share of the team.
+    const tw = won ? t : -t, P = Phi(tw), v = P < 1e-12 ? -tw : phi(tw) / P, wv = v * (v + tw);
+    const s2 = p.sigma * p.sigma, before = p.mu;
+    p.mu += (won ? 1 : -1) * (s2 / s2t) * (s2t / c) * v;
+    p.sigma = Math.sqrt(s2 * Math.max(1 - (s2 / s2t) * (Math.sqrt(s2t) / c) * (s2t / (c * c)) * wv, 1e-4));
+
+    const mods = rankStep(w, p, won, predicted);
+    p.games++; p.playedToday++; p.recent.push(w.day);
+    p.streak = won ? p.streak + 1 : 0;
+    const S = p.season; S.matches++; if (won) S.wins++;
+    if (!p.placing) {
+      const tier = tierNow(w, p);
+      if (won) for (let k = 0; k <= tier; k++) S.winsAt[k]++;
+      if (tier > S.peak || (tier === S.peak && p.pos > S.peakPos)) { S.peak = tier; S.peakPos = p.pos; }
+    }
+    return { won, predicted, truth, muDelta: p.mu - before, mods };
+  }
+
+  // How the visible rank moves. Returns the reasons a player would be shown.
+  function rankStep(w, p, won, predicted) {
+    const R = w.rules, mods = [];
+    if (p.placing > 0) {
+      p.placing--;
+      if (p.placing === 0) {
+        p.pos = clamp(posOf(p.mu - R.placeLow * p.sigma), 0, R.placeCap);
+        if (R.display === 'stars') p.pos = Math.round(p.pos * 5) / 5;
+        if (R.placeLow && p.pos < posOf(p.mu) - 0.3) mods.push('Placed low on purpose; wins pay extra until you catch up');
+        if (posOf(p.mu) > R.placeCap) mods.push(`Placement is capped at ${posName(R.placeCap)}`);
+      }
+      return mods;
+    }
+    if (R.display === 'rating') { p.pos = posOf(p.mu); return mods; }
+    if (R.display === 'stars') {
+      let s = Math.round(p.pos * 5), inc;
+      if (won) {
+        inc = 1;
+        if (p.streak >= 2 && s < DIAMOND * 5) { inc++; mods.push('Win streak: +1 star'); }
+        if (posOf(p.mu) - p.pos > 3 && s < MASTER * 5) { inc++; mods.push('Rank boost: +1 star'); }
+      } else if (s < DIAMOND * 5 && s % 15 === 0) { inc = 0; mods.push('Tier floor: no star lost'); }
+      else inc = -1;
+      p.pos = Math.max(0, s + inc) / 5;
+    } else {
+      const g = posOf(p.mu) - p.pos;
+      let d = won ? clamp(0.2 + 0.06 * g, 0.08, 0.4) : -clamp(0.2 - 0.06 * g, 0.08, 0.4);
+      if (g > 1) mods.push('Your rank is below your skill: bigger gains, smaller losses');
+      if (g < -1) mods.push('Your rank is above your skill: smaller gains, bigger losses');
+      if (!won && R.cushion && predicted < 0.4) { d *= 0.5; mods.push(`Uphill battle (${Math.round(predicted * 100)}% to win): loss halved`); }
+      if (won && predicted < 0.4) mods.push(`Upset win (${Math.round(predicted * 100)}% to win)`);
+      p.pos = Math.max(0, p.pos + d);
+    }
+    if (w.rules.decay === 'top' && p.pos >= DIAMOND) p.bank = Math.min(28, p.bank + 7);
+    return mods;
+  }
+
+  const recentCount = (w, p) => p.recent.filter(d => d > w.day - 21).length;
+  function isChampion(w, p) {
+    if (p.placing || recentCount(w, p) < 10) return false;
+    const pos = w.rules.display === 'rating' ? posOf(p.mu) : p.pos;
+    if (pos < MASTER) return false;
+    return w.rules.apex === 'line' ? p.mu >= EDGE[6] : p.mu >= w.champCut;
+  }
+  function computeChampCut(w) {
+    const act = w.players.filter(p => recentCount(w, p) >= 10).map(p => p.mu).sort((a, b) => b - a);
+    w.champCut = act.length ? act[Math.max(0, Math.ceil(act.length * 0.01) - 1)] : Infinity;
+  }
+  const tierNow = (w, p) => (isChampion(w, p) ? 6 : tierOf(p.pos));
+
+  // ---- what the player is shown --------------------------------------------
+  function sync(w) { const y = w.you; w.shown = { pos: y.pos, placing: y.placing, mu: y.mu, sigma: y.sigma, champ: isChampion(w, y), tier: tierNow(w, y) }; w.pending = 0; }
+  function champRank(w) {
+    const champs = w.players.filter(p => isChampion(w, p)).sort((a, b) => b.mu - a.mu);
+    return { rank: champs.indexOf(w.you) + 1, of: champs.length };
+  }
+  function view(w) {
+    const R = w.rules, s = w.shown, y = w.you;
+    const v = { display: R.display, placing: s.placing, of: R.placements || 5, pending: w.pending, batch: R.batch };
+    if (s.placing) {
+      v.predicted = posName(clamp(posOf(s.mu), 0, R.placeCap));
+      v.played = (R.placements || 5) - s.placing;
+      return v;
+    }
+    v.tier = s.tier; v.champ = s.champ;
+    v.name = s.champ ? 'Champion' : posName(s.pos);
+    if (s.champ) { const c = champRank(w); v.champRank = c.rank; v.champOf = c.of; }
+    if (R.display === 'rating') { v.rating = sr(s.mu); v.range = s.sigma > PROVISIONAL ? Math.round(50 * s.sigma) : 0; }
+    else if (R.display === 'stars') { const st = Math.round(s.pos * 5); v.stars = s.pos >= MASTER ? st - MASTER * 5 : st % 5; }
+    else v.points = s.pos >= MASTER ? Math.round((s.pos - MASTER) * 100) : Math.floor((s.pos % 1) * 100 + 1e-9);
+    if (R.decay === 'top' && s.pos >= DIAMOND) v.bank = y.bank;
+    return v;
+  }
+  function changeText(w, before, after) {
+    const R = w.rules;
+    if (before.placing && !after.placing) return `Placed: ${after.champ ? 'Champion' : posName(after.pos)}`;
+    if (after.placing) return `Placement ${(R.placements || 5) - after.placing} of ${R.placements || 5}: predicted ${posName(clamp(posOf(after.mu), 0, R.placeCap))}`;
+    let d;
+    if (R.display === 'rating') { const x = sr(after.mu) - sr(before.mu); d = `${x >= 0 ? '+' : ''}${x} rating`; }
+    else if (R.display === 'stars') { const x = Math.round(after.pos * 5) - Math.round(before.pos * 5); d = `${x >= 0 ? '+' : ''}${x} ★`; }
+    else { const x = Math.round((after.pos - before.pos) * 100); d = `${x >= 0 ? '+' : ''}${x} ${R.display === 'bar' ? '%' : 'pts'}`; }
+    const a = after.champ ? 'Champion' : posName(after.pos), b = before.champ ? 'Champion' : posName(before.pos);
+    if (a !== b) d += (after.pos > before.pos || (after.champ && !before.champ) ? ` · Promoted to ${a}` : ` · Demoted to ${a}`);
+    return d;
+  }
+
+  // ---- actions ---------------------------------------------------------------
+  function youPlay(w, forced) {
+    const y = w.you, before = w.shown;
+    const m = match(w, y, forced);
+    w.pending++;
+    let text;
+    const placingNow = y.placing > 0 || before.placing > 0;
+    if (w.pending >= w.rules.batch || placingNow) { sync(w); text = changeText(w, before, w.shown); }
+    else text = `Result recorded. Rank updates after ${w.rules.batch - w.pending} more`;
+    w.told = { text: `${m.won ? 'Victory' : 'Defeat'}. ${text}`, mods: m.mods };
+    w.log.unshift({ n: y.games, season: w.season, day: w.day, won: m.won, forced: forced !== undefined, predicted: m.predicted, truth: m.truth, text, mods: m.mods, muDelta: m.muDelta });
+    if (w.log.length > 40) w.log.pop();
+    point(w);
+  }
+  function point(w) {
+    const y = w.you;
+    w.history.push({ x: w.day + Math.min(0.9, y.playedToday * 0.06), shown: w.shown.placing ? null : (w.rules.display === 'rating' ? posOf(w.shown.mu) : w.shown.pos), hidden: posOf(y.mu), real: posOf(y.skill) });
+  }
+  function endDay(w) {
+    const r = w.r, y = w.you;
+    for (const p of w.players) {
+      if (p.isYou) continue;
+      if (p.breakLeft > 0) { p.breakLeft--; continue; }
+      if (r() < 0.012) { p.breakLeft = 7 + Math.floor(r() * 40); continue; }
+      for (let k = poisson(r, p.rate); k > 0; k--) match(w, p);
+    }
+    let decayed = false;
+    for (const p of w.players) {
+      if (!p.playedToday) p.sigma = Math.min(SIG0, Math.sqrt(p.sigma * p.sigma + IDLE_TAU * IDLE_TAU));
+      if (w.rules.decay === 'top' && !p.placing && w.rules.display !== 'rating') {
+        if (p.bank > 0) p.bank--;
+        else if (!p.playedToday && p.pos >= DIAMOND) { p.pos = Math.max(DIAMOND, p.pos - 0.5); if (p.isYou) decayed = true; }
+      }
+      p.playedToday = 0;
+      if (p.recent.length > 60) p.recent = p.recent.filter(d => d > w.day - 21);
+    }
+    w.day++;
+    computeChampCut(w);
+    if (decayed) { const b = w.shown; sync(w); w.told = { text: `Inactive with no days banked: ${changeText(w, b, w.shown)}`, mods: [] }; }
+    if (w.day % w.rules.seasonDays === 0) endSeason(w);
+    else if (w.rules.display === 'rating' || !w.pending) sync(w);
+    point(w);
+  }
+  function rewardsEarned(w, p) {
+    const S = p.season, R = w.rules, got = [];
+    for (let k = 0; k < 7; k++) {
+      const ok = R.reward === 'wins' ? S.winsAt[k] >= 10 : R.reward === 'peak' ? k <= S.peak : !p.placing && k <= tierNow(w, p);
+      if (ok) got.push(k);
+    }
+    return got;
+  }
+  function endSeason(w) {
+    const R = w.rules, y = w.you, perYear = Math.max(1, Math.round(365 / R.seasonDays));
+    w.seasons.push({ season: w.season, end: y.placing ? 'Unplaced' : (isChampion(w, y) ? 'Champion' : posName(y.pos)), peak: y.season.peak < 0 ? '—' : (y.season.peak === 6 ? 'Champion' : TIERS[y.season.peak]), matches: y.season.matches, wins: y.season.wins, rewards: rewardsEarned(w, y) });
+    for (const p of w.players) {
+      p.sigma = Math.min(SIG0, Math.sqrt(p.sigma * p.sigma + SEASON_TAU * SEASON_TAU));
+      const reset = R.reset;
+      if (R.display === 'rating') {
+        if (reset !== 'none') p.sigma = Math.max(p.sigma, PROVISIONAL + 1);
+        if (reset === 'place' || (reset === 'placeYear' && w.season % perYear === 0)) p.placing = R.placements || 5;
+        p.pos = posOf(p.mu);
+      } else if (!p.placing) {
+        if (reset === 'drop1t') p.pos = Math.max(0, p.pos - 3);
+        if (reset === 'drop2t') p.pos = Math.max(0, p.pos - 6);
+        if (reset === 'half') p.pos = 5 + (p.pos - 5) / 2;
+        if (reset === 'place' || (reset === 'placeYear' && w.season % perYear === 0)) p.placing = R.placements || 5;
+        if (R.display === 'stars') p.pos = Math.round(p.pos * 5) / 5;
+      }
+      p.season = freshSeason(); p.bank = 0;
+    }
+    w.season++;
+    sync(w);
+    const s = w.seasons[w.seasons.length - 1];
+    w.told = { text: `Season ${s.season} is over. You finished ${s.end}. Season ${w.season} starts: ${w.shown.placing ? `${w.shown.placing} placement matches to play` : `you start at ${w.shown.champ ? 'Champion' : posName(w.shown.pos)}`}.`,
+      mods: s.rewards.length ? [`Rewards: Season ${s.season} ${s.rewards.map(k => TIERS[k]).join(', ')}`] : ['No ranked-win rewards this season'] };
+  }
+  function seasonDaysLeft(w) { return w.rules.seasonDays - (w.day % w.rules.seasonDays); }
+
+  function act(w, a) {
+    switch (a.type) {
+      case 'win': for (let i = 0; i < (a.n || 1); i++) youPlay(w, true); break;
+      case 'lose': for (let i = 0; i < (a.n || 1); i++) youPlay(w, false); break;
+      case 'play': for (let i = 0; i < (a.n || 1); i++) youPlay(w); break;
+      case 'endDay': endDay(w); break;
+      case 'rest': for (let i = 0; i < a.days; i++) endDay(w); break;
+      case 'playDays': for (let i = 0; i < a.days; i++) { for (let k = 0; k < a.perDay; k++) youPlay(w); endDay(w); } break;
+      case 'toSeasonEnd': { const s = w.season; let guard = 400; while (w.season === s && guard--) { for (let k = 0; k < a.perDay; k++) youPlay(w); endDay(w); } break; }
+      case 'weekends': for (let i = 0; i < a.weeks; i++) for (let d = 0; d < 7; d++) { if (d >= 5) for (let k = 0; k < 4; k++) youPlay(w); endDay(w); } break;
+    }
+    return w;
+  }
+
+  function truth(w) {
+    const y = w.you, shownPos = w.shown.placing ? null : (w.rules.display === 'rating' ? posOf(w.shown.mu) : w.shown.pos);
+    return { mu: y.mu, sigma: y.sigma, hiddenName: posOf(y.mu) >= 18 ? 'Champion line' : posName(posOf(y.mu)), realName: posOf(y.skill) >= 18 ? 'Champion line' : posName(posOf(y.skill)),
+      gap: shownPos === null ? null : shownPos - posOf(y.mu), season: y.season, recent: recentCount(w, y), games: y.games, rewardsSoFar: rewardsEarned(w, y), reward: w.rules.reward, bank: y.bank };
+  }
+  function population(w) {
+    const act = w.players.filter(p => recentCount(w, p) > 0 && !p.placing);
+    const shown = Array(7).fill(0), hidden = Array(7).fill(0), real = Array(7).fill(0);
+    let infl = 0;
+    for (const p of act) {
+      const sp = w.rules.display === 'rating' ? posOf(p.mu) : p.pos;
+      shown[isChampion(w, p) ? 6 : tierOf(sp)]++;
+      hidden[p.mu >= EDGE[6] ? 6 : tierOf(posOf(p.mu))]++;
+      real[p.skill >= EDGE[6] ? 6 : tierOf(posOf(p.skill))]++;
+      infl += sp - posOf(p.mu);
+    }
+    const n = act.length || 1;
+    return { n: act.length, shown: shown.map(x => x / n), hidden: hidden.map(x => x / n), real: real.map(x => x / n), inflation: infl / n,
+      champs: w.players.filter(p => isChampion(w, p)).length, onBreak: w.players.filter(p => p.breakLeft > 0).length };
+  }
+
+  return { TIERS, PRESETS, RULES, SKILLS, EDGE, MASTER, create, act, view, truth, population, seasonDaysLeft, posName };
+})();
+</script>
+
+<script>
+// ---------------------------------------------------------------------------
+// The page: a thin shell over Ladder.
+// ---------------------------------------------------------------------------
+const $ = id => document.getElementById(id);
+const st = { preset: 'points', rules: { ...Ladder.PRESETS.points.rules }, you: { skillPct: 50, account: 'new' }, tab: 0, stepAt: 0, world: null };
+const fmtPct = x => Math.round(x * 100) + '%';
+
+function restart() { st.world = Ladder.create(st.rules, st.you, 7); }
+
+const WALKS = [
+  { title: 'New account', you: { skillPct: 50, account: 'new' },
+    text: 'An average player opens ranked for the first time. Play the placements by hand, then let skill decide for the rest of the season.',
+    watch: 'Where do placements put you, compared with the purple line? How many weeks until the rank you are shown meets it? Is there any point in the season where the rank tells you something false?',
+    steps: [['Win', { type: 'win' }], ['Lose', { type: 'lose' }], ['Win', { type: 'win' }], ['Win', { type: 'win' }], ['Lose', { type: 'lose' }],
+      ['Play 5 more (skill decides)', { type: 'play', n: 5 }], ['Play two weeks, 3 a day', { type: 'playDays', days: 14, perDay: 3 }], ['Play to season end, 2 a day', { type: 'toSeasonEnd', perDay: 2 }]] },
+  { title: 'Losing streak', you: { skillPct: 50, account: 'veteran' },
+    text: 'A settled Gold player loses six in a row, which happens to everyone, then wins six.',
+    watch: 'How far does the shown rank fall, and does it come back on its own? Turn the underdog cushion on and run it again. Compare stars, where floors stop the fall.',
+    steps: [['Lose 3', { type: 'lose', n: 3 }], ['Lose 3 more', { type: 'lose', n: 3 }], ['Win 3', { type: 'win', n: 3 }], ['Win 3 more', { type: 'win', n: 3 }], ['Play a week, 3 a day', { type: 'playDays', days: 7, perDay: 3 }]] },
+  { title: 'A month away', you: { skillPct: 92, account: 'veteran' },
+    text: 'A Diamond player plays a little, then disappears for a month.',
+    watch: 'Does the rank decay while they are gone, and by how much? On the shown-rating ladder, the number stays but turns provisional. Do they keep Champion or a Diamond reward?',
+    steps: [['Play 5', { type: 'play', n: 5 }], ['Take a month off', { type: 'rest', days: 30 }], ['Play 5', { type: 'play', n: 5 }], ['Play a week, 3 a day', { type: 'playDays', days: 7, perDay: 3 }]] },
+  { title: 'Season rollover', you: { skillPct: 78, account: 'veteran' },
+    text: 'A Platinum player finishes a season and starts the next.',
+    watch: 'What does the reset take away, and how many matches does it take to get back? Do they need placements again? What rewards did the season pay?',
+    steps: [['Play to season end, 2 a day', { type: 'toSeasonEnd', perDay: 2 }], ['Play 10', { type: 'play', n: 10 }], ['Play two weeks, 2 a day', { type: 'playDays', days: 14, perDay: 2 }], ['Play to season end, 2 a day', { type: 'toSeasonEnd', perDay: 2 }]] },
+  { title: 'Great new player', you: { skillPct: 98, account: 'new' },
+    text: 'A top-2% player, maybe a smurf, on a new account.',
+    watch: 'Where does the placement cap stop them? How many matches until they are shown where they belong, and how many lobbies did they play below it?',
+    steps: [['Play placements (skill decides)', { type: 'play', n: 5 }], ['Play 5 more', { type: 'play', n: 5 }], ['Play 10', { type: 'play', n: 10 }], ['Play 20', { type: 'play', n: 20 }], ['Play two weeks, 3 a day', { type: 'playDays', days: 14, perDay: 3 }]] },
+  { title: 'The grinder', you: { skillPct: 50, account: 'veteran' },
+    text: 'An average player who plays 10 matches a day. Their hidden rating will not move much; they win about half.',
+    watch: 'Does grinding raise the shown rank without raising skill? Watch the population bars too: on stars, everyone drifts up through the season.',
+    steps: [['Play two weeks, 10 a day', { type: 'playDays', days: 14, perDay: 10 }], ['Play to season end, 10 a day', { type: 'toSeasonEnd', perDay: 10 }]] },
+  { title: 'Weekend player', you: { skillPct: 78, account: 'veteran' },
+    text: 'A good player who only plays weekends: 4 matches on Saturday, 4 on Sunday.',
+    watch: 'Can they earn the reward for their rank with this pace? Do decay and Champion activity rules punish them?',
+    steps: [['Play 4 weekends', { type: 'weekends', weeks: 4 }], ['Play 4 more weekends', { type: 'weekends', weeks: 4 }], ['Play to season end, weekends only', { type: 'weekends', weeks: 6 }]] },
+];
+
+function renderPresets() {
+  $('presets').innerHTML = Object.entries(Ladder.PRESETS).map(([k, p]) =>
+    `<button class="chip" aria-pressed="${st.preset === k}" data-p="${k}">${p.name}<small>${p.from}</small></button>`).join('') +
+    (st.preset === 'custom' ? '<button class="chip" aria-pressed="true" disabled>Custom<small>your own rules</small></button>' : '');
+  document.querySelectorAll('[data-p]').forEach(b => (b.onclick = () => { st.preset = b.dataset.p; st.rules = { ...Ladder.PRESETS[st.preset].rules }; restart(); renderAll(); }));
+}
+function selectHtml(id, label, opts, val) {
+  return `<div class="field"><label for="${id}">${label}</label><select id="${id}">${opts.map(([v, t]) => `<option value="${String(v)}"${String(v) === String(val) ? ' selected' : ''}>${t}</option>`).join('')}</select></div>`;
+}
+const parse = v => (v === 'true' ? true : v === 'false' ? false : isNaN(+v) ? v : +v);
+function renderRules() {
+  $('rules').innerHTML = Ladder.RULES.map(([k, label, opts]) => selectHtml('r_' + k, label, opts, st.rules[k])).join('');
+  Ladder.RULES.forEach(([k]) => ($('r_' + k).onchange = e => { st.rules[k] = parse(e.target.value); st.preset = 'custom'; restart(); renderAll(); }));
+}
+function renderYou() {
+  $('you').innerHTML = selectHtml('y_skill', 'Your real skill', Ladder.SKILLS, st.you.skillPct) +
+    selectHtml('y_acc', 'Your account', [['new', 'Brand new: placements first'], ['veteran', 'Returning: settled rating']], st.you.account);
+  $('y_skill').onchange = e => { st.you.skillPct = +e.target.value; restart(); renderAll(); };
+  $('y_acc').onchange = e => { st.you.account = e.target.value; restart(); renderAll(); };
+}
+
+function renderTabs() {
+  $('tabs').innerHTML = WALKS.map((w, i) => `<button role="tab" id="tab${i}" aria-selected="${i === st.tab}">${w.title}</button>`).join('');
+  WALKS.forEach((w, i) => ($('tab' + i).onclick = () => { st.tab = i; st.stepAt = -1; renderTabs(); }));
+  const w = WALKS[st.tab], started = st.stepAt >= 0;
+  $('walk').innerHTML = `<div style="display:grid;gap:12px">
+    <p>${w.text}</p><div class="watch"><b>Watch for:</b> ${w.watch}</div>
+    <div class="row"><button class="primary" id="wStart">${started ? 'Restart' : 'Start'} this walkthrough</button>
+    <span class="small muted">You: ${Ladder.SKILLS.find(s => s[0] === w.you.skillPct)[1].toLowerCase()}, ${w.you.account === 'new' ? 'new account' : 'returning'}. Ladder: ${st.preset === 'custom' ? 'custom' : Ladder.PRESETS[st.preset].name}.</span></div>
+    <div class="steps">${w.steps.map(([label], i) => `<div class="step ${started && i < st.stepAt ? 'done' : started && i === st.stepAt ? 'next' : ''}"><button id="ws${i}" ${started && i === st.stepAt ? '' : 'disabled'}>${label}</button></div>`).join('')}</div>
+    ${started && st.stepAt >= w.steps.length ? '<p class="small muted">Done. Switch the ladder above and run it again to compare.</p>' : ''}</div>`;
+  $('wStart').onclick = () => { st.you = { ...w.you }; restart(); st.stepAt = 0; renderAll(); };
+  w.steps.forEach(([, a], i) => ($('ws' + i).onclick = () => { Ladder.act(st.world, a); st.stepAt++; renderAll(); }));
+}
+
+function crest(v) {
+  if (v.placing) return '<div class="crest unk">?</div>';
+  const t = v.champ ? 6 : v.tier;
+  return `<div class="crest t${t}">${v.champ ? 'C' : Ladder.TIERS[t][0]}</div>`;
+}
+function renderRank() {
+  const w = st.world, v = Ladder.view(w);
+  let body = '';
+  if (v.placing) {
+    body = `<div class="badge">${crest(v)}<div><div class="rname">Placements</div><div class="rsub">${v.played} of ${v.of} played</div></div></div>
+      <p class="small">Predicted rank: <b>${v.predicted}</b></p>`;
+  } else {
+    let sub = '';
+    if (v.champ) sub = `#${v.champRank} of ${v.champOf} Champions`;
+    else if (v.display === 'rating') sub = `${v.rating}${v.range ? ` ±${v.range} · provisional` : ''}`;
+    else if (v.display === 'stars') sub = v.tier >= 5 ? `★ ${v.stars}` : '';
+    else if (v.display === 'bar') sub = v.tier >= 5 ? `${v.points} points` : `${v.points}% to next division`;
+    else sub = `${v.points} points`;
+    if (v.champ && v.display === 'rating') sub += ` · ${v.rating}`;
+    body = `<div class="badge">${crest(v)}<div><div class="rname">${v.name}</div><div class="rsub">${sub}</div></div></div>`;
+    if (v.display === 'stars' && v.tier < 5 && !v.champ) body += `<div class="stars" aria-label="${v.stars} of 5 stars">${'★'.repeat(v.stars)}${'☆'.repeat(5 - v.stars)}</div>`;
+    if ((v.display === 'points' || v.display === 'bar') && v.tier < 5 && !v.champ) body += `<div class="bar"><i style="width:${v.points}%"></i></div>`;
+    if (v.bank !== undefined) body += `<p class="small ${v.bank ? 'muted' : 'warn'}">${v.bank ? `Decay protection: ${v.bank} days banked` : 'No days banked: each day without a match costs 50 points'}</p>`;
+  }
+  if (v.batch > 1 && v.pending) body += `<p class="small muted">Results recorded: ${v.pending} of ${v.batch}. Rank updates after the set.</p>`;
+  const t = w.told;
+  body += `<div class="told">${t.text}${t.mods.length && (w.rules.display === 'bar' || /Season|Rewards|placement|Placed/i.test(t.mods.join() + t.text) || w.rules.display === 'stars') ? `<ul>${t.mods.map(m => `<li>${m}</li>`).join('')}</ul>` : ''}</div>`;
+  const tr = Ladder.truth(w);
+  const rw = tr.reward === 'wins'
+    ? Ladder.TIERS.map((n, k) => `<span class="rw ${tr.season.winsAt[k] >= 10 ? 'got' : ''}">${n} ${Math.min(10, tr.season.winsAt[k])}/10</span>`).join('')
+    : Ladder.TIERS.map((n, k) => `<span class="rw ${tr.rewardsSoFar.includes(k) ? 'got' : ''}">${n}</span>`).join('');
+  body += `<div style="display:grid;gap:6px"><span class="small"><b>Season ${w.season} rewards</b> <span class="muted">(${tr.reward === 'wins' ? 'wins at that rank or above' : tr.reward === 'peak' ? 'every tier you reach' : 'every tier up to where you finish'})</span></span><div class="rewards">${rw}</div></div>`;
+  $('rank').innerHTML = `<span class="eyebrow">What you are shown</span>${body}`;
+
+  const gap = tr.gap === null ? '—' : `${tr.gap >= 0 ? '+' : ''}${tr.gap.toFixed(1)} divisions`;
+  $('truth').innerHTML = `<span class="eyebrow" style="color:var(--hid)">Behind the scenes (players never see this)</span>
+    <dl class="kv">
+      <dt>Hidden rating (runs matchmaking)</dt><dd>${tr.mu.toFixed(1)} ± ${tr.sigma.toFixed(1)}</dd>
+      <dt>Where the hidden rating puts you</dt><dd>${tr.hiddenName}</dd>
+      <dt>Where your real skill puts you</dt><dd>${tr.realName}</dd>
+      <dt>Shown rank minus hidden rating</dt><dd class="${tr.gap === null ? '' : Math.abs(tr.gap) > 1.5 ? 'warn' : ''}">${gap}</dd>
+      <dt>This season</dt><dd>${tr.season.wins}–${tr.season.matches - tr.season.wins} (${tr.season.matches ? fmtPct(tr.season.wins / tr.season.matches) : '—'})</dd>
+      <dt>Matches in the last 21 days</dt><dd>${tr.recent}</dd>
+      <dt>Matches on this account</dt><dd>${tr.games}</dd>
+    </dl>`;
+}
+function renderStatus() {
+  const w = st.world;
+  $('status').innerHTML = `Season <b>${w.season}</b> · day <b>${(w.day % w.rules.seasonDays) + 1}</b> of ${w.rules.seasonDays} · <b>${Ladder.seasonDaysLeft(w)}</b> days left · played today: <b>${w.you.playedToday}</b>`;
+}
+function renderChart() {
+  const w = st.world, H = w.history, Wd = 900, Ht = 280, L = 92, Rt = 10, T = 10, B = 26;
+  const xMax = Math.max(w.rules.seasonDays, Math.ceil((w.day + 1) / w.rules.seasonDays) * w.rules.seasonDays);
+  const yMax = 21, X = x => L + (x / xMax) * (Wd - L - Rt), Y = y => T + (1 - Math.min(y, yMax) / yMax) * (Ht - T - B);
+  let s = `<svg viewBox="0 0 ${Wd} ${Ht}" role="img" aria-label="Your shown rank, hidden rating and real skill by day">`;
+  const names = ['Bronze', 'Silver', 'Gold', 'Platinum', 'Diamond', 'Master'];
+  for (let i = 0; i < 6; i++) {
+    const y0 = Y(3 * i + 3), y1 = Y(3 * i);
+    s += `<rect x="${L}" y="${y0}" width="${Wd - L - Rt}" height="${y1 - y0}" fill="${i % 2 ? 'var(--sunk)' : 'var(--surface)'}" />`;
+    s += `<text x="${L - 8}" y="${(y0 + y1) / 2 + 4}" text-anchor="end">${names[i]}</text>`;
+  }
+  s += `<line x1="${L}" x2="${Wd - Rt}" y1="${Y(18)}" y2="${Y(18)}" stroke="var(--line)" stroke-dasharray="3 3" /><text x="${L - 8}" y="${Y(19.5) + 4}" text-anchor="end">Champion line</text>`;
+  for (let d = w.rules.seasonDays; d < xMax; d += w.rules.seasonDays) s += `<line x1="${X(d)}" x2="${X(d)}" y1="${T}" y2="${Ht - B}" stroke="var(--ink)" stroke-dasharray="4 3" opacity=".5" /><text x="${X(d) + 4}" y="${T + 12}">Season ${d / w.rules.seasonDays + 1}</text>`;
+  for (let d = 0; d <= xMax; d += 7 * Math.ceil(xMax / 120)) s += `<text x="${X(d)}" y="${Ht - 8}" text-anchor="middle">${d === 0 ? 'day 0' : d}</text>`;
+  const path = (key, color, width, dash) => {
+    let dpath = '', pen = false;
+    for (const h of H) { const v = h[key]; if (v === null) { pen = false; continue; } dpath += `${pen ? 'L' : 'M'}${X(h.x).toFixed(1)},${Y(v).toFixed(1)}`; pen = true; }
+    return `<path d="${dpath}" fill="none" stroke="${color}" stroke-width="${width}" ${dash ? `stroke-dasharray="${dash}"` : ''} stroke-linejoin="round" />`;
+  };
+  s += path('real', 'var(--real)', 2, '5 4') + path('hidden', 'var(--hid)', 2) + path('shown', 'var(--accent)', 3);
+  const last = H[H.length - 1];
+  if (last.shown !== null) s += `<circle cx="${X(last.x)}" cy="${Y(last.shown)}" r="4.5" fill="var(--accent)" />`;
+  $('chart').innerHTML = s + '</svg>';
+}
+function renderLog() {
+  const w = st.world;
+  $('log').innerHTML = `<thead><tr><th>#</th><th>Result</th><th>Win chance</th><th>Rank change</th></tr></thead><tbody>` +
+    (w.log.slice(0, 14).map(m => `<tr><td>S${m.season} d${(m.day % w.rules.seasonDays) + 1}</td><td class="${m.won ? 'up' : 'down'}">${m.won ? 'Win' : 'Loss'}${m.forced ? '' : '*'}</td><td>${fmtPct(m.predicted)}</td><td class="l">${m.text}${m.mods.length ? `<br><span class="small muted">${m.mods.join(' · ')}</span>` : ''}</td></tr>`).join('') ||
+    '<tr><td colspan="4" class="l muted">No matches yet. * = skill decided the result.</td></tr>') + '</tbody>';
+}
+function renderSeasons() {
+  const w = st.world;
+  $('seasons').innerHTML = `<thead><tr><th>Season</th><th>Finished</th><th>Peak</th><th>W–L</th><th>Rewards earned</th></tr></thead><tbody>` +
+    (w.seasons.map(s => `<tr><td>${s.season}</td><td>${s.end}</td><td>${s.peak}</td><td>${s.wins}–${s.matches - s.wins}</td><td class="l">${s.rewards.length ? s.rewards.map(k => `S${s.season} ${Ladder.TIERS[k]}`).join(', ') : 'None'}</td></tr>`).join('') ||
+    `<tr><td colspan="5" class="l muted">Season ${w.season} is still running. Rewards are paid when it ends.</td></tr>`) + '</tbody>';
+}
+function renderPop() {
+  const p = Ladder.population(st.world);
+  $('dist').innerHTML = Ladder.TIERS.map((n, k) => `<span>${n}</span><div class="bars">
+    <i style="width:${p.shown[k] * 200}%;background:var(--accent)" title="Shown ${fmtPct(p.shown[k])}"></i>
+    <i style="width:${p.hidden[k] * 200}%;background:var(--hid)" title="Hidden ${fmtPct(p.hidden[k])}"></i>
+    <i style="width:${p.real[k] * 200}%;background:var(--real)" title="Real ${fmtPct(p.real[k])}"></i></div>`).join('');
+  $('popStatus').innerHTML = `Active players: <b>${p.n}</b> · on a break: <b>${p.onBreak}</b> · Champions: <b>${p.champs}</b> · shown rank sits <b>${p.inflation >= 0 ? '+' : ''}${p.inflation.toFixed(2)}</b> divisions from hidden rating on average · shown share by tier: ${p.shown.map((x, k) => `${Ladder.TIERS[k][0]} ${fmtPct(x)}`).join(' ')}`;
+}
+
+function renderAll() { renderPresets(); renderRules(); renderYou(); renderTabs(); renderStatus(); renderRank(); renderChart(); renderLog(); renderSeasons(); renderPop(); }
+function bind(id, a) { $(id).onclick = () => { Ladder.act(st.world, a); renderAll(); }; }
+bind('bWin', { type: 'win' }); bind('bLose', { type: 'lose' }); bind('bPlay', { type: 'play' }); bind('bPlay5', { type: 'play', n: 5 });
+bind('bDay', { type: 'endDay' }); bind('bWeek', { type: 'playDays', days: 7, perDay: 3 }); bind('bOff7', { type: 'rest', days: 7 });
+bind('bOff30', { type: 'rest', days: 30 }); bind('bEnd', { type: 'toSeasonEnd', perDay: 2 });
+$('bReset').onclick = () => { restart(); renderAll(); };
+st.stepAt = -1;
+restart();
+renderAll();
+</script>
