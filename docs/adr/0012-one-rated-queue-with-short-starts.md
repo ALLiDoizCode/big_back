@@ -82,3 +82,5 @@ these were the waits at the 4 quietest hours (median / 90% matched within):
   [#47](https://github.com/ALLiDoizCode/big_back/issues/47).
 - **Settled by [0019](0019-a-tutorial-then-the-rated-queue.md):** the seat bot is also the
   tutorial's and practice's bot, run scripted in the tutorial.
+- **Settled by [0020](0020-one-big-lanes-and-jungle-map-at-launch.md):** one map at launch, so
+  the queue has no map to rotate. The 3v3 fallback map (about 60 × 34 m) isn't shipped.

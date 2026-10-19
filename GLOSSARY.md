@@ -143,8 +143,12 @@ One of the three open routes between the bases: top, mid and bottom.
 _Avoid_: path, corridor
 
 **Jungle**:
-The four walled quadrants between the lanes, entered by gaps in their walls. The PvE camps are here.
+The four walled quadrants between the lanes, entered by gaps in their walls and split into rooms. The heal and shield camps are here, two in each quadrant.
 _Avoid_: forest, woods
+
+**Base area**:
+The walled end of the map behind each team's lanes, holding its pad and base. It opens onto the three lanes and through a gate into each of the team's jungle quadrants.
+_Avoid_: base (that's the block), fountain, spawn, home
 
 **River**:
 The strip running north to south through the middle of the map, between the jungles.

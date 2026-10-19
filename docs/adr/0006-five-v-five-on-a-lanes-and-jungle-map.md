@@ -21,3 +21,6 @@ and join the rest from the pad.
   arena. Crates spawn in the river and mid lane to pull fights to the middle.
 - **Open:** exact map size, wall layout, and camp numbers and drops. A smaller version of the
   layout (about 60 × 34 m) is the fallback if fights stay too rare.
+- **Settled by [0020](0020-one-big-lanes-and-jungle-map-at-launch.md):** the map size (120 × 72 m,
+  League of Legends scale), base areas 20 m deep and walled, two camps per jungle quadrant,
+  and mirror symmetry. The smaller version isn't shipped. Wall and camp placement stays tuning.

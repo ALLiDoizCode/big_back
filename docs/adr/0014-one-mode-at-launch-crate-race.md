@@ -52,3 +52,5 @@ mode, and one rating covers every mode.
 - **0012's mode selection is unused at launch.** "Rotate or pick at least 2" waits for a
   second mode. The queue rotates maps only.
 - **Map variety carries the launch.** How many maps and variants ship is still open.
+- **Settled by [0020](0020-one-big-lanes-and-jungle-map-at-launch.md):** one map, so map
+  variety doesn't carry the launch after all. Variety comes from the match itself.
