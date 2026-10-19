@@ -171,3 +171,21 @@ _Avoid_: quest, mission, bounty
 **Joke award**:
 The single public award each player gets on the results screen, framed as a joke.
 _Avoid_: medal, accolade, card
+
+### Rating
+
+**Rating**:
+A player's hidden skill estimate: a mean and an uncertainty, updated after every matchmade ranked match from the win or loss alone. It drives matchmaking. The visible rank is separate.
+_Avoid_: MMR, Elo, score, rank
+
+**Party**:
+Players who queue together and are put on the same team.
+_Avoid_: premade, stack, squad, group
+
+**Party bonus**:
+How much stronger a party plays than its players' ratings add up to, per extra member. It is learned from match results, not set by hand.
+_Avoid_: squad offset, premade penalty, synergy
+
+**Settled**:
+Said of a player whose ladder position stays close to where their real skill belongs. It is how fast-converging a rating system is measured.
+_Avoid_: converged, placed, calibrated
