@@ -1,0 +1,931 @@
+<title>Rating Lab</title>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700&family=Source+Sans+3:wght@400;600&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Layout: a lab bench. Settings and actions on top, the scoreboard and two
+   curves in the middle, the inspected match and the team-size sweep below. */
+:root {
+  --bg: #eef2f3; --surface: #ffffff; --sunk: #e3e9eb; --ink: #13212a; --muted: #566873;
+  --line: #cfd8dc; --accent: #0a6680; --accent-ink: #ffffff; --good: #2f7d32; --bad: #b3261e;
+  --s1: #c2410c; --s2: #7c3aed; --s3: #0f766e; --s4: #1d4ed8; --s5: #be185d;
+  --display: "Barlow Condensed", "Arial Narrow", sans-serif;
+  --body: "Source Sans 3", "Segoe UI", system-ui, sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #0f171b; --surface: #16222a; --sunk: #1c2b34; --ink: #e3ecef; --muted: #93a7b1;
+  --line: #2a3c46; --accent: #4fb3cf; --accent-ink: #06222b; --good: #7bc77e; --bad: #f2867e;
+  --s1: #fb923c; --s2: #a78bfa; --s3: #2dd4bf; --s4: #60a5fa; --s5: #f472b6; color-scheme: dark } }
+:root[data-theme="dark"] {
+  --bg: #0f171b; --surface: #16222a; --sunk: #1c2b34; --ink: #e3ecef; --muted: #93a7b1;
+  --line: #2a3c46; --accent: #4fb3cf; --accent-ink: #06222b; --good: #7bc77e; --bad: #f2867e;
+  --s1: #fb923c; --s2: #a78bfa; --s3: #2dd4bf; --s4: #60a5fa; --s5: #f472b6; color-scheme: dark }
+
+* { box-sizing: border-box }
+body { background: var(--bg); color: var(--ink); font: 16px/1.5 var(--body); margin: 0 }
+.wrap { max-width: 1180px; margin: 0 auto; padding-inline: 16px; padding-block: 24px 64px; display: grid; gap: 28px }
+h1, h2, h3 { font-family: var(--display); font-weight: 700; letter-spacing: .01em; text-wrap: balance; margin: 0; line-height: 1.1 }
+h1 { font-size: 2.6rem }
+h2 { font-size: 1.6rem }
+h3 { font-size: 1.15rem }
+p { margin: 0; max-width: 72ch }
+.eyebrow { font: 600 .75rem/1 var(--mono); letter-spacing: .12em; text-transform: uppercase; color: var(--accent) }
+.muted { color: var(--muted) }
+.small { font-size: .9rem }
+header { display: grid; gap: 10px }
+.note { border-left: 3px solid var(--line); padding-left: 12px; color: var(--muted); font-size: .92rem; max-width: 80ch }
+section { display: grid; gap: 14px; min-width: 0 }
+.panel { background: var(--surface); border: 1px solid var(--line); border-radius: 6px; padding: 16px; min-width: 0 }
+.grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 440px), 1fr)); gap: 16px }
+.settings { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 210px), 1fr)); gap: 12px 18px }
+.field { display: grid; gap: 4px; font-size: .9rem }
+.field label { font-weight: 600 }
+.field .val { font: .8rem var(--mono); color: var(--muted) }
+select, input[type=range] { width: 100%; font: inherit }
+select { padding: 6px 8px; border: 1px solid var(--line); border-radius: 4px; background: var(--surface); color: var(--ink) }
+input[type=range] { accent-color: var(--accent) }
+.row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center }
+button { font: 600 .92rem var(--body); border: 1px solid var(--accent); background: var(--surface); color: var(--accent); border-radius: 4px; padding: 7px 12px; cursor: pointer }
+button.primary { background: var(--accent); color: var(--accent-ink) }
+button:hover { filter: brightness(1.08) }
+button:focus-visible, select:focus-visible, input:focus-visible, [role=tab]:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px }
+button:disabled { opacity: .45; cursor: default }
+.chips { display: flex; flex-wrap: wrap; gap: 6px }
+.chip { border: 1px solid var(--line); color: var(--ink); background: var(--surface); font-weight: 400 }
+.chip[aria-pressed=true] { border-color: var(--accent); background: var(--accent); color: var(--accent-ink); font-weight: 600 }
+.tabs { display: flex; flex-wrap: wrap; gap: 0; border-bottom: 1px solid var(--line) }
+[role=tab] { border: 0; border-bottom: 3px solid transparent; border-radius: 0; background: none; color: var(--muted); padding: 8px 12px }
+[role=tab][aria-selected=true] { color: var(--ink); border-bottom-color: var(--accent) }
+.steps { display: grid; gap: 8px; counter-reset: step }
+.step { display: flex; gap: 10px; align-items: center }
+.step::before { counter-increment: step; content: counter(step); font: 600 .8rem var(--mono); width: 1.6rem; height: 1.6rem; border-radius: 50%; display: grid; place-items: center; background: var(--sunk); color: var(--muted); flex: none }
+.step.done::before { content: "✓"; background: var(--good); color: var(--surface) }
+.step.next::before { background: var(--accent); color: var(--accent-ink) }
+.watch { background: var(--sunk); border-radius: 4px; padding: 10px 12px; font-size: .92rem }
+.status { font: .85rem var(--mono); color: var(--muted) }
+.status b { color: var(--ink) }
+.scroll { overflow-x: auto }
+table { border-collapse: collapse; width: 100%; font-size: .9rem }
+th, td { text-align: right; padding: 7px 10px; border-bottom: 1px solid var(--line); white-space: nowrap; font-variant-numeric: tabular-nums }
+th { font: 600 .72rem/1.2 var(--mono); letter-spacing: .06em; text-transform: uppercase; color: var(--muted); vertical-align: bottom; white-space: normal; min-width: 7ch }
+th:first-child, td:first-child { text-align: left }
+td.num { font-family: var(--mono) }
+tr.sel td { background: var(--sunk) }
+tbody tr { cursor: pointer }
+.sw { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 8px; vertical-align: 1px }
+.delta { font-size: .75rem; margin-left: 4px }
+.up { color: var(--good) } .down { color: var(--bad) }
+.best { font-weight: 700; color: var(--accent) }
+svg { display: block; width: 100%; height: auto }
+svg text { fill: var(--muted); font: 11px var(--mono) }
+.legend { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: .85rem }
+.match { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr)); gap: 14px }
+.team { display: grid; gap: 4px; min-width: 0 }
+.pl { display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: baseline; font: .82rem var(--mono); padding: 4px 0; border-bottom: 1px dashed var(--line) }
+.tag { font: 600 .68rem var(--mono); text-transform: uppercase; letter-spacing: .05em; padding: 1px 6px; border-radius: 3px; background: var(--sunk); color: var(--muted) }
+.tag.smurf { background: var(--s1); color: var(--surface) }
+.tag.won { background: var(--good); color: var(--surface) }
+details summary { cursor: pointer; font-weight: 600 }
+dl { display: grid; grid-template-columns: minmax(0, 16ch) minmax(0, 1fr); gap: 6px 14px; margin: 10px 0 0; font-size: .92rem }
+dt { font-weight: 600 }
+dd { margin: 0; color: var(--muted) }
+@media (max-width: 520px) { dl { grid-template-columns: 1fr } dd { margin-bottom: 6px } h1 { font-size: 2.1rem } }
+</style>
+
+<div class="wrap">
+<header>
+  <span class="eyebrow">Prototype · issue #11 · throwaway</span>
+  <h1>Rating Lab</h1>
+  <p><b>Which rating system should run matchmaking and the ladder, and how should it score parties and team results?</b>
+  This page simulates a small game: about 200 players whose real skill is known to the simulation but hidden from the rating systems.
+  They queue into team matches, win or lose, and each rating system tries to work out who is good.
+  Every system plays its own copy of the same population, so you can compare how fast each one learns, how accurate it ends up,
+  what parties do to it, and how it places new players.</p>
+  <p class="note">Assumptions: a match is won by the team whose players' skill plus luck adds up higher, the same model TrueSkill assumes, which slightly favours the Gaussian systems.
+  Team sizes 2v2 to 4v4 come from the issue, and 5v5 is added because <a href="https://github.com/ALLiDoizCode/big_back/blob/main/docs/adr/0006-five-v-five-on-a-lanes-and-jungle-map.md">ADR 0006</a> picked it.
+  A player counts as <b>settled</b> once their ladder position stays within 15 places in 100 of where their real skill belongs, for the rest of the run.</p>
+</header>
+
+<section aria-labelledby="walk-h">
+  <h2 id="walk-h">Guided walkthroughs</h2>
+  <div class="tabs" role="tablist" id="tabs"></div>
+  <div class="panel" id="walk"></div>
+</section>
+
+<section aria-labelledby="free-h">
+  <h2 id="free-h">Free play</h2>
+  <div class="panel" style="display:grid;gap:16px">
+    <div class="field"><label>Compare</label><div class="chips" id="presets"></div></div>
+    <div class="settings" id="settings"></div>
+    <div class="row">
+      <button class="primary" id="b1">Play 1 round</button>
+      <button id="b10">Play 10 rounds</button>
+      <button id="b50">Play 50 rounds</button>
+      <button id="bnew">Add 20 new players</button>
+      <button id="breset">Start over</button>
+      <button id="bsweep">Run team-size sweep</button>
+    </div>
+    <div class="status" id="status"></div>
+  </div>
+</section>
+
+<section aria-labelledby="board-h">
+  <h2 id="board-h">Scoreboard</h2>
+  <p class="small muted">One row per rating system. Click a row to inspect its last match below. Arrows show the change since your last action.</p>
+  <div class="panel scroll"><table id="board"></table></div>
+  <div class="panel scroll" id="partyPanel"><h3>Parties: how often they won, and what the system expected</h3><table id="parties"></table></div>
+</section>
+
+<section class="grid2">
+  <div class="panel" style="display:grid;gap:10px"><h3>Ladder accuracy as players play</h3>
+    <p class="small muted">How closely the ladder order matches real skill (rank correlation; 1 is perfect), by average matches played.</p>
+    <div id="chartRho"></div><div class="legend" id="legend1"></div></div>
+  <div class="panel" style="display:grid;gap:10px"><h3>New players: how far off their ladder spot is</h3>
+    <p class="small muted">Median distance from their true ladder spot (places in 100) after each of their first matches. Add new players to fill this in.</p>
+    <div id="chartNew"></div><div class="legend" id="legend2"></div></div>
+</section>
+
+<section aria-labelledby="match-h">
+  <h2 id="match-h">Last match</h2>
+  <div class="panel" id="match"></div>
+</section>
+
+<section aria-labelledby="sweep-h">
+  <h2 id="sweep-h">Team-size sweep</h2>
+  <p class="small muted">Median matches until a player is settled, for each team size, after 150 rounds (about 125 matches each) with the current settings. A "—" means fewer than half the players settled. The 90% figure is the match by which nine in ten had settled.</p>
+  <div class="panel scroll" id="sweep"><p class="muted">Not run yet. Press "Run team-size sweep" (it takes a few seconds).</p></div>
+</section>
+
+<section>
+  <details class="panel"><summary>What the numbers mean</summary>
+  <dl>
+    <dt>Ladder accuracy</dt><dd>Rank correlation between rating and real skill across all players. 0.95 means the order is nearly right; 0.8 means many players are in the wrong band.</dd>
+    <dt>Settled by</dt><dd>Median (and 90th percentile) match after which a player's ladder spot stays within 15 places in 100 of the right one. It reads optimistic early in a run, when there is little run left to prove a player stays put.</dd>
+    <dt>Odds error</dt><dd>Average gap between the system's predicted win chance and the true one. Lower is better. It is what the matchmaker uses to build fair matches.</dd>
+    <dt>Fair matches</dt><dd>Share of matches where the true win chance was between 40% and 60%.</dd>
+    <dt>Underdog matches</dt><dd>Share of matches where the system gave one side under 40%.</dd>
+    <dt>Rating drift</dt><dd>How far the population's average rating has moved from the start. Above 0 means inflation.</dd>
+    <dt>Stat farmers</dt><dd>Players who chase knockouts and crates over winning. Their figure is how many ladder places in 100 they sit above where they belong.</dd>
+    <dt>Party bonus</dt><dd>How much stronger a party plays than its players' skills add up to, per extra member, in skill points (TrueSkill 2 found this is real and grows with party size).</dd>
+  </dl></details>
+</section>
+</div>
+
+<script>
+// ---------------------------------------------------------------------------
+// RatingSim: the portable part of this prototype. Pure functions over plain
+// data. No DOM. The page below only calls into it.
+//
+// Scale: every rating is reported in "skill points" (TrueSkill's μ scale,
+// new player = 25). Elo and Glicko-2 keep their native 1500 scale inside and
+// convert at 42 rating points per skill point.
+// ---------------------------------------------------------------------------
+const RatingSim = (() => {
+  const MU0 = 25, SIG0 = 25 / 3, BETA = 25 / 6, TAU = SIG0 / 100, PTS = 42;
+
+  // ---- maths -------------------------------------------------------------
+  function rng(seed) {
+    let s = seed >>> 0;
+    return () => {
+      s = (s + 0x6d2b79f5) >>> 0;
+      let t = s;
+      t = Math.imul(t ^ (t >>> 15), t | 1);
+      t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+  function gauss(r) {
+    let u = 0;
+    while (!u) u = r();
+    return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * r());
+  }
+  function erf(x) {
+    const s = Math.sign(x); x = Math.abs(x);
+    const t = 1 / (1 + 0.3275911 * x);
+    const y = 1 - ((((1.061405429 * t - 1.453152027) * t + 1.421413741) * t - 0.284496736) * t + 0.254829592) * t * Math.exp(-x * x);
+    return s * y;
+  }
+  const Phi = x => 0.5 * (1 + erf(x / Math.SQRT2));
+  const phi = x => Math.exp(-x * x / 2) / Math.sqrt(2 * Math.PI);
+  const sum = a => a.reduce((x, y) => x + y, 0);
+  const mean = a => (a.length ? sum(a) / a.length : 0);
+  function quantile(sorted, q) {
+    if (!sorted.length) return null;
+    return sorted[Math.min(sorted.length - 1, Math.floor(q * sorted.length))];
+  }
+
+  // ---- the four rating algorithms ----------------------------------------
+  // Each one: init(p, startMu, sigmaScale), toMu(p), unc(p) (0..1, how unsure),
+  // predict(A, B) -> P(A wins), update(A, B, aWon).
+  // A team view is { members, contrib (native mean used per member), adj (native) }.
+  const ALGOS = {
+    elo: {
+      name: 'Elo',
+      init(p, startMu) { p.m = 1500 + (startMu - MU0) * PTS; p.s = 0; },
+      toMu: p => MU0 + (p.m - 1500) / PTS,
+      nativePerMu: PTS,
+      unc: () => 0.3,
+      teamR: t => mean(t.contrib) + t.adj / t.members.length,
+      predict(A, B) { return 1 / (1 + Math.pow(10, (this.teamR(B) - this.teamR(A)) / 400)); },
+      update(A, B, aWon) {
+        const e = this.predict(A, B), d = 32 * ((aWon ? 1 : 0) - e);
+        A.members.forEach(p => (p.m += d));
+        B.members.forEach(p => (p.m -= d));
+      },
+    },
+    glicko2: {
+      name: 'Glicko-2',
+      init(p, startMu, sigScale = 1) { p.m = 1500 + (startMu - MU0) * PTS; p.s = Math.min(350, 350 * sigScale); p.vol = 0.06; },
+      toMu: p => MU0 + (p.m - 1500) / PTS,
+      nativePerMu: PTS,
+      unc: p => Math.max(0.05, (p.s / 350) ** 2),
+      teamR: t => mean(t.contrib) + t.adj / t.members.length,
+      teamRD: t => Math.sqrt(mean(t.members.map(p => p.s * p.s))),
+      predict(A, B) {
+        const Q = 173.7178, ph = Math.hypot(this.teamRD(A), this.teamRD(B)) / Q;
+        const g = 1 / Math.sqrt(1 + 3 * ph * ph / (Math.PI * Math.PI));
+        return 1 / (1 + Math.exp(-g * (this.teamR(A) - this.teamR(B)) / Q));
+      },
+      update(A, B, aWon) {
+        // "Composite opponent": each player meets one opponent whose rating
+        // is their own plus the gap between the two team averages.
+        const plan = [];
+        for (const [own, opp, s] of [[A, B, aWon ? 1 : 0], [B, A, aWon ? 0 : 1]]) {
+          const gap = this.teamR(opp) - this.teamR(own), rd = this.teamRD(opp);
+          own.members.forEach(p => plan.push([p, p.m + gap, rd, s]));
+        }
+        plan.forEach(([p, r, rd, s]) => glickoStep(p, r, rd, s));
+      },
+    },
+    trueskill: {
+      name: 'TrueSkill',
+      init(p, startMu, sigScale = 1) { p.m = startMu; p.s = SIG0 * sigScale; },
+      toMu: p => p.m,
+      nativePerMu: 1,
+      unc: p => (p.s / SIG0) ** 2,
+      c(A, B) {
+        const all = A.members.concat(B.members);
+        return Math.sqrt(sum(all.map(p => p.s * p.s + TAU * TAU)) + all.length * BETA * BETA);
+      },
+      predict(A, B) { return Phi((sum(A.contrib) + A.adj - sum(B.contrib) - B.adj) / this.c(A, B)); },
+      update(A, B, aWon) {
+        const [W, L] = aWon ? [A, B] : [B, A];
+        W.members.concat(L.members).forEach(p => (p.s = Math.sqrt(p.s * p.s + TAU * TAU)));
+        const c = this.c(A, B);
+        const t = (sum(W.contrib) + W.adj - sum(L.contrib) - L.adj) / c;
+        const P = Phi(t), v = P < 1e-12 ? -t : phi(t) / P, w = v * (v + t);
+        for (const [team, sign] of [[W, 1], [L, -1]]) {
+          team.members.forEach(p => {
+            const s2 = p.s * p.s;
+            p.m += sign * (s2 / c) * v;
+            p.s = Math.sqrt(s2 * Math.max(1 - (s2 / (c * c)) * w, 1e-4));
+          });
+        }
+      },
+    },
+    wenglin: {
+      name: 'Weng-Lin (OpenSkill)',
+      init(p, startMu, sigScale = 1) { p.m = startMu; p.s = SIG0 * sigScale; },
+      toMu: p => p.m,
+      nativePerMu: 1,
+      unc: p => (p.s / SIG0) ** 2,
+      // Bradley-Terry full pair, as in skillratings::weng_lin (two teams,
+      // so Plackett-Luce gives the same thing).
+      parts(A, B) {
+        const sA = sum(A.members.map(p => p.s * p.s)), sB = sum(B.members.map(p => p.s * p.s));
+        const c = Math.sqrt(sA + sB + 2 * A.beta * A.beta);
+        const mA = sum(A.contrib) + A.adj, mB = sum(B.contrib) + B.adj;
+        const pA = 1 / (1 + Math.exp((mB - mA) / c));
+        return { sA, sB, c, pA };
+      },
+      predict(A, B) { return this.parts(A, B).pA; },
+      update(A, B, aWon) {
+        A.members.concat(B.members).forEach(p => (p.s = Math.sqrt(p.s * p.s + TAU * TAU)));
+        const { sA, sB, c, pA } = this.parts(A, B);
+        for (const [team, s2t, score, pT] of [[A, sA, aWon ? 1 : 0, pA], [B, sB, aWon ? 0 : 1, 1 - pA]]) {
+          const omega = (s2t / c) * (score - pT);
+          const delta = (Math.sqrt(s2t) / c) * (s2t / (c * c)) * pT * (1 - pT);
+          team.members.forEach(p => {
+            const s2 = p.s * p.s;
+            p.m += (s2 / s2t) * omega;
+            p.s = Math.sqrt(s2 * Math.max(1 - (s2 / s2t) * delta, 1e-4));
+          });
+        }
+      },
+    },
+    wenglinTM: {
+      name: 'Weng-Lin (Thurstone-Mosteller)',
+      init(p, startMu, sigScale = 1) { p.m = startMu; p.s = SIG0 * sigScale; },
+      toMu: p => p.m,
+      nativePerMu: 1,
+      unc: p => (p.s / SIG0) ** 2,
+      // Weng-Lin's analytic update with TrueSkill's Gaussian likelihood.
+      // In openskill, not in the skillratings crate.
+      parts(A, B) {
+        const sA = sum(A.members.map(p => p.s * p.s)), sB = sum(B.members.map(p => p.s * p.s));
+        const c = Math.sqrt(sA + sB + 2 * A.beta * A.beta);
+        return { sA, sB, c, t: (sum(A.contrib) + A.adj - sum(B.contrib) - B.adj) / c };
+      },
+      predict(A, B) { return Phi(this.parts(A, B).t); },
+      update(A, B, aWon) {
+        A.members.concat(B.members).forEach(p => (p.s = Math.sqrt(p.s * p.s + TAU * TAU)));
+        const { sA, sB, c, t } = this.parts(A, B);
+        const tw = aWon ? t : -t, P = Phi(tw), v = P < 1e-12 ? -tw : phi(tw) / P, w = v * (v + tw);
+        for (const [team, s2t, sign] of [[A, sA, aWon ? 1 : -1], [B, sB, aWon ? -1 : 1]]) {
+          const omega = sign * (s2t / c) * v;
+          const delta = (Math.sqrt(s2t) / c) * (s2t / (c * c)) * w;
+          team.members.forEach(p => {
+            const s2 = p.s * p.s;
+            p.m += (s2 / s2t) * omega;
+            p.s = Math.sqrt(s2 * Math.max(1 - (s2 / s2t) * delta, 1e-4));
+          });
+        }
+      },
+    },
+  };
+
+  function glickoStep(p, rOpp, rdOpp, s) {
+    const Q = 173.7178, tau = 0.5;
+    const mu = (p.m - 1500) / Q, ph = p.s / Q, muJ = (rOpp - 1500) / Q, phJ = rdOpp / Q;
+    const g = 1 / Math.sqrt(1 + 3 * phJ * phJ / (Math.PI * Math.PI));
+    const E = 1 / (1 + Math.exp(-g * (mu - muJ)));
+    const v = 1 / (g * g * E * (1 - E));
+    const D = v * g * (s - E);
+    const a = Math.log(p.vol * p.vol);
+    const f = x => (Math.exp(x) * (D * D - ph * ph - v - Math.exp(x))) / (2 * (ph * ph + v + Math.exp(x)) ** 2) - (x - a) / (tau * tau);
+    let A = a, B;
+    if (D * D > ph * ph + v) B = Math.log(D * D - ph * ph - v);
+    else { let k = 1; while (f(a - k * tau) < 0) k++; B = a - k * tau; }
+    let fA = f(A), fB = f(B);
+    for (let i = 0; i < 60 && Math.abs(B - A) > 1e-6; i++) {
+      const C = A + ((A - B) * fA) / (fB - fA), fC = f(C);
+      if (fC * fB <= 0) { A = B; fA = fB; } else fA /= 2;
+      B = C; fB = fC;
+    }
+    p.vol = Math.exp(A / 2);
+    const phStar = Math.sqrt(ph * ph + p.vol * p.vol);
+    const phNew = 1 / Math.sqrt(1 / (phStar * phStar) + 1 / v);
+    p.m = 1500 + Q * (mu + phNew * phNew * g * (s - E));
+    p.s = Math.min(350, Q * phNew);
+  }
+
+  // ---- candidates: an algorithm plus team, party and rule choices --------
+  // party: 'sum' | 'best' | 'offset' | 'learned'
+  const PARTY_RULES = {
+    sum: 'Team = sum of its players',
+    best: 'Party counts as its best player',
+    offset: 'Fixed party bonus',
+    learned: 'Party bonus learned from results',
+  };
+  function candidate(algo, extra = {}) {
+    return Object.assign({ algo, party: 'sum', stats: 0, cushion: 0, cushionBelow: 0.4, newStart: 0, newSigma: 1, label: ALGOS[algo].name }, extra);
+  }
+
+  // ---- world -------------------------------------------------------------
+  function makePlayer(id, skill, opts, popRand, cfg) {
+    const farmer = popRand() < cfg.farmers;
+    return {
+      id, skill: skill - (farmer ? 1.5 : 0), // what actually wins games
+      farmer, smurf: !!opts.smurf, newcomer: !!opts.newcomer, joinRound: opts.joinRound || 0,
+      party: null, games: 0, wins: 0, err: [],
+    };
+  }
+
+  function createWorld(cfg, cand) {
+    const popRand = rng(cfg.seed), A = ALGOS[cand.algo];
+    const players = [];
+    for (let i = 0; i < cfg.players; i++) {
+      const p = makePlayer(i, MU0 + cfg.spreadSkill * gauss(popRand), {}, popRand, cfg);
+      A.init(p, MU0, 1);
+      players.push(p);
+    }
+    const parties = buildParties(players, cfg, popRand);
+    return {
+      cfg, cand, A, players, parties, round: 0, cohorts: 0,
+      matchRand: rng(cfg.seed + 7), learnedEdge: 0,
+      log: { matches: 0, oddsErr: 0, hit: 0, oracleHit: 0, fair: 0, underdog: 0, brier: 0, bySize: {} },
+      history: [], lastMatch: null,
+    };
+  }
+
+  function buildParties(players, cfg, r) {
+    const ids = players.map(p => p.id);
+    for (let i = ids.length - 1; i > 0; i--) { const j = Math.floor(r() * (i + 1)); [ids[i], ids[j]] = [ids[j], ids[i]]; }
+    const parties = [];
+    // cfg.partyShare of players are in parties, spread evenly over sizes 2..T
+    const sizes = [];
+    for (let k = 2; k <= cfg.teamSize; k++) sizes.push(k);
+    let inParty = Math.round(players.length * cfg.partyShare), cursor = 0, k = 0;
+    while (inParty >= 2 && sizes.length) {
+      const size = Math.min(sizes[k % sizes.length], inParty);
+      if (size < 2) break;
+      parties.push(ids.slice(cursor, cursor + size));
+      cursor += size; inParty -= size; k++;
+    }
+    for (; cursor < ids.length; cursor++) parties.push([ids[cursor]]);
+    parties.forEach((m, i) => m.forEach(id => (players[id].party = i)));
+    return parties.map(m => m.map(id => players[id]));
+  }
+
+  function addCohort(world, n, smurfShare) {
+    const { cfg, cand, A } = world;
+    const r = rng(cfg.seed + 1000 + world.cohorts++);
+    for (let i = 0; i < n; i++) {
+      const smurf = i < Math.round(n * smurfShare);
+      const skill = smurf ? MU0 + 2.3 * cfg.spreadSkill : MU0 + cfg.spreadSkill * gauss(r);
+      const p = makePlayer(world.players.length, skill, { newcomer: true, smurf, joinRound: world.round }, r, cfg);
+      A.init(p, MU0 + cand.newStart, cand.newSigma);
+      p.party = world.parties.length;
+      world.players.push(p);
+      world.parties.push([p]);
+    }
+  }
+
+  // How the rating system sees a team, after its party rule.
+  function teamView(world, units) {
+    const { A, cand } = world;
+    const members = [], contrib = [];
+    let adj = 0, partyExtra = 0;
+    for (const u of units) {
+      const best = Math.max(...u.map(p => p.m));
+      u.forEach(p => { members.push(p); contrib.push(cand.party === 'best' ? best : p.m); });
+      partyExtra += u.length - 1;
+    }
+    if (cand.party === 'offset') adj = partyExtra * world.cfg.assumedEdge * A.nativePerMu;
+    if (cand.party === 'learned') adj = partyExtra * world.learnedEdge * A.nativePerMu;
+    return { members, contrib, adj, partyExtra, beta: BETA };
+  }
+
+  function bestSplit(world, units, T) {
+    const n = units.length;
+    let best = null;
+    for (let mask = 0; mask < 1 << (n - 1); mask++) {
+      let size = 0;
+      for (let i = 0; i < n - 1; i++) if (mask & (1 << i)) size += units[i].length;
+      if (size + units[n - 1].length !== T) continue; // last unit always on team A
+      const a = [units[n - 1]], b = [];
+      for (let i = 0; i < n - 1; i++) (mask & (1 << i) ? a : b).push(units[i]);
+      const P = world.A.predict(teamView(world, a), teamView(world, b));
+      const score = Math.abs(P - 0.5);
+      if (!best || score < best.score) best = { a, b, score };
+    }
+    return best;
+  }
+
+  function formLobbies(world) {
+    const { cfg, A, matchRand: r } = world, T = cfg.teamSize;
+    const queued = [];
+    world.parties.forEach(u => {
+      if (u.length > 1 && r() >= cfg.partyTogether) u.forEach(p => { if (r() < cfg.activity) queued.push([p]); });
+      else if (r() < cfg.activity) queued.push(u);
+    });
+    const units = queued
+      .map(u => ({ u, key: mean(u.map(A.toMu)) + cfg.queueSpread * gauss(r) }))
+      .sort((x, y) => y.key - x.key)
+      .map(x => x.u);
+    const lobbies = [];
+    while (units.length) {
+      const lobby = [], taken = [];
+      let slots = 0, split = null;
+      for (let i = 0; i < units.length && i < 14; i++) {
+        if (slots + units[i].length > 2 * T) continue;
+        lobby.push(units[i]); taken.push(i); slots += units[i].length;
+        if (slots === 2 * T) {
+          split = bestSplit(world, lobby, T);
+          if (split) break;
+          lobby.pop(); taken.pop(); slots -= units[i].length;
+        }
+      }
+      if (!split) { units.shift(); continue; } // this unit sits the round out
+      for (let k = taken.length - 1; k >= 0; k--) units.splice(taken[k], 1);
+      lobbies.push(split);
+    }
+    return lobbies;
+  }
+
+  function playMatch(world, split) {
+    const { cfg, cand, A, matchRand: r } = world, T = cfg.teamSize;
+    const vA = teamView(world, split.a), vB = teamView(world, split.b);
+    const P = A.predict(vA, vB);
+    const truthA = sum(vA.members.map(p => p.skill)) + vA.partyExtra * cfg.realEdge;
+    const truthB = sum(vB.members.map(p => p.skill)) + vB.partyExtra * cfg.realEdge;
+    const noise = cfg.luck * BETA;
+    const oracle = Phi((truthA - truthB) / (Math.sqrt(2 * T) * noise));
+    const perfA = truthA + Math.sqrt(T) * noise * gauss(r), perfB = truthB + Math.sqrt(T) * noise * gauss(r);
+    const aWon = perfA > perfB;
+    const before = new Map(vA.members.concat(vB.members).map(p => [p, p.m]));
+
+    A.update(vA, vB, aWon);
+
+    // Optional: nudge ratings by an in-match stat (knockouts, crates delivered).
+    const all = vA.members.concat(vB.members);
+    if (cand.stats > 0) {
+      const raw = all.map(p => cfg.statSignal * ((p.skill - MU0) / cfg.spreadSkill) + Math.sqrt(1 - cfg.statSignal ** 2) * gauss(r) + (p.farmer ? 1.5 : 0));
+      const m = mean(raw), sd = Math.sqrt(mean(raw.map(x => (x - m) ** 2))) || 1;
+      all.forEach((p, i) => (p.m += cand.stats * 0.25 * ((raw[i] - m) / sd) * A.nativePerMu));
+    }
+    // Optional: underdog cushion. The side the system expected to lose
+    // loses less when it does lose.
+    const underdogSide = P < cand.cushionBelow ? vA : 1 - P < cand.cushionBelow ? vB : null;
+    if (underdogSide) world.log.underdog++;
+    if (cand.cushion > 0 && underdogSide && (underdogSide === vA) !== aWon) {
+      underdogSide.members.forEach(p => {
+        const d = p.m - before.get(p);
+        if (d < 0) p.m = before.get(p) + d * (1 - cand.cushion);
+      });
+    }
+    if (cand.party === 'learned') {
+      world.learnedEdge += 0.15 * ((aWon ? 1 : 0) - P) * (vA.partyExtra - vB.partyExtra);
+    }
+
+    // bookkeeping
+    const L = world.log;
+    L.matches++;
+    L.hit += (P >= 0.5) === aWon ? 1 : 0;
+    L.oracleHit += (oracle >= 0.5) === aWon ? 1 : 0;
+    L.fair += oracle >= 0.4 && oracle <= 0.6 ? 1 : 0;
+    L.brier += ((aWon ? 1 : 0) - P) ** 2;
+    L.oddsErr += Math.abs(P - oracle);
+    for (const [units, won, p] of [[split.a, aWon, P], [split.b, !aWon, 1 - P]]) {
+      units.forEach(u => u.forEach(pl => {
+        pl.games++; if (won) pl.wins++;
+        const k = u.length;
+        const b = (L.bySize[k] = L.bySize[k] || { games: 0, wins: 0, expected: 0 });
+        b.games++; b.wins += won ? 1 : 0; b.expected += p;
+      }));
+    }
+    world.lastMatch = {
+      P, oracle, aWon,
+      teams: [split.a, split.b].map(units => units.map(u => u.map(p => ({
+        id: p.id, party: u.length, skill: p.skill, before: A.toMu({ m: before.get(p) }), after: A.toMu(p), smurf: p.smurf, newcomer: p.newcomer, farmer: p.farmer,
+      })))),
+    };
+  }
+
+  function percentiles(players, f) {
+    const idx = players.map((p, i) => i).sort((a, b) => f(players[a]) - f(players[b]));
+    const out = new Array(players.length), n = players.length - 1 || 1;
+    idx.forEach((i, rank) => (out[i] = rank / n));
+    return out;
+  }
+
+  function playRound(world) {
+    const lobbies = formLobbies(world);
+    const played = new Set();
+    lobbies.forEach(s => { playMatch(world, s); s.a.concat(s.b).flat().forEach(p => played.add(p)); });
+    world.round++;
+    const ps = world.players, pr = percentiles(ps, world.A.toMu), pt = percentiles(ps, p => p.skill);
+    ps.forEach((p, i) => { if (played.has(p)) p.err.push(Math.abs(pr[i] - pt[i])); });
+    world.history.push({ round: world.round, games: mean(ps.filter(p => !p.newcomer).map(p => p.games)), rho: spearman(pr, pt) });
+    return lobbies.length;
+  }
+
+  function spearman(a, b) {
+    const n = a.length; if (n < 3) return 0;
+    const d2 = sum(a.map((x, i) => ((x - b[i]) * (n - 1)) ** 2));
+    return 1 - (6 * d2) / (n * (n * n - 1));
+  }
+
+  // A player has "settled" from the match after which their ladder position
+  // stays within `thr` of where their real skill belongs, for good.
+  function settledAt(p, thr) {
+    if (!p.err.length || p.err[p.err.length - 1] > thr) return null;
+    let k = p.err.length;
+    while (k > 0 && p.err[k - 1] <= thr) k--;
+    return k + 1;
+  }
+
+  function summary(world, thr = 0.15) {
+    const { players, log: L, A } = world;
+    const vets = players.filter(p => !p.newcomer);
+    const settled = vets.map(p => settledAt(p, thr));
+    const done = settled.filter(x => x !== null).sort((a, b) => a - b);
+    const share = done.length / (vets.length || 1);
+    const last = world.history[world.history.length - 1];
+    const newbies = players.filter(p => p.newcomer);
+    return {
+      round: world.round,
+      gamesPerPlayer: last ? last.games : 0,
+      rho: last ? last.rho : 0,
+      settledShare: share,
+      settledMedian: share >= 0.5 ? quantile(done.concat(new Array(vets.length - done.length).fill(Infinity)), 0.5) : null,
+      settledP90: share >= 0.9 ? quantile(done.concat(new Array(vets.length - done.length).fill(Infinity)), 0.9) : null,
+      matches: L.matches,
+      hit: L.matches ? L.hit / L.matches : 0,
+      oracleHit: L.matches ? L.oracleHit / L.matches : 0,
+      fair: L.matches ? L.fair / L.matches : 0,
+      underdog: L.matches ? L.underdog / L.matches : 0,
+      brier: L.matches ? L.brier / L.matches : 0,
+      oddsErr: L.matches ? L.oddsErr / L.matches : 0,
+      bySize: L.bySize,
+      drift: mean(players.map(A.toMu)) - MU0,
+      farmerGap: (() => {
+        const f = players.filter(p => p.farmer); if (!f.length) return null;
+        const pr = percentiles(players, A.toMu), pt = percentiles(players, p => p.skill);
+        return mean(players.map((p, i) => (p.farmer ? pr[i] - pt[i] : null)).filter(x => x !== null));
+      })(),
+      newcomers: newbies.length ? {
+        all: curve(newbies.filter(p => !p.smurf)),
+        smurfs: curve(newbies.filter(p => p.smurf)),
+        settledMedian: (() => {
+          const s = newbies.map(p => settledAt(p, thr)).filter(x => x !== null).sort((a, b) => a - b);
+          return s.length >= newbies.length / 2 ? quantile(s.concat(new Array(newbies.length - s.length).fill(Infinity)), 0.5) : null;
+        })(),
+      } : null,
+      learnedEdge: world.learnedEdge,
+    };
+  }
+
+  // Median ladder error by match number, for a group of players.
+  function curve(group) {
+    const out = [];
+    for (let k = 0; ; k++) {
+      const v = group.filter(p => p.err.length > k).map(p => p.err[k]).sort((a, b) => a - b);
+      if (v.length < Math.max(2, group.length / 2)) break;
+      out.push(quantile(v, 0.5));
+    }
+    return out;
+  }
+
+  return { ALGOS, PARTY_RULES, candidate, createWorld, playRound, addCohort, summary, MU0, SIG0, BETA };
+})();
+</script>
+<script>
+// ---------------------------------------------------------------------------
+// The page: a thin shell over RatingSim.
+// ---------------------------------------------------------------------------
+const S = RatingSim;
+const DEFAULTS = { seed: 11, players: 200, teamSize: 3, partyShare: 0.3, partyTogether: 0.7, realEdge: 1, assumedEdge: 1,
+  spreadSkill: 6, luck: 1, queueSpread: 1.5, activity: 0.85, statSignal: 0.5, farmers: 0.1 };
+const COLORS = ['--s1', '--s2', '--s3', '--s4', '--s5'];
+const PRESETS = {
+  algorithms: { label: 'Algorithms', make: () => ['elo', 'glicko2', 'trueskill', 'wenglin', 'wenglinTM'].map(a => S.candidate(a)) },
+  party: { label: 'Party handling', make: b => Object.entries(S.PARTY_RULES).map(([k, l]) => S.candidate(b, { party: k, label: l })) },
+  stats: { label: 'Rating match stats', make: b => [S.candidate(b, { label: 'Wins and losses only' }), S.candidate(b, { stats: 1, label: 'Wins, losses and match stats' })] },
+  underdog: { label: 'Underdog cushion', make: b => [S.candidate(b, { label: 'No cushion' }), S.candidate(b, { cushion: 0.5, label: 'Underdog loses half as much' })] },
+  newcomer: { label: 'New-player start', make: b => [S.candidate(b, { label: 'Start at average' }), S.candidate(b, { newStart: -6, label: 'Start one tier low' }), S.candidate(b, { newStart: -6, newSigma: 1.5, label: 'Start low, extra uncertainty' })] },
+};
+const SETTINGS = [
+  { k: 'base', label: 'System for the non-algorithm comparisons', opts: [['wenglin', 'Weng-Lin (OpenSkill)'], ['wenglinTM', 'Weng-Lin (Thurstone-Mosteller)'], ['trueskill', 'TrueSkill'], ['glicko2', 'Glicko-2'], ['elo', 'Elo']], ui: true },
+  { k: 'teamSize', label: 'Team size', opts: [[2, '2v2'], [3, '3v3'], [4, '4v4'], [5, '5v5']] },
+  { k: 'players', label: 'Players', opts: [[100, '100'], [200, '200'], [400, '400']] },
+  { k: 'partyShare', label: 'Players in parties', min: 0, max: 0.8, step: 0.1, fmt: v => Math.round(v * 100) + '%' },
+  { k: 'partyTogether', label: 'Parties queue together', min: 0.3, max: 1, step: 0.1, fmt: v => Math.round(v * 100) + '% of the time' },
+  { k: 'realEdge', label: 'Real party bonus', min: 0, max: 4, step: 0.5, fmt: v => '+' + v + ' per extra member' },
+  { k: 'assumedEdge', label: 'Guessed party bonus (fixed rule)', min: 0, max: 4, step: 0.5, fmt: v => '+' + v + ' per extra member' },
+  { k: 'luck', label: 'Luck in a match', min: 0.5, max: 2, step: 0.25, fmt: v => v + '× TrueSkill default' },
+  { k: 'queueSpread', label: 'Matchmaker looseness', min: 0, max: 10, step: 0.5, fmt: v => v < 2 ? v + ' (tight)' : v < 5 ? v + ' (loose)' : v + ' (very loose, low CCU)' },
+  { k: 'statSignal', label: 'How much match stats show skill', min: 0, max: 0.9, step: 0.1, fmt: v => Math.round(v * 100) + '%' },
+  { k: 'farmers', label: 'Stat farmers', min: 0, max: 0.3, step: 0.05, fmt: v => Math.round(v * 100) + '% of players' },
+  { k: 'smurfShare', label: 'Smurfs among new players', min: 0, max: 1, step: 0.25, fmt: v => Math.round(v * 100) + '%', ui: true },
+];
+
+const st = { cfg: { ...DEFAULTS }, ui: { base: 'wenglin', smurfShare: 0.25 }, preset: 'algorithms', worlds: [], prev: null, sel: 0, msg: '', tab: 0, stepAt: 0, sweep: null };
+
+function reset(msg) {
+  st.worlds = PRESETS[st.preset].make(st.ui.base).map(c => S.createWorld(st.cfg, c));
+  st.prev = null; st.sel = Math.min(st.sel, st.worlds.length - 1);
+  st.msg = msg || 'New world: everyone starts unrated.';
+  render();
+}
+function play(n) {
+  st.prev = st.worlds.map(w => S.summary(w));
+  for (let i = 0; i < n; i++) st.worlds.forEach(w => S.playRound(w));
+  st.msg = `Played ${n} round${n > 1 ? 's' : ''}.`;
+  render();
+}
+function addNew() {
+  st.prev = st.worlds.map(w => S.summary(w));
+  st.worlds.forEach(w => S.addCohort(w, 20, st.ui.smurfShare));
+  st.msg = `20 new players joined (${Math.round(st.ui.smurfShare * 20)} of them smurfs, with top-2% real skill). Play some rounds to see them placed.`;
+  render();
+}
+function setup(cfgPatch, preset, ui = {}) {
+  st.cfg = { ...DEFAULTS, ...cfgPatch }; st.preset = preset; Object.assign(st.ui, { base: 'wenglin', smurfShare: 0.25 }, ui);
+  reset('World set up for this walkthrough.');
+}
+function sweep() {
+  const sizes = [2, 3, 4, 5], cands = PRESETS[st.preset].make(st.ui.base), jobs = [];
+  sizes.forEach(T => cands.forEach((c, i) => jobs.push({ T, i, c })));
+  const out = sizes.map(() => cands.map(() => null));
+  const btn = document.getElementById('bsweep'); btn.disabled = true;
+  const stepJob = () => {
+    const j = jobs.shift();
+    if (!j) { st.sweep = { sizes, labels: cands.map(c => c.label), out, preset: PRESETS[st.preset].label }; btn.disabled = false; st.msg = 'Sweep finished.'; render(); return; }
+    const w = S.createWorld({ ...st.cfg, teamSize: j.T }, j.c);
+    for (let r = 0; r < 150; r++) S.playRound(w);
+    out[sizes.indexOf(j.T)][j.i] = S.summary(w);
+    st.msg = `Sweep running: ${j.T}v${j.T}, ${j.c.label}…`; renderStatus();
+    setTimeout(stepJob, 0);
+  };
+  setTimeout(stepJob, 0);
+}
+
+// ---- walkthroughs ----------------------------------------------------------
+const WALKS = [
+  { title: 'Which system learns fastest',
+    text: 'A brand-new 3v3 ladder with no parties, so only the algorithms differ. Everyone starts unrated, like launch day.',
+    watch: 'Watch "Settled by" and the accuracy curve. Elo has no sense of uncertainty, so it moves new and old players at the same slow speed. TrueSkill settles players in about half the matches that the Bradley-Terry version of Weng-Lin (the one in the skillratings crate) needs. The Thurstone-Mosteller version of Weng-Lin lands close to TrueSkill. Glicko-2 is quick at 3v3, but see the next walkthrough.',
+    steps: [
+      ['Set up: 3v3, 200 players, no parties', () => setup({ partyShare: 0, farmers: 0 }, 'algorithms')],
+      ['Play 10 rounds', () => play(10)],
+      ['Play 40 more rounds', () => play(40)],
+      ['Play 100 more rounds', () => play(100)],
+    ] },
+  { title: 'Team size',
+    text: 'In a two-team match, one win or loss is shared by every teammate, so each match says less about any one player as teams grow. The issue asks how many matches it takes to settle at 2v2, 3v3 and 4v4. 5v5 is included because it is the current pick.',
+    watch: 'In the sweep table, read along a row. Most systems need about twice the matches at 5v5 as at 2v2. Glicko-2 slows down the most as teams grow, because it only sees team averages. TrueSkill and Thurstone-Mosteller Weng-Lin stay fastest at every size.',
+    steps: [
+      ['Set up: no parties, compare algorithms', () => setup({ partyShare: 0, farmers: 0 }, 'algorithms')],
+      ['Run the team-size sweep (a few seconds)', () => sweep()],
+    ] },
+  { title: 'Parties',
+    text: 'Half the players are in parties, and a party really does play better than its players add up to (+2 skill points per extra member). Parties queue together 70% of the time. The rows compare four ways of rating a party, all on Weng-Lin.',
+    watch: 'Watch the party table and the last column. With "sum", party members end up rated above their real skill, because the system credits them with the party\'s teamwork. The learned bonus finds a value near the real +2 by itself and gives the most accurate ladder. "Best player" makes parties earn less per win. Step 3 shows the limit: when friends only ever play together, nothing can tell their skill apart from their teamwork, and every rule does equally badly.',
+    steps: [
+      ['Set up: 3v3, half in parties, real bonus +2', () => setup({ partyShare: 0.5, realEdge: 2, assumedEdge: 2, farmers: 0 }, 'party')],
+      ['Play 100 rounds', () => play(100)],
+      ['Now parties always queue together, and play 100 rounds', () => { st.cfg.partyTogether = 1; reset('Parties now always queue together.'); play(100); }],
+    ] },
+  { title: 'New players and smurfs',
+    text: 'A 3v3 ladder runs for 60 rounds until it has settled. Then 20 new accounts join, a quarter of them smurfs with top-2% skill. The rows compare three ways to start a new account.',
+    watch: 'Watch the new-player chart (dashed lines are smurfs). Starting at the average places both ordinary players and smurfs fastest, with smurfs at their real spot in about 7 matches. Starting one tier low, as Valorant does, about doubles a smurf\'s climb. Extra uncertainty wins most of that back.',
+    steps: [
+      ['Set up: 3v3, compare new-player starts', () => setup({ partyShare: 0.3, farmers: 0 }, 'newcomer')],
+      ['Play 60 rounds so the ladder settles', () => play(60)],
+      ['20 new players join', () => addNew()],
+      ['Play 40 rounds', () => play(40)],
+    ] },
+  { title: 'Kills and crates',
+    text: 'Should the rating also count in-match stats such as knockouts and crates delivered, not only wins? The first run assumes stats show skill only weakly (30%) and 15% of players farm them at the cost of winning.',
+    watch: 'With weak stats and farmers, adding stats makes the ladder worse and lifts farmers about 18 places in 100 above where they belong. Step 3 makes stats honest (70%, no farmers), and then they help. We will not know which world we are in until there is real match data.',
+    steps: [
+      ['Set up: weak stats, 15% farmers', () => setup({ partyShare: 0, statSignal: 0.3, farmers: 0.15 }, 'stats')],
+      ['Play 100 rounds', () => play(100)],
+      ['Make stats honest, then play 100 rounds', () => { st.cfg.statSignal = 0.7; st.cfg.farmers = 0; reset('Stats now show skill well, and nobody farms.'); play(100); }],
+    ] },
+  { title: 'Lopsided matches',
+    text: 'At low player counts the matchmaker has to accept wide skill gaps. Brawl Stars and Omega Strikers soften losses for the underdog. Here the matchmaker is very loose, and one row halves the underdog\'s rating loss.',
+    watch: 'Watch "Rating drift" and "Odds error". The cushion inflates everyone\'s rating and slightly worsens the odds the matchmaker uses. Every rating system already gives an underdog less loss and more gain. If the cushion is wanted for the feel, it belongs on the visible rank (#12), not on the hidden rating.',
+    steps: [
+      ['Set up: very loose matchmaker', () => setup({ partyShare: 0.3, queueSpread: 8, farmers: 0 }, 'underdog')],
+      ['Play 100 rounds', () => play(100)],
+      ['Play 100 more rounds', () => play(100)],
+    ] },
+];
+
+// ---- rendering -------------------------------------------------------------
+const $ = id => document.getElementById(id);
+const pct = (x, d = 0) => (x == null ? '—' : (x * 100).toFixed(d) + '%');
+const num = (x, d = 2) => (x == null || !isFinite(x) ? '—' : x.toFixed(d));
+const css = v => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
+
+function renderTabs() {
+  $('tabs').innerHTML = WALKS.map((w, i) => `<button role="tab" id="tab${i}" aria-selected="${i === st.tab}">${w.title}</button>`).join('');
+  WALKS.forEach((w, i) => ($('tab' + i).onclick = () => { st.tab = i; st.stepAt = 0; renderTabs(); }));
+  const w = WALKS[st.tab];
+  $('walk').innerHTML = `<div style="display:grid;gap:12px"><p>${w.text}</p><div class="steps">${w.steps.map((s, i) =>
+    `<div class="step ${i < st.stepAt ? 'done' : i === st.stepAt ? 'next' : ''}"><button id="st${i}" ${i === st.stepAt ? 'class="primary"' : ''}>${s[0]}</button></div>`).join('')}</div>
+    <div class="watch"><b>What to watch:</b> ${w.watch}</div></div>`;
+  w.steps.forEach((s, i) => ($('st' + i).onclick = () => { s[1](); st.stepAt = Math.max(st.stepAt, i + 1); renderTabs(); }));
+}
+
+function renderSettings() {
+  $('presets').innerHTML = Object.entries(PRESETS).map(([k, p]) => `<button class="chip" id="pr-${k}" aria-pressed="${k === st.preset}">${p.label}</button>`).join('');
+  Object.keys(PRESETS).forEach(k => ($('pr-' + k).onclick = () => { st.preset = k; reset(`Now comparing: ${PRESETS[k].label}.`); }));
+  $('settings').innerHTML = SETTINGS.map(s => {
+    const v = s.ui ? st.ui[s.k] : st.cfg[s.k];
+    const ctl = s.opts
+      ? `<select id="set-${s.k}">${s.opts.map(([o, l]) => `<option value="${o}" ${String(o) === String(v) ? 'selected' : ''}>${l}</option>`).join('')}</select>`
+      : `<input type="range" id="set-${s.k}" min="${s.min}" max="${s.max}" step="${s.step}" value="${v}">`;
+    return `<div class="field"><label for="set-${s.k}">${s.label}</label>${ctl}${s.fmt ? `<span class="val" id="val-${s.k}">${s.fmt(v)}</span>` : ''}</div>`;
+  }).join('');
+  SETTINGS.forEach(s => {
+    const el = $('set-' + s.k);
+    if (s.fmt) el.oninput = () => ($('val-' + s.k).textContent = s.fmt(+el.value));
+    el.onchange = () => {
+      const v = s.k === 'base' ? el.value : +el.value;
+      if (s.ui) { st.ui[s.k] = v; if (s.k === 'base') reset('Base system changed.'); else render(); }
+      else { st.cfg[s.k] = v; reset(`${s.label} changed, so the world started over.`); }
+    };
+  });
+}
+
+function renderStatus() {
+  const w = st.worlds[0], s = S.summary(w);
+  $('status').innerHTML = `${st.msg} <b>Round ${w.round}</b> · ${w.players.length} players · ${st.cfg.teamSize}v${st.cfg.teamSize} · comparing <b>${PRESETS[st.preset].label}</b> · about ${Math.round(s.gamesPerPlayer)} matches per player`;
+}
+
+function delta(now, before, better, d = 2, scale = 1) {
+  if (before == null || now == null || !isFinite(now) || !isFinite(before)) return '';
+  const x = (now - before) * scale;
+  if (Math.abs(x) < Math.pow(10, -d) / 2) return '';
+  const good = better === 'up' ? x > 0 : x < 0;
+  return `<span class="delta ${good ? 'up' : 'down'}">${x > 0 ? '▲' : '▼'}${Math.abs(x).toFixed(d)}</span>`;
+}
+
+function renderBoard() {
+  const sums = st.worlds.map(w => S.summary(w)), prev = st.prev;
+  const bestOf = (f, lower) => { const v = sums.map(f).filter(x => x != null && isFinite(x)); return v.length ? (lower ? Math.min(...v) : Math.max(...v)) : null; };
+  const bRho = bestOf(s => s.rho), bSet = bestOf(s => s.settledMedian, true), bOdds = bestOf(s => s.matches ? s.oddsErr : null, true);
+  const anyNew = sums.some(s => s.newcomers), anyFarm = st.cfg.farmers > 0;
+  $('board').innerHTML = `<thead><tr><th>System</th><th>Ladder accuracy</th><th>Settled by (median)</th><th>Settled by (90%)</th><th>Players settled</th><th>Odds error</th><th>Fair matches</th><th>Underdog matches</th><th>Rating drift</th>${anyFarm ? '<th>Stat farmers over-ranked</th>' : ''}${anyNew ? '<th>New players settled by</th>' : ''}${st.preset === 'party' ? '<th>Learned party bonus</th>' : ''}</tr></thead><tbody>` +
+    sums.map((s, i) => {
+      const p = prev && prev[i];
+      return `<tr id="row${i}" class="${i === st.sel ? 'sel' : ''}">
+      <td><span class="sw" style="background:var(${COLORS[i]})"></span>${st.worlds[i].cand.label}</td>
+      <td class="num ${s.rho === bRho && s.matches ? 'best' : ''}">${s.matches ? num(s.rho, 3) : '—'}${p ? delta(s.rho, p.rho, 'up', 3) : ''}</td>
+      <td class="num ${s.settledMedian === bSet && s.settledMedian != null ? 'best' : ''}">${s.settledMedian != null && isFinite(s.settledMedian) ? s.settledMedian + ' matches' : '—'}</td>
+      <td class="num">${s.settledP90 != null && isFinite(s.settledP90) ? s.settledP90 + ' matches' : '—'}</td>
+      <td class="num">${pct(s.settledShare)}</td>
+      <td class="num ${s.matches && s.oddsErr === bOdds ? 'best' : ''}">${s.matches ? pct(s.oddsErr, 1) : '—'}</td>
+      <td class="num">${s.matches ? pct(s.fair) : '—'}</td>
+      <td class="num">${s.matches ? pct(s.underdog) : '—'}</td>
+      <td class="num">${(s.drift >= 0 ? '+' : '') + num(s.drift)}${p ? delta(s.drift, p.drift, 'down') : ''}</td>
+      ${anyFarm ? `<td class="num">${s.farmerGap == null ? '—' : (s.farmerGap >= 0 ? '+' : '') + Math.round(s.farmerGap * 100) + ' places'}</td>` : ''}
+      ${anyNew ? `<td class="num">${s.newcomers && s.newcomers.settledMedian != null && isFinite(s.newcomers.settledMedian) ? s.newcomers.settledMedian + ' matches' : '—'}</td>` : ''}
+      ${st.preset === 'party' ? `<td class="num">${st.worlds[i].cand.party === 'learned' ? '+' + num(s.learnedEdge) : st.worlds[i].cand.party === 'offset' ? '+' + num(st.cfg.assumedEdge) + ' (fixed)' : '—'}</td>` : ''}
+    </tr>`; }).join('') + '</tbody>';
+  sums.forEach((s, i) => ($('row' + i).onclick = () => { st.sel = i; render(); }));
+
+  const sizes = [...new Set(sums.flatMap(s => Object.keys(s.bySize).map(Number)))].sort();
+  $('partyPanel').hidden = !(st.cfg.partyShare > 0 && sizes.length > 1);
+  const name = k => ({ 1: 'Solo', 2: 'Duo', 3: 'Trio', 4: 'Four-stack', 5: 'Five-stack' }[k]);
+  $('parties').innerHTML = `<thead><tr><th>System</th>${sizes.map(k => `<th>${name(k)}: won / expected</th>`).join('')}<th>Party members' rating vs real skill</th></tr></thead><tbody>` +
+    sums.map((s, i) => {
+      const w = st.worlds[i], inP = w.players.filter(p => w.parties[p.party].length > 1);
+      const bias = inP.length ? inP.reduce((a, p) => a + w.A.toMu(p) - p.skill, 0) / inP.length - (w.players.reduce((a, p) => a + w.A.toMu(p) - p.skill, 0) / w.players.length) : null;
+      return `<tr><td><span class="sw" style="background:var(${COLORS[i]})"></span>${w.cand.label}</td>${sizes.map(k => {
+        const b = s.bySize[k]; return `<td class="num">${b ? pct(b.wins / b.games) + ' / ' + pct(b.expected / b.games) : '—'}</td>`; }).join('')}
+        <td class="num">${bias == null ? '—' : (bias >= 0 ? '+' : '') + num(bias) + ' pts'}</td></tr>`;
+    }).join('') + '</tbody>';
+}
+
+function lineChart(el, series, { xMax, yMin, yMax, xLabel, yTicks, yFmt }) {
+  const W = 520, H = 260, L = 46, R = 12, T = 12, B = 34;
+  const x = v => L + (v / xMax) * (W - L - R), y = v => T + (1 - (v - yMin) / (yMax - yMin)) * (H - T - B);
+  const xt = []; const stepX = xMax > 100 ? 25 : xMax > 40 ? 10 : 5; for (let v = 0; v <= xMax; v += stepX) xt.push(v);
+  let g = `<svg viewBox="0 0 ${W} ${H}" role="img">`;
+  yTicks.forEach(v => (g += `<line x1="${L}" x2="${W - R}" y1="${y(v)}" y2="${y(v)}" stroke="${css('--line')}" stroke-width="1"/><text x="${L - 6}" y="${y(v) + 4}" text-anchor="end">${yFmt(v)}</text>`));
+  xt.forEach(v => (g += `<text x="${x(v)}" y="${H - B + 16}" text-anchor="middle">${v}</text>`));
+  g += `<text x="${(L + W - R) / 2}" y="${H - 4}" text-anchor="middle">${xLabel}</text>`;
+  series.forEach(s => {
+    const pts = s.pts.filter(p => p[0] <= xMax).map(p => [x(p[0]), y(Math.max(yMin, Math.min(yMax, p[1])))]);
+    if (pts.length < 2) return;
+    g += `<polyline fill="none" stroke="${css(s.color)}" stroke-width="2" ${s.dash ? 'stroke-dasharray="5 4"' : ''} points="${pts.map(p => p.map(n => n.toFixed(1)).join(',')).join(' ')}"/>`;
+    const e = pts[pts.length - 1]; g += `<circle cx="${e[0]}" cy="${e[1]}" r="3.5" fill="${css(s.color)}"/>`;
+  });
+  el.innerHTML = g + '</svg>';
+}
+
+function renderCharts() {
+  const series = st.worlds.map((w, i) => ({ color: COLORS[i], pts: [[0, 0]].concat(w.history.map(h => [h.games, h.rho])) }));
+  const xMax = Math.max(20, ...st.worlds.map(w => (w.history.length ? w.history[w.history.length - 1].games : 0)));
+  lineChart($('chartRho'), series, { xMax: Math.ceil(xMax / 10) * 10, yMin: 0.5, yMax: 1, xLabel: 'matches played per player', yTicks: [0.5, 0.6, 0.7, 0.8, 0.9, 1], yFmt: v => v.toFixed(1) });
+  $('legend1').innerHTML = st.worlds.map((w, i) => `<span><span class="sw" style="background:var(${COLORS[i]})"></span>${w.cand.label}</span>`).join('');
+  const sums = st.worlds.map(w => S.summary(w));
+  const ns = [];
+  sums.forEach((s, i) => { if (!s.newcomers) return;
+    ns.push({ color: COLORS[i], pts: s.newcomers.all.map((v, k) => [k + 1, v * 100]) });
+    ns.push({ color: COLORS[i], dash: true, pts: s.newcomers.smurfs.map((v, k) => [k + 1, v * 100]) }); });
+  lineChart($('chartNew'), ns, { xMax: 40, yMin: 0, yMax: 60, xLabel: 'matches since joining', yTicks: [0, 15, 30, 45, 60], yFmt: v => v });
+  $('legend2').innerHTML = ns.length ? 'Solid line: ordinary new players. Dashed line: smurfs. The 15 line is the "settled" mark.' : '<span class="muted">No new players yet.</span>';
+}
+
+function renderMatch() {
+  const w = st.worlds[st.sel], m = w.lastMatch;
+  if (!m) { $('match').innerHTML = '<p class="muted">No match played yet. Press "Play 1 round".</p>'; return; }
+  const team = (units, i) => {
+    const won = (i === 0) === m.aWon;
+    return `<div class="team"><h3>Team ${'AB'[i]} ${won ? '<span class="tag won">won</span>' : ''}</h3>` + units.map(u => u.map(p => {
+      const d = p.after - p.before;
+      return `<div class="pl"><span>Player ${p.id}</span>${u.length > 1 ? `<span class="tag">${['', '', 'duo', 'trio', 'four-stack', 'five-stack'][u.length]}</span>` : ''}${p.smurf ? '<span class="tag smurf">smurf</span>' : p.newcomer ? '<span class="tag">new</span>' : ''}${p.farmer ? '<span class="tag">farmer</span>' : ''}
+        <span>real ${p.skill.toFixed(1)}</span><span>rating ${p.before.toFixed(1)} → ${p.after.toFixed(1)} <span class="${d >= 0 ? 'up' : 'down'}">(${d >= 0 ? '+' : ''}${d.toFixed(2)})</span></span></div>`;
+    }).join('')).join('') + '</div>';
+  };
+  $('match').innerHTML = `<p style="margin-bottom:12px"><b>${w.cand.label}</b>, round ${w.round}. The system gave Team A <b>${pct(m.P)}</b> to win. Its real chance was <b>${pct(m.oracle)}</b>. Team ${m.aWon ? 'A' : 'B'} won.</p>
+    <div class="match">${m.teams.map(team).join('')}</div>`;
+}
+
+function renderSweep() {
+  const s = st.sweep; if (!s) return;
+  const cell = x => (x.settledMedian != null && isFinite(x.settledMedian) ? x.settledMedian : '—') + ' / ' + (x.settledP90 != null && isFinite(x.settledP90) ? x.settledP90 : '—');
+  $('sweep').innerHTML = `<p class="small muted" style="margin-bottom:8px">Comparing ${s.preset}. Each cell is the median / 90% match count. Accuracy is the final ladder accuracy.</p><table><thead><tr><th>System</th>${s.sizes.map(T => `<th>${T}v${T}: settled by</th><th>${T}v${T}: accuracy</th>`).join('')}</tr></thead><tbody>` +
+    s.labels.map((l, i) => `<tr><td><span class="sw" style="background:var(${COLORS[i]})"></span>${l}</td>${s.sizes.map((T, k) => `<td class="num">${cell(s.out[k][i])}</td><td class="num">${num(s.out[k][i].rho, 3)}</td>`).join('')}</tr>`).join('') + '</tbody></table>';
+}
+
+function render() { renderSettings(); renderStatus(); renderBoard(); renderCharts(); renderMatch(); renderSweep(); }
+
+$('b1').onclick = () => play(1);
+$('b10').onclick = () => play(10);
+$('b50').onclick = () => play(50);
+$('bnew').onclick = addNew;
+$('breset').onclick = () => reset();
+$('bsweep').onclick = sweep;
+matchMedia('(prefers-color-scheme: dark)').addEventListener('change', render);
+renderTabs();
+reset();
+play(20); st.msg = 'Example: 20 rounds already played with the default settings. Pick a walkthrough, or change anything.'; renderStatus();
+</script>
