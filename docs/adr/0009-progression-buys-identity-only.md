@@ -46,6 +46,7 @@ its hero locks; we start where it ended.
   challenge rewards losing, dying, friendly fire or idling. A steal counts only once its
   crate is kicked open into a recipe, not when it's carried away. Win-trading detection
   belongs to the rating ticket, [#11](https://github.com/ALLiDoizCode/big_back/issues/11).
+  Settled by [0018](0018-a-party-cap-and-flags-held-for-review.md): flags, held for review.
 
 ## Readability rule
 

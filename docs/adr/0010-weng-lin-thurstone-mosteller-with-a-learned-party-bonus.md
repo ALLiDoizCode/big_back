@@ -64,3 +64,5 @@ both Gaussian systems.
   [0009](0009-progression-buys-identity-only.md)).
 - **Settled by [0017](0017-leavers-take-a-loss-and-their-seats-reopen.md):** a quit counts as a loss for the leaver, and every player is rated by
   their share of the match played (partial play).
+- **Settled by [0018](0018-a-party-cap-and-flags-held-for-review.md):** win-trading detection. Flags are raised automatically, a person
+  reviews them, and flagged matches' points are held until then.
