@@ -65,4 +65,9 @@ team size did not help, so it was dropped.
 
 ## Verdict
 
-Pending: the human picks an algorithm and its party handling.
+**Picked 2026-10-19: Weng-Lin Thurstone-Mosteller with a learned party bonus.** The human's
+words: "Weng-Lin Thurstone-Mosteller with learned party bonus, record it". In the sim that is
+the `Weng-Lin (Thurstone-Mosteller)` system with the "Party bonus learned from results" rule
+(the Parties walkthrough with the base system set to Thurstone-Mosteller).
+
+Recorded on main in ADR 0010 and the glossary.
