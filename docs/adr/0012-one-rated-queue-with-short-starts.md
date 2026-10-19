@@ -75,3 +75,5 @@ these were the waits at the 4 quietest hours (median / 90% matched within):
   never shrink the pool there. Real launch numbers need watching.
 - **Open:** the exact start delay, how long seats stay open, the band and region timings, the
   party skill cap, the leaver and rejoin policy, and showing players an estimated wait.
+- **Settled by [0017](0017-leavers-take-a-loss-and-their-seats-reopen.md):** the leaver and rejoin policy. A leaver's seat reopens like a
+  short-start seat, and a leaver never makes a match unrated.
