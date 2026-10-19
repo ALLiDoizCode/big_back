@@ -16,6 +16,21 @@ the match does a late joiner (ADR 0012's open seats) still get to play?
 **Resolved when** you've played at least two timers and picked one (press **Enter** on the
 timer you like; **P** prints your picks).
 
+## Verdict
+
+**Picked 2026-10-19: an 8 min timer.** The human, after playing it: "8 min feels right".
+With ADR 0013's overtime, a match runs 8 min plus a few seconds, up to 9 min at the cap.
+
+- **Rejected:** 5 min (a late joiner got under half the match, and 5 of 64 never got in) and
+  12 min (it mostly added more of the same: lead changes doubled, but the winner still led
+  for good from the last third).
+- **Not settled here:** the mercy rule as tuned (15 points held 20 s) fired once in 72 bot
+  matches, and only at 12 min. Matches didn't end on a fight more often at any timer. The
+  late joiner's 2-2.5 min wait at the pad is the bigger cost than the timer. Calls 1-3 below
+  are the prototype's, not decisions.
+
+Recorded in ADR 0015.
+
 ## What's new
 
 | Key | Switch | Options |
