@@ -336,6 +336,17 @@ Compare it with the variant on **key 1**: the same set with a **sparser barrage*
 cargo run --example class_items      # then press 1 until it says "C: a capstone per class"
 ```
 
+### Verdict
+
+**2026-10-18: Set C feels good.** The human, after playing it: "feels good".
+
+- **The barrage keeps 12 shells**, as written, over the sparser 6.
+- **The eight calls under "Set C, as built" stand.** The human: "calls are fine". That
+  includes the 1-crate buffs waiting for Q, the gate snapping across chokes, and no shooting
+  while a barrage or gate waits to be placed.
+
+These carry to the grilling in #22.
+
 ### Ruling before the build
 
 **2026-10-18: second wind is out, and ADR 0005 stands.** Second wind would bring knocked-out
