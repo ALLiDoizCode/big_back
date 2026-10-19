@@ -22,6 +22,14 @@ _Avoid_: playlist, game type, ruleset, casual mode
 A character holding a crate overhead. A carrier is slow, can't fire, and drops the crate when hit.
 _Avoid_: hauler, holder
 
+**Grab**:
+Picking up a loose crate. The server decides it, judged on what the grabber saw (up to 200 ms back), and the crate reaches the hands when the answer arrives.
+_Avoid_: pickup, take
+
+**Steal**:
+A grab of a crate off the enemy pad before it locks in.
+_Avoid_: theft, snatch
+
 **Pad**:
 A team's building area: 2 × 2 cells, at most two crates high. Crates are stacked on it to make a recipe, and can be stolen from it.
 _Avoid_: build zone, stack area
