@@ -68,7 +68,8 @@ these were the waits at the 4 quietest hours (median / 90% matched within):
   go to whoever is queuing.
 - **Parties cost fairness more than time.** At 5v5, close matches went from 99% with solo players
   only to 68% with a quarter of players in parties. Capping the skill spread within a party is
-  the next lever.
+  the next lever. (Corrected by [#47](https://github.com/ALLiDoizCode/big_back/issues/47): that sim rarely let a party log off, so
+  "a quarter" ran at about half of matched players. At a real quarter it is 78–83%.)
 - **Bots only fill seats nobody takes.** Bot quality matters less than with bot-filled lobbies,
   but a bot must still haul, stack and steal well enough not to break the match.
 - **The sim is optimistic at low population:** a player who gives up is replaced, so long waits
@@ -78,8 +79,8 @@ these were the waits at the 4 quietest hours (median / 90% matched within):
 - **Settled by [0017](0017-leavers-take-a-loss-and-their-seats-reopen.md):** the leaver and rejoin policy. A leaver's seat reopens like a
   short-start seat, and a leaver never makes a match unrated.
 - **Settled by [0018](0018-a-party-cap-and-flags-held-for-review.md):** the party cap's shape: shown in rank, enforced on the wider of rank
-  and rating, with a full 5-stack exempt for fewer points. Its widths are set by
-  [#47](https://github.com/ALLiDoizCode/big_back/issues/47).
+  and rating, with a full 5-stack exempt for fewer points. Its widths, set by
+  [#47](https://github.com/ALLiDoizCode/big_back/issues/47): 2 tiers for duos and trios, 3 for parties of 4.
 - **Settled by [0019](0019-a-tutorial-then-the-rated-queue.md):** the seat bot is also the
   tutorial's and practice's bot, run scripted in the tutorial.
 - **Settled by [0020](0020-one-big-lanes-and-jungle-map-at-launch.md):** one map at launch, so
