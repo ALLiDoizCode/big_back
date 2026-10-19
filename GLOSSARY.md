@@ -189,3 +189,41 @@ _Avoid_: squad offset, premade penalty, synergy
 **Settled**:
 Said of a player whose ladder position stays close to where their real skill belongs. It is how fast-converging a rating system is measured.
 _Avoid_: converged, placed, calibrated
+
+### Ladder
+
+**Rank**:
+What a player is shown: a tier, a division and points. It follows the rating through points, but it is not the rating.
+_Avoid_: MMR, rating, level, elo
+
+**Tier**:
+One of the seven named steps of the ladder: Bronze, Silver, Gold, Platinum, Diamond, Master and Champion.
+_Avoid_: league, rank group, medal
+
+**Division**:
+One of the three steps (III, II, I) inside each tier from Bronze to Diamond, 100 points each.
+_Avoid_: sub-rank, stage, level
+
+**Points**:
+What a match adds to or takes from a rank. Wins pay more and losses cost less while the rank sits below the rating.
+_Avoid_: LP, RR, SR, stars
+
+**Placements**:
+A new account's first 5 ranked matches, played with no rank shown. They set its starting rank.
+_Avoid_: calibration, qualifiers, provisional matches
+
+**Decay**:
+The 50 points a Diamond-or-higher player loses for each idle day with no days banked. Each match banks 7 days, up to 28.
+_Avoid_: inactivity penalty, rank rot
+
+**Champion**:
+The top tier: a leaderboard of the Master players who are above the Champion rating line and active.
+_Avoid_: Grandmaster, Legend, top 500
+
+**Season**:
+A 3-month ranked period. Each one starts with every rank dropped one tier and ends by paying ranked-win rewards.
+_Avoid_: split, act, episode
+
+**Ranked-win reward**:
+A dated season cosmetic for a tier, earned with 10 wins at that tier or above in the season.
+_Avoid_: season reward, rank reward, end-of-season chest
