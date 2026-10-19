@@ -59,6 +59,7 @@ case). Share of trials won:
   locked), about 1 s, to judge grabs on. The netcode research expected lag compensation for
   hitscan only; this extends it to grabs, which lightyear's ray-cast rewind doesn't cover, so
   the grab check is our own.
-- **Open:** throws, set-downs and kick-opens weren't ruled on (server-decided or predicted),
-  nor was the reach on its own. The rewind cap, and how a bot or a late joiner's history
-  works with rewind, also stay open.
+- **Settled by [0022](0022-predicted-throws-and-kicks-judged-on-what-you-saw.md):** throws and
+  set-downs are predicted, kick-opens are judged on what the kicker saw, and the rewind cap
+  stays 200 ms.
+- **Open:** the reach on its own, and how a bot or a late joiner's history works with rewind.

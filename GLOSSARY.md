@@ -30,6 +30,10 @@ _Avoid_: pickup, take
 A grab of a crate off the enemy pad before it locks in.
 _Avoid_: theft, snatch
 
+**Prediction**:
+The client showing a player's own throw, punt or set-down at once, worked out on the world as that player sees it. When the server's answer differs, the shown crate is corrected.
+_Avoid_: rollback, snap-back
+
 **Pad**:
 A team's building area: 2 × 2 cells, at most two crates high. Crates are stacked on it to make a recipe, and can be stolen from it.
 _Avoid_: build zone, stack area
@@ -75,7 +79,7 @@ A shape of crates on a pad, and what kicking the pad open gives. For example, tw
 _Avoid_: blueprint, craft, build
 
 **Kick open**:
-To open a pad by kicking it, using up a recipe's crates to get its result. Holding the kick longer steps up to bigger recipes inside the pad; letting go opens the one reached. Nothing on a pad opens by itself.
+To open a pad by kicking it, using up a recipe's crates to get its result. Holding the kick longer steps up to bigger recipes inside the pad; letting go opens the one reached. Nothing on a pad opens by itself. The server opens the recipe the kicker saw, judged up to 200 ms back.
 _Avoid_: merge, craft, consume
 
 **Class**:
