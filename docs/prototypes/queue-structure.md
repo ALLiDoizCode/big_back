@@ -105,5 +105,22 @@ favourite is at most 5 points over a coin flip.
 
 ## Verdict
 
-_Not yet picked._ The human picks a queue structure and a feasible range of team sizes and
-formats.
+**Picked 2026-10-19: one queue with the rank on top, 5v5 with short starts, 3v3 to 5v5 as
+the feasible range.** The human's words: "lets go with that, record it", accepting this
+recommendation:
+
+- **One matchmade queue, every match rated**, with the visible rank (ADR 0011) on top of the
+  hidden rating (ADR 0010). No separate casual queue. Timed ranked events may come later as
+  an extra layer, not as the structure.
+- **Modes:** server rotation, or "pick at least 2", never one queue per mode.
+- **5v5 stays (ADR 0006), with short starts:** after about 60 s, a match may start once every
+  team has its starting player, and players still queuing take the open seats as joined players.
+  A seat still empty when joining closes goes to a bot shown as a bot, and that match is
+  unrated (about 3% of matches at 200 at peak).
+- **Feasible range: two-team 3v3 to 5v5.** 3v3 on ADR 0006's smaller map is the fallback.
+  2v2, 2v2v2 and 2v2v2v2 are out: matches are too rarely close, and more than two teams
+  don't fit a two-base lanes map.
+- **Regions:** one global pool, widening to neighbouring regions after about 30 s and to all
+  after about 90 s. The netcode must tolerate about 165 ms for the furthest player.
+
+Recorded on main in ADR 0012 and the glossary.
