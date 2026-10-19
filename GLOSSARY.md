@@ -142,6 +142,40 @@ _Avoid_: creep, neutral, mob
 The bigger camp in the river, north and south, that drops crates.
 _Avoid_: boss, dragon, baron
 
+### Scoring and production loss
+
+**Score**:
+What decides a match: a team's locked-in pad crates, plus crates spent on its pad, plus points banked from base knockouts.
+_Avoid_: points (that's the rank), tally, crate count
+
+**Base**:
+The block behind a team's pad that enemy shots and blasts can hurt.
+_Avoid_: HQ, core, nexus, tower
+
+**Base knockout**:
+A base brought to 0 hp. Its pad is down for a while, making and scoring nothing, then the base rebuilds. Production is never lost for good.
+_Avoid_: knockout (that's a player), base kill, destruction, decapitation
+
+**Lock-in**:
+A crate that has rested on its pad long enough to count for the score. It can't be stolen after that, and it survives a base knockout.
+_Avoid_: banking, securing, scoring a crate
+
+**Spill**:
+The crates a base knockout throws onto the map, a few at most, where anyone can pick them up.
+_Avoid_: drop, scatter, loot
+
+**Megacrate**:
+A rare crate worth several points of score, which drops on the trailing team's side. Unlike a super crate, it doesn't change what a recipe makes.
+_Avoid_: gold crate, bonus crate, super crate
+
+**Overtime**:
+Play past the buzzer that lasts while the trailing team carries a crate or contests the leader's pad.
+_Avoid_: sudden death, extra time, golden goal
+
+**Mercy rule**:
+The match ending early because one team has held a big enough score lead for long enough.
+_Avoid_: surrender, forfeit, early end
+
 ### Progression
 
 **Identity**:
