@@ -102,7 +102,10 @@ Suggested schedule: **no cut up to the 4-stack cap, then −25% per tier beyond 
 −75%.** At carry 25% it sits close to the cancelling cut; at carry 10% it over-cuts, which is
 the safe side for boosting.
 
-## Recommendation (verdict pending)
+## Verdict
+
+**Picked 2026-10-19: 2 / 2 / 3, and the 5-stack schedule below.** The human's words: "lets go
+with that, record it", accepting this recommendation:
 
 - **Caps: 2 tiers for duos and trios, 3 tiers for 4-stacks** (2 / 2 / 3). It gets back about
   a third of the gap to solo-only (78% → 86% at carry 25%; 83% → 88% at none) and blocks about
@@ -111,3 +114,5 @@ the safe side for boosting.
   few (9%) but buys little (78% → 83%).
 - **5-stacks:** exempt, cut −25% / −50% / −75% for each tier past 3.
 - **Re-fit with real data:** carry, how alike friends are, and rank lag decide these numbers.
+
+Recorded on main in ADR 0018 (widths and 5-stack cut) and ADR 0012 (the 68% figure).
