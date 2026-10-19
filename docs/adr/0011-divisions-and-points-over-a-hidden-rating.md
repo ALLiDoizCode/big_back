@@ -76,3 +76,6 @@ stood in the sheet.
   wide 5-stack plays for fewer points, and its wins don't count toward ranked-win rewards.
 - **Settled by [0019](0019-a-tutorial-then-the-rated-queue.md):** only rated matches count as
   placements, and a leave during placements still uses one up.
+- **Settled by [0023](0023-no-scheduled-ranked-events-in-season-1.md):** timed ranked events.
+  Season 1 has none; unrated-match share and off-peak waits decide whether to revisit them at
+  the Season 2 review.

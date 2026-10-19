@@ -86,3 +86,5 @@ in-match HUD shows names alone, so mastery doesn't tell the enemy who to focus.
   match, including time alive as each class.
 - **Art has a hard list** of things a skin can't touch, from day one, so it never has to be
   retrofitted the way Rocket League did with hitboxes.
+- **Settled by [0023](0023-no-scheduled-ranked-events-in-season-1.md):** timed ranked events.
+  Season 1 has none.
