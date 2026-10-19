@@ -77,7 +77,8 @@ agreed with each recommendation. The numbers are tuning, not decisions.
 - **A player recipe brings in whoever has waited longest.** Knocked-out joined players and
   late joiners wait in one line. A late joiner's wait counts from when they took the seat.
   This settles the question [0015](0015-an-eight-minute-timer.md) handed here, and it is what
-  the pacing prototype did.
+  the pacing prototype did. Any waiting human comes before any bot
+  ([0021](0021-one-bot-that-plays-like-an-average-player.md)).
 
 ## Considered options
 
@@ -109,5 +110,8 @@ agreed with each recommendation. The numbers are tuning, not decisions.
 - **Settles** the quit-as-loss question left open by 0010 and 0011, the leaver and rejoin
   policy left open by 0012, the mercy rule's rating question left open by 0013, and who a
   player recipe brings in first, left open by 0015.
+- **Settled by [0021](0021-one-bot-that-plays-like-an-average-player.md):** what the bot in a
+  leaver's seat must do. A rejoining player displaces it, and it never counts as somebody left
+  on a team.
 - **Open:** the exact thresholds (45 s idle, 60 s load, 90 s away, the lockout steps) once
   humans play; whether the server can tell its own fault from a player's connection reliably.

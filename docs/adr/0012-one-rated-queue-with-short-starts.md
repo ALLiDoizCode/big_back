@@ -85,3 +85,6 @@ these were the waits at the 4 quietest hours (median / 90% matched within):
   tutorial's and practice's bot, run scripted in the tutorial.
 - **Settled by [0020](0020-one-big-lanes-and-jungle-map-at-launch.md):** one map at launch, so
   the queue has no map to rotate. The 3v3 fallback map (about 60 × 34 m) isn't shipped.
+- **Settled by [0021](0021-one-bot-that-plays-like-an-average-player.md):** what the bot must
+  do. It plays like an average player through a player's inputs and view, does every job a
+  player does, and takes a seat only once seats close.
