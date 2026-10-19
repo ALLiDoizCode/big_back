@@ -59,8 +59,16 @@ A shape of crates on a pad, and what kicking the pad open gives. For example, tw
 _Avoid_: blueprint, craft, build
 
 **Kick open**:
-To open a pad by kicking it, using up its crates to get the recipe's result. Nothing on a pad opens by itself.
+To open a pad by kicking it, using up a recipe's crates to get its result. Holding the kick longer steps up to bigger recipes inside the pad; letting go opens the one reached. Nothing on a pad opens by itself.
 _Avoid_: merge, craft, consume
+
+**Class**:
+What a player is (for example soldier, engineer or medic). The class of whoever kicks a pad open decides what its non-player recipes make.
+_Avoid_: role, job, hero
+
+**Loadout**:
+A class's two crafted items: a left-click item from 1 × 2 and a right-click item from 2 × 2 flat.
+_Avoid_: kit, abilities, build
 
 ### Teams
 
@@ -83,3 +91,25 @@ _Avoid_: leader, captain, commander
 **Joined player**:
 A player who entered the match when the team kicked open a player recipe. A joined player who is knocked out stays out until another player recipe is opened.
 _Avoid_: spawned player, reinforcement
+
+### Map
+
+**Lane**:
+One of the three open routes between the bases: top, mid and bottom.
+_Avoid_: path, corridor
+
+**Jungle**:
+The four walled quadrants between the lanes, entered by gaps in their walls. The PvE camps are here.
+_Avoid_: forest, woods
+
+**River**:
+The strip running north to south through the middle of the map, between the jungles.
+_Avoid_: middle, centre line
+
+**Camp**:
+A PvE monster that drops something when cleared, then respawns: a heal camp, a shield camp or a river objective.
+_Avoid_: creep, neutral, mob
+
+**River objective**:
+The bigger camp in the river, north and south, that drops crates.
+_Avoid_: boss, dragon, baron
