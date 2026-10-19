@@ -55,8 +55,10 @@ Played in the prototype, against 160 bot matches per map (40 for the big map):
   jungle.
 - **Comebacks are rarer.** The winner had trailed by 5+ in 8-10% of bot matches, against
   about 20%. Matches were close (95% within 5 points), but because both teams scored little.
-  The comeback set ([0013](0013-base-knockouts-with-a-comeback-set.md)) ran unchanged on it;
-  its numbers (megacrate pull, spill, overtime, mercy) may need retuning for the longer hauls.
+  The comeback set ([0013](0013-base-knockouts-with-a-comeback-set.md)) ran unchanged on it.
+  [#52](https://github.com/ALLiDoizCode/big_back/issues/52) scaled it to the map (megacrates
+  every 35 s, pulled 30 m, mercy at 12), which brought comebacks back to about the old map's
+  level (0013, "On the launch map").
 - **Hauls are long.** The pad sits at the back of a 20 m base area. Carries average about 7 s
   in bot play, the same as the 90 × 50 m map, because new crates still land in the middle.
 - **Map variety doesn't carry the launch.** [0014](0014-one-mode-at-launch-crate-race.md)
