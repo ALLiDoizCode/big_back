@@ -423,7 +423,7 @@ impl Make {
     /// names it so the enemy can read the threat.
     fn twist(self) -> &'static str {
         match self {
-            Make::Players(_) => "they join with a rapid gun",
+            Make::Players(_) => "each joins with their class's super left click",
             Make::Gun(GunKind::Rapid) => "shots pierce one target",
             Make::Gun(GunKind::Rivet) => "rivets stagger",
             Make::Gun(GunKind::Heal) => "heals bounce to a 2nd ally",
@@ -580,26 +580,34 @@ impl Class {
 // ---------------------------------------------------------------------------------------
 
 /// Whole sets for key 1: (name, option index for left click, right click, 1 crate, all 8).
-const SETS: [(&str, [usize; 4]); 6] = [
+const SETS: [(&str, [usize; 4]); 7] = [
     ("A: fix the placeholders", [0, 0, 0, 0]),
     ("A + Set B's 1-crate refill", [0, 0, 1, 0]),
     ("B: Team Buddies ladder", [1, 0, 1, 1]),
     ("B, ambulance fires heal shots", [1, 0, 1, 2]),
     ("C: a capstone per class", [0, 1, 2, 3]),
     ("C, sparser barrage", [0, 1, 2, 4]),
+    // The kit picked in the #22 grilling, mixed from the three sets.
+    ("Final (#22)", [2, 2, 0, 5]),
 ];
-const SET_NAMES: [&str; 6] = [SETS[0].0, SETS[1].0, SETS[2].0, SETS[3].0, SETS[4].0, SETS[5].0];
+const SET_NAMES: [&str; 7] = [SETS[0].0, SETS[1].0, SETS[2].0, SETS[3].0, SETS[4].0, SETS[5].0, SETS[6].0];
 /// Set C's left click is Set A's.
-const LEFT_OPTS: [&str; 2] = ["A, C: rapid / rivet / heal gun", "B: shotgun / nail-mine layer / heal gun"];
+const LEFT_OPTS: [&str; 3] =
+    ["A, C: rapid / rivet / heal gun", "B: shotgun / nail-mine layer / heal gun", "Final: shotgun / rivet / heal gun"];
 /// Set B's right click is Set A's.
-const RIGHT_OPTS: [&str; 2] = ["A, B: rockets / shield wall / heal pulse", "C: grenade launcher / shield wall / shield burst"];
+const RIGHT_OPTS: [&str; 3] = [
+    "A, B: rockets / shield wall / heal pulse",
+    "C: grenade launcher / shield wall / shield burst",
+    "Final: rockets / shield wall / shield burst",
+];
 const SMALL_OPTS: [&str; 3] = ["A: grenade / patch kit / med pack", "B: refill", "C: adrenaline / barricade / self-patch"];
-const ALL8_OPTS: [&str; 5] = [
+const ALL8_OPTS: [&str; 6] = [
     "A: tank / bunker / rally",
     "B: tank / hauler mech / ambulance (heal aura)",
     "B: tank / hauler mech / ambulance (heal shot)",
     "C: barrage / gate / rally",
     "C: sparser barrage / gate / rally",
+    "Final: tank / gate / rally",
 ];
 
 /// What a class makes from a recipe, given which set each slot is on.
@@ -609,7 +617,7 @@ fn item_of(slot: Slot, class: Class, sets: [usize; 4]) -> Make {
         Slot::Player1 => Make::Players(1),
         Slot::Player2 => Make::Players(2),
         Slot::Pair => match (sets[0], class) {
-            (1, Soldier) => Make::Gun(GunKind::Shotgun),
+            (1 | 2, Soldier) => Make::Gun(GunKind::Shotgun),
             (1, Engineer) => Make::Gun(GunKind::Mines),
             (_, Soldier) => Make::Gun(GunKind::Rapid),
             (_, Engineer) => Make::Gun(GunKind::Rivet),
@@ -617,7 +625,7 @@ fn item_of(slot: Slot, class: Class, sets: [usize; 4]) -> Make {
         },
         Slot::Flat4 => match (sets[1], class) {
             (1, Soldier) => Make::Alt(AltKind::Launcher),
-            (1, Medic) => Make::Alt(AltKind::ShieldBurst),
+            (1 | 2, Medic) => Make::Alt(AltKind::ShieldBurst),
             (_, Soldier) => Make::Alt(AltKind::Rockets),
             (_, Engineer) => Make::Alt(AltKind::ShieldWall),
             (_, Medic) => Make::Alt(AltKind::Pulse),
@@ -638,7 +646,7 @@ fn item_of(slot: Slot, class: Class, sets: [usize; 4]) -> Make {
             // ADR 0005 stands (ruling on #26): the medic's second wind is out; Set C plays
             // Set A's rally.
             (n @ (3 | 4), Soldier) => Make::Barrage(n == 4),
-            (3 | 4, Engineer) => Make::Gate,
+            (3 | 4 | 5, Engineer) => Make::Gate,
             (_, Soldier) => Make::Tank,
             (_, Engineer) => Make::Bunker,
             (_, Medic) => Make::Rally,
@@ -2412,7 +2420,13 @@ impl Sim {
             else {
                 break;
             };
-            let gun = gold.then(|| self.new_gun(GunKind::Rapid, true));
+            // A super crate in a player recipe: each joiner comes in holding their own
+            // class's super left-click item (#22).
+            let class = if slot == YOU { self.your_class } else { self.actors[slot].class };
+            let gun = match item_of(Slot::Pair, class, self.sets) {
+                Make::Gun(kind) if gold => Some(self.new_gun(kind, true)),
+                _ => None,
+            };
             let p = &mut self.actors[slot];
             p.dead = 0.0;
             p.hp = 100.0;

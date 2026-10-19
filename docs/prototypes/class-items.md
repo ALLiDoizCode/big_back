@@ -8,7 +8,7 @@ item-set tickets, all on the same set switch: Set A is
 [#26](https://github.com/ALLiDoizCode/big_back/issues/26). Feeds the grilling in
 [#22](https://github.com/ALLiDoizCode/big_back/issues/22).
 
-Jump to [Set B (#25)](#set-b-25-team-buddies-ladder) or [Set C (#26)](#set-c-26-a-capstone-per-class).
+Jump to [Final (#22)](#final-22-the-picked-kit), [Set B (#25)](#set-b-25-team-buddies-ladder) or [Set C (#26)](#set-c-26-a-capstone-per-class).
 
 ```
 cargo run --example class_items
@@ -38,11 +38,11 @@ you already hold keep working. R restarts the match.
 
 | Key | Switch | Options now |
 |---|---|---|
-| 1 | item set (sets every slot at once) | **A: fix the placeholders**, **A + Set B's 1-crate refill**, **B: Team Buddies ladder**, **B, ambulance fires heal shots**, **C: a capstone per class**, **C, sparser barrage** |
-| 2 | left click (2 side by side) | A and C share it, B (shotgun / nail-mine layer / heal gun) |
-| 3 | right click (4 flat) | A and B share it, C (grenade launcher / shield wall / shield burst) |
+| 1 | item set (sets every slot at once) | **A: fix the placeholders**, **A + Set B's 1-crate refill**, **B: Team Buddies ladder**, **B, ambulance fires heal shots**, **C: a capstone per class**, **C, sparser barrage**, **Final (#22)** |
+| 2 | left click (2 side by side) | A and C share it, B (shotgun / nail-mine layer / heal gun), Final (shotgun / rivet / heal gun) |
+| 3 | right click (4 flat) | A and B share it, C (grenade launcher / shield wall / shield burst), Final (rockets / shield wall / shield burst) |
 | 4 | 1 crate | A (throwable / kit), B (refill), C (adrenaline / barricade / self-patch) |
-| 5 | all 8 | A, B (heal aura ambulance), B (heal shot ambulance), C (barrage / gate / rally), C (sparser barrage / gate / rally) |
+| 5 | all 8 | A, B (heal aura ambulance), B (heal shot ambulance), C (barrage / gate / rally), C (sparser barrage / gate / rally), Final (tank / gate / rally) |
 | 6 | super crates | off, upgrade (one twist) |
 
 **Enter** records the switch you're playing as your pick, and **P** prints your picks.
@@ -51,6 +51,42 @@ The crate grammar is fixed at what ADR 0007 picked: the kicker's class decides, 
 read by shape, the readout is shown, results are instant, pads are steal only, and you hold
 the kick to choose. Hold F beside your pad. The readout steps from 1 crate up to all 8,
 naming each result and its super twist. Let go to open.
+
+## Final (#22): the picked kit
+
+**Question (#22):** does the kit picked in the grilling hold together? Every slot was played and
+felt good in its own set, but never in this mix: the gate has never met a tank, and the shield
+burst has never met the shotgun.
+
+```
+cargo run --example class_items      # then press 1 until it says "Final (#22)"
+```
+
+| | Left click (2 side by side) | Right click (4 flat) | 1 crate (Q) | All 8 |
+|---|---|---|---|---|
+| **Soldier** | Shotgun (Set B) | Rockets (Set A) | Grenade (Set A) | Tank (Set A) |
+| **Engineer** | Rivet gun (Set A) | Shield wall (every set) | Patch kit (Set A) | Gate (Set C) |
+| **Medic** | Heal gun (every set) | Shield burst (Set C) | Med pack (Set A) | Rally (Set A) |
+
+Each item plays with the numbers, super twist and calls from its own set, below. One rule
+changed, from the grilling: **a super crate in a player recipe now gives each joiner their own
+class's super left-click item** (a soldier comes in with a super shotgun, a medic with a super
+heal gun), not a super rapid gun for everyone. This applies under every set.
+
+### What to try (Final)
+
+0. **Press 1 until it says "Final (#22)"** and play a full match as each class (C cycles your
+   class). **V** gives you your class's all 8 now.
+1. **Does any pairing break?** Watch the new meetings: a tank against a gate across a lane, rockets
+   against shield walls, shotgun pushes into a shield-burst medic, and grenades against the
+   rally's shield.
+2. **Does each class still have a reason to be the kicker?** Is there a class nobody wants to kick
+   as?
+3. **Super players:** drop a super crate (**Y**) into 2 stacked. Does the joiner's super item read?
+
+### Verdict
+
+**Pending.** Needs the human to play it.
 
 ## Set A, as built
 
