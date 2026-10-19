@@ -192,7 +192,13 @@ cargo run --example class_items      # then press 1 twice: "B: Team Buddies ladd
 
 ### Verdict
 
-**Pending.** It needs a human to play both variants.
+**2026-10-18: Set B feels good.** The human, after playing it: "it feels good".
+
+Still open, for the grilling in #22:
+
+- **The ambulance:** the heal aura or the heal shot the driver fires.
+- **The eight calls under "Set B, as built"**, including the minimap hiding enemies out of
+  sight (which changes Set A too).
 
 ### Set B, as built
 
