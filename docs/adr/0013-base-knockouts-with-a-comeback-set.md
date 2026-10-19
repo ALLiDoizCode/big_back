@@ -31,6 +31,35 @@ are that setup as it stood in the sheet. The numbers are tuning, not decisions.
   tie runs until someone leads. A tie at the cap is a draw.
 - **Mercy rule:** a **15-point** gap held for **20 s** ends the match for the leader.
 
+## On the launch map
+
+The numbers above were picked on the 90 × 50 m map. On the 120 × 72 m launch map
+([0020](0020-one-big-lanes-and-jungle-map-at-launch.md)) the set is **scaled to the map**:
+
+- **Megacrates:** one every **35 s**, pulled up to **30 m** toward the trailing team's base at a
+  10-point gap. The map is 1.33× wider, so the pull reaches 1.33× further, and hauls are
+  longer, so the drop comes sooner.
+- **Mercy rule:** a **12-point** gap held for 20 s. Scores run about 20% lower on the big map.
+- **Unchanged:** lock-in 8 s, spill up to 3, megacrate worth 3, overtime up to 60 s.
+
+We chose this after playing the
+[comeback-big-map sheet](https://github.com/ALLiDoizCode/big_back/blob/prototype/comeback-big-map/docs/prototypes/comeback-big-map.md)
+for [#52](https://github.com/ALLiDoizCode/big_back/issues/52). The human's verdict, with the
+scaled set on: "big map feels good". **The rule for later maps:** megacrate pull scales with
+the map's width, and the mercy gap with its typical score.
+
+- **What it bought in bot play** (5v5, 160 matches a row): from one player down, the winner
+  had trailed by 5+ in 24% of matches, against 9% with the set unscaled and 31% on the
+  90 × 50 m map. Close matches stayed about 90%, and the winner took the lead for good about
+  40 s later (6:40 against 5:50). Mercy still fired in only 1–3% of matches, so almost all of
+  the gain is the megacrate's.
+- **Rejected on the big map:** the set unscaled (comebacks at about half the old map's rate),
+  a longer steal window as well (lock-in 12 s, spill up to 5; bots never steal off pads, so it
+  showed nothing, and the scaled set was enough), and no set at all (close matches fell to
+  72–83%).
+- **The 8 min timer ([0015](0015-an-eight-minute-timer.md)) still fits:** matches averaged
+  8:00–8:06 on the big map under every set.
+
 ## Considered options
 
 - **Permanent base destruction** (Team Buddies decapitation): a destroyed pad makes nothing,
@@ -68,3 +97,4 @@ are that setup as it stood in the sheet. The numbers are tuning, not decisions.
   unless decided otherwise); exact tuning of base hp and the down time once humans play
   against humans.
 - **Settled by [0017](0017-leavers-take-a-loss-and-their-seats-reopen.md):** a mercy end counts as a normal win and loss.
+- **Settled by [#52](https://github.com/ALLiDoizCode/big_back/issues/52):** the set's numbers on the launch map (above).
