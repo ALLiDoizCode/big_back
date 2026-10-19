@@ -19,7 +19,27 @@ or marked ahead, and what is left random?
 
 ## Verdict
 
-_Waiting on a played verdict._
+**Picked 2026-10-19: the defaults.** The human, after playing it: "feels good". The
+prototype starts where the #34 prototype stood:
+
+- **Friendly fire:** off for bullets, blasts and thrown crates. They pass through or spare
+  you and your allies. The one friendly fire left on is **knocks to your own pad**: any
+  sliding crate knocks any pad crate that hasn't locked in, your team's included.
+- **Crate spawns:** random spots in the middle, not marked ahead.
+- **River drops:** fixed: a super crate (3 crates with super crates off), back in 60 s,
+  with the countdown shown.
+- **Megacrates:** fixed: every 45 s while none is out, with the countdown shown.
+- **Weapon spread:** none. Shots go where you aim, and the shotgun keeps its fixed fan.
+
+So the randomness budget is the spawn spot alone. What a drop is and when it comes are fixed
+and shown, and nothing random sits between aim and hit.
+
+- **Rejected:** friendly fire on bullets, blasts or thrown crates, a random river roll,
+  random megacrate timing (marked or not), and a random cone or bloom. The forgiving preset's
+  fixed spawn spots were rejected too, though they made bot matches busier.
+- **Not settled here:** bots can't judge friendly fire, since they rarely stand in each
+  other's way, so the verdict rests on play alone. Calls 1-9 below are the prototype's, not
+  decisions. Most only matter for friendly fire that is now off.
 
 ## The rule switch (keys 1-9, all live)
 
