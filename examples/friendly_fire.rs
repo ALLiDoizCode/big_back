@@ -29,7 +29,9 @@
 //! `CRATE_ARENA=1` (whole-arena camera), `CRATE_SPEED=<1-10>` (time scale), `CRATE_MAP=open`,
 //! `CRATE_CLASS=<0-2>` (your class), `CRATE_MATCHES=<n>` (exit after n matches),
 //! `CRATE_LENGTH=<s>` (match length), `CRATE_HEADSTART=<0-4>` (red starts with that many
-//! extra players), `CRATE_SEED=<n>` (bot-match randomness).
+//! extra players), `CRATE_SEED=<n>` (bot-match randomness), `CRATE_HEADLESS=1` (no window or
+//! rendering, sim only, as fast as it goes: use it for bulk bot runs, with `CRATE_SEAT=bot`
+//! and `CRATE_MATCHES`).
 
 use std::collections::VecDeque;
 use std::f32::consts::FRAC_PI_2;
@@ -8046,6 +8048,22 @@ fn main() {
         verdicts: Vec::new(),
     };
     let sim = Sim::new(&tune);
+    // Bulk bot runs: no window, no GPU. Each window holds ~65 MiB of the GPU's 256 MiB BAR1
+    // aperture, and 4+ at once starve the compositor and freeze the desktop. The sim steps
+    // a fixed 1/30 s frame (the `step` cap) as fast as the CPU goes.
+    if std::env::var("CRATE_HEADLESS").as_deref() == Ok("1") {
+        App::new()
+            .add_plugins(MinimalPlugins.set(bevy::app::ScheduleRunnerPlugin::run_loop(Duration::ZERO)))
+            .insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(Duration::from_secs_f64(1.0 / 30.0)))
+            .insert_resource(tune)
+            .insert_resource(sim)
+            .init_resource::<Controls>()
+            .init_resource::<Smoke>()
+            .add_systems(Startup, init_from_env)
+            .add_systems(Update, (step, smoke_exit).chain())
+            .run();
+        return;
+    }
     App::new()
         .add_plugins(DefaultPlugins.set(WindowPlugin {
             primary_window: Some(Window {
