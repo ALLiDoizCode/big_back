@@ -4,6 +4,7 @@ Throwaway. Lives on `prototype/party-cap` only, branched from `prototype/queue-s
 (the one-day queue simulator from #14).
 
 Open `docs/prototypes/party-cap.html` in a browser (double-click; no install, no server).
+Hosted copy: https://claude.ai/artifact/SBVAh2N7QoTcrowykw9UCo (private to the owner).
 
 **Question:** how wide may a party's skill spread be in the one rated queue? ADR 0018 fixed the
 cap's shape (shown in tiers and divisions, enforced on the wider of rank and rating, wider for
